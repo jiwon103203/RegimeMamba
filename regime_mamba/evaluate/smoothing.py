@@ -579,8 +579,8 @@ def find_optimal_filtering(config, data_path, save_path=None):
 
     # 데이터셋 및 데이터로더 생성
     print("데이터셋 생성 중...")
-    train_dataset = RegimeMambaDataset(data_path, seq_len=config.seq_len, mode="valid")  # valid 모드는 2000-2009 데이터 사용
-    test_dataset = RegimeMambaDataset(data_path, seq_len=config.seq_len, mode="test")    # test 모드는 2010 이후 데이터 사용
+    train_dataset = RegimeMambaDataset(data_path, seq_len=config.seq_len, mode="valid", target_type=config.target_type, target_horizon=config.target_horizon)  # valid 모드는 2000-2009 데이터 사용
+    test_dataset = RegimeMambaDataset(data_path, seq_len=config.seq_len, mode="test", target_type=config.target_type, target_horizon=config.target_horizon)    # test 모드는 2010 이후 데이터 사용
 
     train_loader = DataLoader(train_dataset, batch_size=config.batch_size, shuffle=False, num_workers=4)
     test_loader = DataLoader(test_dataset, batch_size=config.batch_size, shuffle=False, num_workers=4)
