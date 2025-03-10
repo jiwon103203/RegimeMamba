@@ -326,8 +326,9 @@ def evaluate_all_smoothing_methods(window_results_dir, model, data, kmeans, bull
     return all_methods_results, all_methods_performances
 
 def default_converter(o):
-    if isinstance(o, datetime):
-        return o.isoformat()
+    if isinstance(o, np.ndarray):
+        # 단일 값이면 스칼라로, 아니면 리스트로 변환
+        return o.item() if o.ndim == 0 else o.tolist()
     raise TypeError(f"Type {type(o).__name__} is not serializable")
 
 
