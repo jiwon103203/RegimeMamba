@@ -12,7 +12,7 @@ from .smoothing import (
     compare_filtering_strategies, visualize_filtered_vs_original, find_optimal_filtering
 )
 from .rolling_window_w_train import (
-    RollingWindowTrainConfig, DateRangeRegimeMambaDataset,
+    RollingWindowTrainConfig,
     train_model_for_window, identify_regimes_for_window,
     apply_and_evaluate_regimes, visualize_window_performance,
     run_rolling_window_train, visualize_all_windows_performance
