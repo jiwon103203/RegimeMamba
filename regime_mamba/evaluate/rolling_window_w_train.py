@@ -304,6 +304,7 @@ def apply_and_evaluate_regimes(config, model, data, kmeans, bull_regime, forward
     # 결과에 기간 정보 추가
     if results_df is not None:
         results_df['window'] = window_number
+        forward_start = datetime.strptime(forward_start, "%Y-%m-%d")
         results_df['train_valid_period'] = f"{forward_start - relativedelta(years=config.total_window_years)} ~ {forward_start}"
         results_df['forward_start'] = forward_start
         results_df['forward_end'] = forward_end
@@ -316,7 +317,7 @@ def apply_and_evaluate_regimes(config, model, data, kmeans, bull_regime, forward
             results_df['filter_method'] = config.filter_method
             
             # 원본과 필터링 후 거래 횟수 계산
-            raw_trades = (np.diff(raw_predictions.flatten()) != 0).sum() + (raw_predictions[0][0] == 1)
+            raw_trades = (np.diff(raw_predictions.flatten()) != 0).sum() + (raw_predictions[0] == 1)
             filtered_trades = (np.diff(predictions.flatten()) != 0).sum() + (predictions[0][0] == 1)
             
             # 성과 정보에 거래 감소 정보 추가
@@ -520,7 +521,7 @@ def run_rolling_window_train(config):
         
         # 전체 성과 저장
         with open(f"{config.results_dir}/all_performances.json", 'w') as f:
-            json.dump(all_performances, f, indent=4)
+            json.dump(all_performances, f, default=default_converter, indent=4)
         
         # 전체 성과 시각화
         visualize_all_windows_performance(all_performances, config.results_dir)
@@ -530,6 +531,11 @@ def run_rolling_window_train(config):
     else:
         print("롤링 윈도우 재학습 실패: 유효한 결과가 없습니다.")
         return None, None, None
+
+def default_converter(o):
+    if isinstance(o, datetime):
+        return o.isoformat()
+    raise TypeError(f"Type {type(o).__name__} is not serializable")
 
 def visualize_all_windows_performance(all_performances, save_dir):
     """
