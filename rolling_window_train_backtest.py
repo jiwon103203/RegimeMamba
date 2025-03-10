@@ -44,7 +44,7 @@ def parse_args():
     parser.add_argument('--no_filtering', action='store_false', dest='apply_filtering', help='레짐 필터링 적용 안함')
     parser.add_argument('--filter_method', type=str, default='minimum_holding', 
                         choices=['minimum_holding', 'smoothing'], help='필터링 방법')
-    parser.add_argument('--min_holding_days', type=int, default=20, help='최소 보유 기간(일)')
+    parser.add_argument('--min_holding_days', type=int, default=5, help='최소 보유 기간(일)')
     
     # 기타 설정
     parser.add_argument('--transaction_cost', type=float, default=0.001, help='거래 비용 (0.001 = 0.1%)')
