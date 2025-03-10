@@ -314,24 +314,24 @@ def create_dataloaders(config):
         config.data_path, 
         seq_len=config.seq_len, 
         mode="train",
-        target_type=target_type,
-        target_horizon=target_horizon
+        target_type=config.target_type,
+        target_horizon=config.target_horizon
     )
     
     valid_dataset = RegimeMambaDataset(
         config.data_path, 
         seq_len=config.seq_len, 
         mode="valid",
-        target_type=target_type,
-        target_horizon=target_horizon
+        target_type=config.target_type,
+        target_horizon=config.target_horizon
     )
     
     test_dataset = RegimeMambaDataset(
         config.data_path, 
         seq_len=config.seq_len, 
         mode="test",
-        target_type=target_type,
-        target_horizon=target_horizon
+        target_type=config.target_type,
+        target_horizon=config.target_horizon
     )
     
     train_loader = DataLoader(
