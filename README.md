@@ -201,20 +201,28 @@ python filtering_train_strategies.py --data_path path/to/data.csv --results_dir 
 ### 프로젝트 구조
 
 ```
-regime_mamba/
-├── config/             # 설정 관련 모듈
-├── data/               # 데이터셋 관련 모듈
-├── models/             # 모델 정의 모듈
-├── train/              # 모델 훈련 관련 모듈
-│   ├── train.py        # 훈련 함수
-│   └── optimize.py     # 하이퍼파라미터 최적화
-├── evaluate/           # 모델 평가 관련 모듈
-│   ├── clustering.py   # 클러스터링 함수
-│   ├── strategy.py     # 전략 평가 함수
-│   ├── rolling_window.py         # 롤링 윈도우 백테스트
-│   ├── rolling_window_w_train.py # 재학습이 포함된 롤링 윈도우
-│   └── smoothing.py    # 레짐 평활화 기법
-└── utils/              # 유틸리티 함수
+Project directory/
+ ├──regime_mamba/
+ │  ├── config/             # Configuration related modules
+ │  ├── data/               # Dataset related modules
+ │  ├── models/             # Model definition modules
+ │  ├── train/              # Model training modules
+ │  │   ├── train.py        # Training functions
+ │  │   └── optimize.py     # Hyperparameter optimization
+ │  ├── evaluate/           # Model evaluation modules
+ │  │   ├── clustering.py   # Clustering functions
+ │  │   ├── strategy.py     # Strategy evaluation functions
+ │  │   ├── rolling_window.py         # Rolling window backtest
+ │  │   ├── rolling_window_w_train.py # Rolling window with retraining
+ │  │   └── smoothing.py    # Regime smoothing techniques
+ │  └── utils/              # Utility functions
+ ├main.py
+ ├filtering_strategies.py
+ ├filtering_train_strategies.py
+ ├rolling_window_backtest.py
+ ├rolling_window_train_backtest.py
+ ├README.md
+ └setup.py
 ```
 
 ### 데이터 형식
