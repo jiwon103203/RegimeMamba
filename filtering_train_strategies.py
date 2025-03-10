@@ -312,7 +312,7 @@ def evaluate_all_smoothing_methods(window_results_dir, model, data, kmeans, bull
             results_df.to_csv(os.path.join(method_results_dir, 'results.csv'), index=False)
             
             with open(os.path.join(method_results_dir, 'performance.json'), 'w') as f:
-                json.dump(performance, f, indent=4)
+                json.dump(performance, f, default=default_converter, indent=4)
     
     # 모든 smoothing 기법 비교 시각화
     if all_methods_results:
@@ -324,6 +324,12 @@ def evaluate_all_smoothing_methods(window_results_dir, model, data, kmeans, bull
         )
     
     return all_methods_results, all_methods_performances
+
+def default_converter(o):
+    if isinstance(o, datetime):
+        return o.isoformat()
+    raise TypeError(f"Type {type(o).__name__} is not serializable")
+
 
 def visualize_final_comparison(combined_results, save_dir):
     """
