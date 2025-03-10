@@ -1,7 +1,7 @@
 from .clustering import extract_hidden_states, identify_bull_bear_regimes, predict_regimes
 from .strategy import evaluate_regime_strategy, analyze_transaction_cost_impact, visualize_all_periods_performance
 from .rolling_window import (
-    RollingWindowConfig, DateBasedRegimeMambaDataset, 
+    RollingWindowConfig, 
     load_pretrained_model, run_rolling_window_backtest,
     identify_regimes_for_period, apply_regimes_to_future_period,
     visualize_period_performance
