@@ -159,7 +159,7 @@ def apply_and_evaluate_with_smoothing(model, data, kmeans, bull_regime, forward_
         
         # 원본과 smoothing 후 거래 횟수 계산
         raw_trades = (np.diff(raw_predictions.flatten()) != 0).sum() + (raw_predictions[0] == 1)
-        smoothed_trades = (np.diff(smoothed_predictions.flatten()) != 0).sum() + (smoothed_predictions[0][0] == 1)
+        smoothed_trades = (np.diff(smoothed_predictions.flatten()) != 0).sum() + (smoothed_predictions[0] == 1)
         
         # 성과 정보에 거래 감소 정보 추가
         performance['smoothing_method'] = smoothing_method
