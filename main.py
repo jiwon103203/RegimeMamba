@@ -23,8 +23,8 @@ def parse_args():
     parser.add_argument('--load_config', type=str, default=None, help='설정 파일 로드 경로')
     parser.add_argument('--transaction_cost', type=float, default=0.001, help='거래 비용 설정')
     parser.add_argument('--seed', type=int, default=42, help='랜덤 시드')
-    parser.add_argument('--target_type, type=str, default="next_day")
-    parser.add_argument('--target_horizon, type=int, default=1)
+    parser.add_argument('--target_type', type=str, default="next_day")
+    parser.add_argument('--target_horizon', type=int, default=1)
 
     args = parser.parse_args()
     return args
