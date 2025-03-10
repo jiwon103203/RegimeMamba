@@ -88,7 +88,9 @@ def apply_and_evaluate_with_smoothing(model, data, kmeans, bull_regime, forward_
         data=data, 
         seq_len=seq_len,
         start_date=forward_start,
-        end_date=forward_end
+        end_date=forward_end,
+        target_type=target_type,
+        target_horizon=target_horizon
     )
     
     # 데이터 로더 생성
@@ -292,7 +294,7 @@ def evaluate_all_smoothing_methods(window_results_dir, model, data, kmeans, bull
         results_df, performance = apply_and_evaluate_with_smoothing(
             model, data, kmeans, bull_regime, forward_start, forward_end, 
             method_name, config.device, config.batch_size, config.seq_len, 
-            config.transaction_cost, params
+            config.transaction_cost, params, config.target_type, config.target_horizon
         )
         
         if results_df is not None and performance is not None:
