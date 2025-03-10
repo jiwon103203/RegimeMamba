@@ -129,6 +129,159 @@ class RegimeMambaDataset(Dataset):
                 log_returns = [np.log(1 + r) for r in decimal_returns]
                 log_return_sum = np.sum(log_returns) * 100  # 백분율로 변환
                 self.targets.append([log_return_sum])
+                
+            # 타겟 날짜 저장 (타겟 기간의 마지막 날짜)
+            self.dates.append(dates[i+seq_len+target_horizon-1])
+
+    def __len__(self):
+        return len(self.sequences)
+
+    def __getitem__(self, idx):
+        return (
+            torch.tensor(self.sequences[idx], dtype=torch.float32),
+            torch.tensor(self.targets[idx], dtype=torch.float32),
+            self.dates[idx]
+        )
+
+class DateRangeRegimeMambaDataset(Dataset):
+    def __init__(self, data=None, path=None, seq_len=128, start_date=None, end_date=None, 
+                 target_type="next_day", target_horizon=1):
+        """
+        날짜 범위를 기반으로 데이터를 필터링하는 데이터셋 클래스
+
+        Args:
+            data: 전체 데이터프레임 (None인 경우 path에서 로드)
+            path: 데이터 파일 경로 (data가 None인 경우 사용)
+            seq_len: 시퀀스 길이
+            start_date: 시작 날짜 (문자열, 'YYYY-MM-DD' 형식)
+            end_date: 종료 날짜 (문자열, 'YYYY-MM-DD' 형식)
+            target_type: 타겟 유형
+                - next_day: 다음 날의 수익률
+                - average: 지정된 기간 동안의 평균 수익률
+                - cumulative: 지정된 기간 동안의 누적 수익률
+                - trend_strength: 선형 회귀로 측정한 추세 강도
+                - direction: 기간 동안의 방향성 (분류 문제로 변환)
+                - volatility_adjusted: 변동성 조정 수익률 (샤프 비율과 유사)
+                - max_drawdown: 기간 내 최대 낙폭
+                - up_ratio: 기간 중 상승한 날의 비율
+                - log_return_sum: 로그 수익률의 합계
+            target_horizon: 타겟 계산을 위한 기간 (일)
+        """
+        super().__init__()
+        self.seq_len = seq_len
+        self.target_type = target_type
+        self.target_horizon = target_horizon
+
+        # 데이터 로드
+        if data is None and path is not None:
+            data = pd.read_csv(path)
+            data = data.iloc[2:]
+            data.fillna(method='ffill', inplace=True)
+            data.fillna(method='bfill', inplace=True)
+            data['returns'] = data['returns'] * 100
+            data["dd_10"] = data["dd_10"] * 100
+            data["sortino_20"] = data["sortino_20"] * 100
+            data["sortino_60"] = data["sortino_60"] * 100
+
+        # 데이터가 제공되지 않은 경우 에러
+        if data is None:
+            raise ValueError("Either data or path must be provided")
+
+        # 날짜 칼럼 식별
+        date_col = 'Price' if 'Price' in data.columns else 'Date'
+
+        # 날짜 필터링
+        if start_date and end_date:
+            self.data = data[(data[date_col] >= start_date) & (data[date_col] <= end_date)].copy()
+        elif start_date:
+            self.data = data[data[date_col] >= start_date].copy()
+        elif end_date:
+            self.data = data[data[date_col] <= end_date].copy()
+        else:
+            self.data = data.copy()
+
+        # 특성과 타겟 칼럼 지정
+        self.feature_cols = ["returns", "dd_10", "sortino_20", "sortino_60"]
+        self.target_col = "returns"
+
+        # 시퀀스 및 타겟 생성
+        self.sequences = []
+        self.targets = []
+        self.dates = []
+
+        features = np.array(self.data[self.feature_cols])
+        dates = np.array(self.data[date_col])
+
+        # target_horizon을 고려한 인덱스 범위 조정
+        for i in range(len(features) - seq_len - target_horizon + 1):
+            self.sequences.append(features[i:i+seq_len])
+            
+            # 타겟 기간의 수익률 데이터 추출
+            target_returns = [features[i+seq_len+j][0] for j in range(target_horizon)]
+            decimal_returns = [r/100 for r in target_returns]  # 백분율 -> 소수
+
+            # 타겟 타입에 따른 계산 방식 선택
+            if target_type == "next_day":
+                # 다음 날의 수익률
+                self.targets.append([features[i+seq_len][0]])
+                
+            elif target_type == "average":
+                # 지정된 기간 동안의 평균 수익률
+                self.targets.append([np.mean(target_returns)])
+                
+            elif target_type == "cumulative":
+                # 지정된 기간 동안의 누적 수익률
+                cumulative_return = np.prod([1 + r for r in decimal_returns]) - 1
+                self.targets.append([cumulative_return * 100])  # 소수 -> 백분율
+                
+            elif target_type == "trend_strength":
+                # 선형 회귀로 측정한 추세 강도 (기울기)
+                if target_horizon >= 2:  # 최소 2일 이상 필요
+                    x = np.arange(target_horizon)
+                    slope, _ = np.polyfit(x, target_returns, 1)
+                    self.targets.append([slope])
+                else:
+                    self.targets.append([target_returns[0]])
+                    
+            elif target_type == "direction":
+                # 기간의 누적 수익률의 방향 (양수:1, 음수:-1, 제로:0)
+                cumulative_return = np.prod([1 + r for r in decimal_returns]) - 1
+                direction = np.sign(cumulative_return)
+                self.targets.append([float(direction)])
+                
+            elif target_type == "volatility_adjusted":
+                # 변동성으로 조정된 수익률 (샤프 비율과 유사)
+                mean_return = np.mean(target_returns)
+                std_return = np.std(target_returns) if np.std(target_returns) > 0 else 1.0
+                sharpe_like = mean_return / std_return
+                self.targets.append([sharpe_like])
+                
+            elif target_type == "max_drawdown":
+                # 기간 내 최대 낙폭
+                # 누적 곱으로 가격 시뮬레이션
+                price_curve = np.cumprod([1 + r for r in decimal_returns])
+                max_dd = 0
+                peak = price_curve[0]
+                
+                for price in price_curve:
+                    if price > peak:
+                        peak = price
+                    drawdown = (peak - price) / peak
+                    max_dd = max(max_dd, drawdown)
+                
+                self.targets.append([max_dd * 100])  # 백분율로 변환
+                
+            elif target_type == "up_ratio":
+                # 상승한 날의 비율
+                up_days = sum(1 for r in target_returns if r > 0)
+                up_ratio = up_days / len(target_returns) if target_returns else 0
+                self.targets.append([up_ratio * 100])  # 백분율로 변환
+                
+            elif target_type == "log_return_sum":
+                # 로그 수익률의 합계 (복리 효과를 더 잘 반영)
+                log_returns = [np.log(1 + r) for r in decimal_returns]
+                log_return_sum = np.sum(log_returns) * 100  # 백분율로 변환
+                self.targets.append([log_return_sum])
             
             # 타겟 날짜 저장 (타겟 기간의 마지막 날짜)
             self.dates.append(dates[i+seq_len+target_horizon-1])
@@ -153,28 +306,32 @@ def create_dataloaders(config):
     Returns:
         train_loader, valid_loader, test_loader: 데이터로더 튜플
     """
+    # target_type과 target_horizon이 없는 경우 기본값 설정
+    target_type = getattr(config, 'target_type', 'next_day')
+    target_horizon = getattr(config, 'target_horizon', 1)
+    
     train_dataset = RegimeMambaDataset(
         config.data_path, 
         seq_len=config.seq_len, 
         mode="train",
-        target_type=config.target_type,
-        target_horizon=config.target_horizon
+        target_type=target_type,
+        target_horizon=target_horizon
     )
     
     valid_dataset = RegimeMambaDataset(
         config.data_path, 
         seq_len=config.seq_len, 
         mode="valid",
-        target_type=config.target_type,
-        target_horizon=config.target_horizon
+        target_type=target_type,
+        target_horizon=target_horizon
     )
     
     test_dataset = RegimeMambaDataset(
         config.data_path, 
         seq_len=config.seq_len, 
         mode="test",
-        target_type=config.target_type,
-        target_horizon=config.target_horizon
+        target_type=target_type,
+        target_horizon=target_horizon
     )
     
     train_loader = DataLoader(
@@ -199,3 +356,43 @@ def create_dataloaders(config):
     )
     
     return train_loader, valid_loader, test_loader
+
+def create_date_range_dataloader(data=None, path=None, seq_len=128, batch_size=64, 
+                                start_date=None, end_date=None, shuffle=False, 
+                                target_type="next_day", target_horizon=1, num_workers=4):
+    """
+    날짜 범위 기반 데이터로더 생성 유틸리티 함수
+    
+    Args:
+        data: 데이터프레임 (None인 경우 path에서 로드)
+        path: 데이터 파일 경로 (data가 None인 경우)
+        seq_len: 시퀀스 길이
+        batch_size: 배치 크기
+        start_date: 시작 날짜
+        end_date: 종료 날짜
+        shuffle: 데이터 셔플 여부
+        target_type: 타겟 계산 방식
+        target_horizon: 타겟 계산 기간
+        num_workers: 데이터 로딩 워커 수
+        
+    Returns:
+        dataloader: 생성된 데이터로더
+    """
+    dataset = DateRangeRegimeMambaDataset(
+        data=data,
+        path=path,
+        seq_len=seq_len,
+        start_date=start_date,
+        end_date=end_date,
+        target_type=target_type,
+        target_horizon=target_horizon
+    )
+    
+    dataloader = DataLoader(
+        dataset,
+        batch_size=batch_size,
+        shuffle=shuffle,
+        num_workers=num_workers
+    )
+    
+    return dataloader
