@@ -12,6 +12,7 @@ from ..utils.utils import set_seed
 from ..models.mamba_model import create_model_from_config
 from .clustering import identify_bull_bear_regimes, predict_regimes, extract_hidden_states
 from .strategy import evaluate_regime_strategy, visualize_all_periods_performance
+from ..data.dataset import RegimeMambaDataset, create_dataloaders
 
 class RollingWindowConfig:
     def __init__(self):
@@ -39,60 +40,6 @@ class RollingWindowConfig:
         # 저장 경로
         self.results_dir = './rolling_window_results'
         os.makedirs(self.results_dir, exist_ok=True)
-
-class DateBasedRegimeMambaDataset(Dataset):
-    def __init__(self, data, seq_len=128, start_date=None, end_date=None):
-        """
-        날짜 범위를 기반으로 데이터를 필터링하는 데이터셋 클래스
-
-        Args:
-            data: 전체 데이터프레임
-            seq_len: 시퀀스 길이
-            start_date: 시작 날짜 (문자열, 'YYYY-MM-DD' 형식)
-            end_date: 종료 날짜 (문자열, 'YYYY-MM-DD' 형식)
-        """
-        super().__init__()
-        self.seq_len = seq_len
-
-        # 날짜 칼럼 식별
-        date_col = 'Price' if 'Price' in data.columns else 'Date'
-
-        # 날짜 필터링
-        if start_date and end_date:
-            self.data = data[(data[date_col] >= start_date) & (data[date_col] <= end_date)].copy()
-        elif start_date:
-            self.data = data[data[date_col] >= start_date].copy()
-        elif end_date:
-            self.data = data[data[date_col] <= end_date].copy()
-        else:
-            self.data = data.copy()
-
-        # 특성과 타겟 칼럼 지정
-        self.feature_cols = ["returns", "dd_10", "sortino_20", "sortino_60"]
-        self.target_col = "returns"
-
-        # 시퀀스 및 타겟 생성
-        self.sequences = []
-        self.targets = []
-        self.dates = []
-
-        features = np.array(self.data[self.feature_cols])
-        dates = np.array(self.data[date_col])
-
-        for i in range(len(features) - seq_len):
-            self.sequences.append(features[i:i+seq_len])
-            self.targets.append([features[i+seq_len][0]])  # 바로 다음날 수익률
-            self.dates.append(dates[i+seq_len])  # 타겟 날짜 저장
-
-    def __len__(self):
-        return len(self.sequences)
-
-    def __getitem__(self, idx):
-        return (
-            torch.tensor(self.sequences[idx], dtype=torch.float32),
-            torch.tensor(self.targets[idx], dtype=torch.float32),
-            self.dates[idx]
-        )
 
 def load_pretrained_model(config):
     """
@@ -146,11 +93,13 @@ def identify_regimes_for_period(model, data, config, period_start, period_end):
     print(f"기간 {period_start} ~ {period_end}에 대한 레짐 식별 중...")
 
     # 데이터셋 및 데이터로더 생성
-    dataset = DateBasedRegimeMambaDataset(
+    dataset = create_date_range_dataloader(
         data=data,
         seq_len=config.seq_len,
         start_date=period_start,
-        end_date=period_end
+        end_date=period_end,
+        target_type = config.target_type,
+        target_horizon = config.target_horizon
     )
 
     # 데이터가 충분한지 확인
@@ -209,11 +158,13 @@ def apply_regimes_to_future_period(model, data, config, kmeans, bull_regime, fut
     print(f"기간 {future_start} ~ {future_end}에 레짐 적용 중...")
 
     # 데이터셋 및 데이터로더 생성
-    dataset = DateBasedRegimeMambaDataset(
+    dataset = create_date_range_dataloader(
         data=data,
         seq_len=config.seq_len,
         start_date=future_start,
-        end_date=future_end
+        end_date=future_end,
+        target_type=config.target_type,
+        target_horizon=config.target_horizon
     )
 
     # 데이터가 충분한지 확인
