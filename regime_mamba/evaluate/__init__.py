@@ -26,7 +26,6 @@ __all__ = [
     'analyze_transaction_cost_impact',
     'visualize_all_periods_performance',
     'RollingWindowConfig',
-    'DateBasedRegimeMambaDataset',
     'load_pretrained_model',
     'run_rolling_window_backtest',
     'identify_regimes_for_period',
