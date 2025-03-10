@@ -50,6 +50,8 @@ def main():
         config = RegimeMambaConfig()
     
     config.data_path = args.data_path
+    config.target_type = args.target_type
+    config.target_horizon = args.target_horizon
     
     # 1. 하이퍼파라미터 최적화 (선택 사항)
     if args.optimize:
