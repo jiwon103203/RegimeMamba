@@ -309,6 +309,7 @@ def create_dataloaders(config):
     # target_type과 target_horizon이 없는 경우 기본값 설정
     target_type = getattr(config, 'target_type', 'next_day')
     target_horizon = getattr(config, 'target_horizon', 1)
+    data_path = getattr(config, 'data_path', '/content/drive/MyDrive/mamba/data.csv')
     
     train_dataset = RegimeMambaDataset(
         config.data_path, 
