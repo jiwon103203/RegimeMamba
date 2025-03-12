@@ -121,6 +121,7 @@ def optimize_regime_mamba_bayesian(data_path, base_config, n_iterations=30, save
 
     # 최적 파라미터를 실제 값으로 변환
     optimized_config = RegimeMambaConfig()
+    optimized_config.data_path = data_path
     optimized_config.d_model = int(2 ** best_params['d_model_exp'])
     optimized_config.d_state = int(2 ** best_params['d_state_exp'])
     optimized_config.n_layers = 6      # 항상 6로 고정
