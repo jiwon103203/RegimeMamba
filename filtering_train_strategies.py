@@ -32,7 +32,7 @@ def parse_args():
     
     parser.add_argument('--data_path', type=str, required=True, help='데이터 파일 경로')
     parser.add_argument('--results_dir', type=str, default='./smoothing_train_results', help='결과 저장 디렉토리')
-    parser.add_argument('--start_date', type=str, default='1990-01-01', help='시작 날짜')
+    parser.add_argument('--start_date', type=str, default='2000-01-01', help='시작 날짜')
     parser.add_argument('--end_date', type=str, default='2023-12-31', help='종료 날짜')
     
     # 기간 관련 설정
@@ -50,6 +50,8 @@ def parse_args():
     parser.add_argument('--seq_len', type=int, default=128, help='시퀀스 길이')
     parser.add_argument('--batch_size', type=int, default=64, help='배치 크기')
     parser.add_argument('--learning_rate', type=float, default=1e-6, help='학습률')
+    parser.add_argument('--target_type', type=str)
+    parser.add_argument('--target_horizon', type=int)
     
     # 학습 관련 설정
     parser.add_argument('--max_epochs', type=int, default=100, help='최대 학습 에폭')
@@ -61,7 +63,7 @@ def parse_args():
 
 def apply_and_evaluate_with_smoothing(model, data, kmeans, bull_regime, forward_start, forward_end, 
                                     smoothing_method, device, batch_size, seq_len, transaction_cost, 
-                                    smoothing_params):
+                                    smoothing_params, target_type, target_horizon):
     """
     특정 smoothing 기법을 적용하여 레짐 전략 평가
     
@@ -78,6 +80,8 @@ def apply_and_evaluate_with_smoothing(model, data, kmeans, bull_regime, forward_
         seq_len: 시퀀스 길이
         transaction_cost: 거래 비용
         smoothing_params: smoothing 기법 파라미터
+        target_type : 타겟 변수 유형
+        target_horizon : 타겟 변수 관련 변수
         
     Returns:
         results_df: 결과 데이터프레임
@@ -670,6 +674,8 @@ def main():
     config.max_epochs = args.max_epochs
     config.patience = args.patience
     config.transaction_cost = args.transaction_cost
+    config.target_type = args.target_type
+    config.target_horizon = args.target_horizon
     
     # 설정 정보 저장
     with open(os.path.join(output_dir, 'config.txt'), 'w') as f:
