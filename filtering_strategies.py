@@ -25,6 +25,9 @@ def parse_args():
     parser.add_argument('--batch_size', type=int, default=64, help='배치 크기')
     parser.add_argument('--n_clusters', type=int, default=2, help='클러스터 수')
     
+    parser.add_argument('--target_type', type=str)
+    parser.add_argument('--target_horizon', type=int)
+    
     return parser.parse_args()
 
 def main():
@@ -51,6 +54,8 @@ def main():
     config.seq_len = args.seq_len
     config.batch_size = args.batch_size
     config.n_clusters = args.n_clusters
+    config.target_type = args.target_type
+    config.target_horizon = args.target_horizon
     
     # 파라미터 정보 저장
     with open(os.path.join(output_dir, 'parameters.txt'), 'w') as f:
@@ -64,6 +69,8 @@ def main():
         f.write(f"seq_len: {args.seq_len}\n")
         f.write(f"batch_size: {args.batch_size}\n")
         f.write(f"n_clusters: {args.n_clusters}\n")
+        f.write(f"target_type: {args.target_type}\n")
+        f.write(f"target_horizon: {args.target_horizon}\n")
     
     # 결과 그래프 저장 경로
     strategies_chart_path = os.path.join(output_dir, 'filtering_strategies_comparison.png')
