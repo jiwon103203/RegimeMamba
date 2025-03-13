@@ -17,6 +17,9 @@ from .rolling_window_w_train import (
     apply_and_evaluate_regimes, visualize_window_performance,
     run_rolling_window_train, visualize_all_windows_performance
 )
+from .rl_evaluate import (
+    evaluate_rl_agent,calculate_overall_performance
+)
 
 __all__ = [
     'extract_hidden_states', 
@@ -46,5 +49,7 @@ __all__ = [
     'apply_and_evaluate_regimes',
     'visualize_window_performance', 
     'run_rolling_window_train',
-    'visualize_all_windows_performance'
+    'visualize_all_windows_performance',
+    'evaluate_rl_agent',
+    'calculate_overall_performance'
 ]
