@@ -38,6 +38,10 @@ class RLInvestmentConfig:
         self.seq_len = 128
         self.learning_rate = 1e-4
         
+        # Target type and horizon (for compatibility with other code)
+        self.target_type = 'returns'
+        self.target_horizon = 1
+        
         # Device
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         
@@ -79,6 +83,8 @@ class RLInvestmentConfig:
             f.write(f"Number of update epochs: {self.n_epochs}\n")
             f.write(f"Discount factor: {self.gamma}\n")
             f.write(f"Transaction cost: {self.transaction_cost}\n")
+            f.write(f"Target type: {self.target_type}\n")
+            f.write(f"Target horizon: {self.target_horizon}\n")
             f.write(f"Device: {self.device}\n")
         
         return config_path
@@ -147,6 +153,12 @@ class RLInvestmentConfig:
             config.n_epochs = args.n_epochs
         if hasattr(args, 'gamma'):
             config.gamma = args.gamma
+            
+        # Target parameters (for compatibility)
+        if hasattr(args, 'target_type'):
+            config.target_type = args.target_type
+        if hasattr(args, 'target_horizon'):
+            config.target_horizon = args.target_horizon
         
         # Other settings
         if hasattr(args, 'transaction_cost'):
