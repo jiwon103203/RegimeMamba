@@ -45,9 +45,16 @@ def parse_args():
     parser.add_argument('--n_epochs', type=int, default=10, help='Number of update epochs')
     parser.add_argument('--gamma', type=float, default=0.99, help='Discount factor')
     
+    # Target parameters (for compatibility)
+    parser.add_argument('--target_type', type=str, default='returns', 
+                       help='Target type (returns, average, etc.)')
+    parser.add_argument('--target_horizon', type=int, default=1, 
+                       help='Target horizon for predictions')
+    
     # Other settings
     parser.add_argument('--transaction_cost', type=float, default=0.001, help='Transaction cost (0.001 = 0.1%)')
     parser.add_argument('--seed', type=int, default=42, help='Random seed')
+    parser.add_argument('--debug', action='store_true', help='Enable debug output')
     
     return parser.parse_args()
 
@@ -64,21 +71,62 @@ def main():
     output_dir = os.path.join(args.results_dir, f"rl_investment_{timestamp}")
     os.makedirs(output_dir, exist_ok=True)
     
+    # Enable debug mode if requested
+    if args.debug:
+        import logging
+        logging.basicConfig(level=logging.DEBUG)
+        print("Debug mode enabled")
+    
+    # Display system info
+    print("\n=== System Information ===")
+    print(f"Python version: {sys.version}")
+    if torch.cuda.is_available():
+        print(f"CUDA available: Yes (Device: {torch.cuda.get_device_name(0)})")
+        print(f"CUDA version: {torch.version.cuda}")
+    else:
+        print("CUDA available: No")
+    print(f"PyTorch version: {torch.__version__}")
+    
     # Create configuration from arguments
     config = RLInvestmentConfig.from_args(args)
     config.results_dir = output_dir
+    
+    # Print important parameter values
+    print("\n=== Configuration ===")
+    print(f"Data path: {config.data_path}")
+    print(f"Start date: {config.start_date}")
+    print(f"Model dimension: {config.d_model}")
+    print(f"State dimension: {config.d_state}")
+    print(f"Number of layers: {config.n_layers}")
+    print(f"Sequence length: {config.seq_len}")
+    print(f"Position penalty: {config.position_penalty}")
+    print(f"Target type: {config.target_type}")
+    print(f"Target horizon: {config.target_horizon}")
+    print(f"Device: {config.device}")
     
     # Save configuration
     config.save_config(output_dir)
     
     # Run RL investment analysis
-    print("=== Starting RL Investment Analysis ===")
-    combined_results, all_performances, training_histories = run_rl_investment(config)
+    print("\n=== Starting RL Investment Analysis ===")
+    try:
+        combined_results, all_performances, training_histories = run_rl_investment(config)
+        
+        if combined_results is not None:
+            print(f"RL investment analysis complete! Results saved to {output_dir}")
+        else:
+            print("RL investment analysis failed!")
+    except Exception as e:
+        print(f"Error running RL investment analysis: {e}")
+        import traceback
+        traceback.print_exc()
+        return 1
     
-    if combined_results is not None:
-        print(f"RL investment analysis complete! Results saved to {output_dir}")
-    else:
-        print("RL investment analysis failed!")
+    return 0
 
 if __name__ == "__main__":
-    main()
+    # Add torch import for system info
+    import torch
+    
+    result = main()
+    sys.exit(result)
