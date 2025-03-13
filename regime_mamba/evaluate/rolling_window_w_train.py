@@ -11,7 +11,7 @@ from tqdm import tqdm
 import copy
 
 from ..utils.utils import set_seed
-from ..data.dataset import RegimeMambaDataset, create_dataloaders
+from ..data.dataset import RegimeMambaDataset, create_dataloaders, DateRangeRegimeMambaDataset
 from ..models.mamba_model import TimeSeriesMamba, create_model_from_config
 from ..train.train import train_with_early_stopping
 from .clustering import identify_bull_bear_regimes, predict_regimes, extract_hidden_states
@@ -58,60 +58,6 @@ class RollingWindowTrainConfig:
         # 저장 관련 설정
         self.results_dir = './rolling_window_train_results'
         os.makedirs(self.results_dir, exist_ok=True)
-
-class DateRangeRegimeMambaDataset(Dataset):
-    def __init__(self, data, seq_len=128, start_date=None, end_date=None):
-        """
-        날짜 범위 기반 데이터셋 클래스
-        
-        Args:
-            data: 전체 데이터프레임
-            seq_len: 시퀀스 길이
-            start_date: 시작 날짜 (문자열, 'YYYY-MM-DD' 형식)
-            end_date: 종료 날짜 (문자열, 'YYYY-MM-DD' 형식)
-        """
-        super().__init__()
-        self.seq_len = seq_len
-
-        # 날짜 칼럼 식별
-        date_col = 'Price' if 'Price' in data.columns else 'Date'
-
-        # 날짜 필터링
-        if start_date and end_date:
-            self.data = data[(data[date_col] >= start_date) & (data[date_col] <= end_date)].copy()
-        elif start_date:
-            self.data = data[data[date_col] >= start_date].copy()
-        elif end_date:
-            self.data = data[data[date_col] <= end_date].copy()
-        else:
-            self.data = data.copy()
-
-        # 특성과 타겟 칼럼 지정
-        self.feature_cols = ["returns", "dd_10", "sortino_20", "sortino_60"]
-        self.target_col = "returns"
-
-        # 시퀀스 및 타겟 생성
-        self.sequences = []
-        self.targets = []
-        self.dates = []
-
-        features = np.array(self.data[self.feature_cols])
-        dates = np.array(self.data[date_col])
-
-        for i in range(len(features) - seq_len):
-            self.sequences.append(features[i:i+seq_len])
-            self.targets.append([features[i+seq_len][0]])  # 바로 다음날 수익률
-            self.dates.append(dates[i+seq_len])  # 타겟 날짜 저장
-
-    def __len__(self):
-        return len(self.sequences)
-
-    def __getitem__(self, idx):
-        return (
-            torch.tensor(self.sequences[idx], dtype=torch.float32),
-            torch.tensor(self.targets[idx], dtype=torch.float32),
-            self.dates[idx]
-        )
 
 def train_model_for_window(config, train_start, train_end, valid_start, valid_end, data):
     """
@@ -215,7 +161,9 @@ def identify_regimes_for_window(config, model, data, clustering_start, clusterin
         data=data, 
         seq_len=config.seq_len,
         start_date=clustering_start,
-        end_date=clustering_end
+        end_date=clustering_end,
+        target_type=config.target_type,
+        target_horizon=config.target_horizon
     )
     
     # 데이터 로더 생성
