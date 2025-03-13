@@ -5,7 +5,7 @@ Neural network models for RL-based investment strategies.
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from mamba_model import TimeSeriesMamba
+from .mamba_model import TimeSeriesMamba
 
 class ActorCritic(nn.Module):
     """
