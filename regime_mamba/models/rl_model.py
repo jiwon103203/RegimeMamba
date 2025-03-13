@@ -78,18 +78,10 @@ class ActorCritic(nn.Module):
             position_embedded = position_embedded.unsqueeze(1).repeat(1, features.shape[1], 1)
             # Concatenate features and position
             combined_features = torch.cat([features, position_embedded], dim=-1)
-            hidden = self.feature_extractor(combined_features)
+            _, hidden = self.feature_extractor(combined_features, return_hidden = True)
         else:
-            hidden = self.feature_extractor(features)
+            _, hidden = self.feature_extractor(features, return_hidden = True)
         
-        # Print shapes for debugging
-        # print(f"Before mean: hidden shape = {hidden.shape}")
-        
-        # Average over sequence dimension
-        hidden = torch.mean(hidden, dim=1)
-        
-        # Print shape after pooling
-        # print(f"After mean: hidden shape = {hidden.shape}")
         
         # Ensure correct dimensions - reshape if necessary
         if hidden.dim() == 1:
