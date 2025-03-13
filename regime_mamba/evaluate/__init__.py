@@ -41,7 +41,6 @@ __all__ = [
     'visualize_filtered_vs_original',
     'find_optimal_filtering',
     'RollingWindowTrainConfig',
-    'DateRangeRegimeMambaDataset',
     'train_model_for_window',
     'identify_regimes_for_window',
     'apply_and_evaluate_regimes',
