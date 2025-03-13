@@ -64,35 +64,63 @@ class PPOAgent:
         state = self.env.reset()
         done = False
         
-        for _ in range(min(n_steps, len(self.env.returns) - self.env.current_step)):
-            # Convert observation to tensor
-            features = torch.FloatTensor(state['features']).unsqueeze(0).to(self.device)
-            position = torch.LongTensor([state['position']]).to(self.device)
-            
-            # Get action and value
-            with torch.no_grad():
-                action_mean, value = self.model(features, position)
-                action_dist = Normal(action_mean, 0.1)
-                action = action_dist.sample()
-                log_prob = action_dist.log_prob(action)
-            
-            # Take step in environment
-            next_state, reward, done, info = self.env.step(action.cpu().numpy())
-            
-            # Store data
-            states.append(state)
-            actions.append(action.cpu().numpy())
-            log_probs.append(log_prob.cpu().numpy())
-            values.append(value.cpu().numpy())
-            rewards.append(reward)
-            dones.append(done)
-            positions.append(info['position'])
-            
-            # Update state
-            state = next_state
-            
-            if done:
+        max_steps = min(n_steps, len(self.env.returns) - self.env.current_step)
+        print(f"Collecting trajectories for {max_steps} steps")
+        
+        for step in range(max_steps):
+            try:
+                # Convert observation to tensor
+                features = torch.FloatTensor(state['features']).unsqueeze(0).to(self.device)
+                position = torch.LongTensor([state['position']]).to(self.device)
+                
+                # Debug info
+                if step == 0:
+                    print(f"Features shape: {features.shape}, Position: {position.item()}")
+                
+                # Get action and value
+                with torch.no_grad():
+                    action_mean, value = self.model(features, position)
+                    # Add small noise for exploration
+                    action_std = torch.ones_like(action_mean) * 0.1
+                    action_dist = Normal(action_mean, action_std)
+                    action = action_dist.sample()
+                    log_prob = action_dist.log_prob(action)
+                
+                if step == 0:
+                    print(f"Action mean: {action_mean.item()}, Action: {action.item()}, Value: {value.item()}")
+                
+                # Take step in environment
+                next_state, reward, done, info = self.env.step(action.cpu().numpy())
+                
+                # Store data
+                states.append(state)
+                actions.append(action.cpu().numpy())
+                log_probs.append(log_prob.cpu().numpy())
+                values.append(value.cpu().numpy())
+                rewards.append(reward)
+                dones.append(done)
+                positions.append(info['position'])
+                
+                # Update state
+                state = next_state
+                
+                if done:
+                    print(f"Environment done after {step+1} steps")
+                    break
+                    
+            except Exception as e:
+                print(f"Error in step {step}: {e}")
+                import traceback
+                traceback.print_exc()
+                if step == 0:
+                    # If we fail on the first step, we can't continue
+                    raise e
                 break
+        
+        if len(rewards) == 0:
+            raise ValueError("No trajectories collected")
+            
+        print(f"Collected {len(rewards)} steps")
         
         # Calculate returns
         returns = self._compute_returns(rewards, dones)
@@ -162,14 +190,19 @@ class PPOAgent:
             'entropy': []
         }
         
-        for _ in range(n_epochs):
+        # Adjust batch size if needed
+        actual_batch_size = min(batch_size, len(states))
+        if actual_batch_size != batch_size:
+            print(f"Adjusting batch size from {batch_size} to {actual_batch_size}")
+        
+        for epoch in range(n_epochs):
             # Generate random indices
             indices = np.random.permutation(len(states))
             
             # Iterate over mini-batches
-            for start_idx in range(0, len(states), batch_size):
+            for start_idx in range(0, len(states), actual_batch_size):
                 # Get mini-batch indices
-                batch_indices = indices[start_idx:start_idx + batch_size]
+                batch_indices = indices[start_idx:min(start_idx + actual_batch_size, len(states))]
                 
                 # Get mini-batch data
                 batch_states = [states[i] for i in batch_indices]
@@ -178,39 +211,50 @@ class PPOAgent:
                 batch_returns = returns[batch_indices]
                 batch_advantages = advantages[batch_indices]
                 
-                # Forward pass
-                features_batch = torch.FloatTensor(np.stack([s['features'] for s in batch_states])).to(self.device)
-                position_batch = torch.LongTensor([s['position'] for s in batch_states]).to(self.device)
-                
-                action_mean, value = self.model(features_batch, position_batch)
-                action_dist = Normal(action_mean, 0.1)
-                log_prob = action_dist.log_prob(batch_actions)
-                entropy = action_dist.entropy().mean()
-                
-                # Calculate losses
-                ratio = torch.exp(log_prob - batch_old_log_probs)
-                surr1 = ratio * batch_advantages
-                surr2 = torch.clamp(ratio, 1.0 - self.epsilon, 1.0 + self.epsilon) * batch_advantages
-                policy_loss = -torch.min(surr1, surr2).mean()
-                
-                value_loss = F.mse_loss(value, batch_returns)
-                
-                # Combined loss
-                loss = policy_loss + self.value_coef * value_loss - self.entropy_coef * entropy
-                
-                # Update model
-                self.optimizer.zero_grad()
-                loss.backward()
-                self.optimizer.step()
-                
-                # Store metrics
-                metrics['value_loss'].append(value_loss.item())
-                metrics['policy_loss'].append(policy_loss.item())
-                metrics['entropy'].append(entropy.item())
+                try:
+                    # Forward pass
+                    features_batch = torch.FloatTensor(np.stack([s['features'] for s in batch_states])).to(self.device)
+                    position_batch = torch.LongTensor([s['position'] for s in batch_states]).to(self.device)
+                    
+                    action_mean, value = self.model(features_batch, position_batch)
+                    action_std = torch.ones_like(action_mean) * 0.1
+                    action_dist = Normal(action_mean, action_std)
+                    log_prob = action_dist.log_prob(batch_actions)
+                    entropy = action_dist.entropy().mean()
+                    
+                    # Calculate losses
+                    ratio = torch.exp(log_prob - batch_old_log_probs)
+                    surr1 = ratio * batch_advantages
+                    surr2 = torch.clamp(ratio, 1.0 - self.epsilon, 1.0 + self.epsilon) * batch_advantages
+                    policy_loss = -torch.min(surr1, surr2).mean()
+                    
+                    value_loss = F.mse_loss(value, batch_returns)
+                    
+                    # Combined loss
+                    loss = policy_loss + self.value_coef * value_loss - self.entropy_coef * entropy
+                    
+                    # Update model
+                    self.optimizer.zero_grad()
+                    loss.backward()
+                    self.optimizer.step()
+                    
+                    # Store metrics
+                    metrics['value_loss'].append(value_loss.item())
+                    metrics['policy_loss'].append(policy_loss.item())
+                    metrics['entropy'].append(entropy.item())
+                    
+                except Exception as e:
+                    print(f"Error in update: {e}")
+                    import traceback
+                    traceback.print_exc()
+                    continue
         
         # Calculate average metrics
         for k, v in metrics.items():
-            metrics[k] = np.mean(v)
+            if v:  # Only compute mean if list is not empty
+                metrics[k] = np.mean(v)
+            else:
+                metrics[k] = 0.0
             
         return metrics
     
@@ -237,6 +281,11 @@ class PPOAgent:
         }
         
         for episode in range(n_episodes):
+            print(f"\nStarting episode {episode+1}/{n_episodes}")
+            
+            # Reset environment for new episode
+            self.env.reset()
+            
             # Collect trajectories
             trajectory = self.collect_trajectories(n_steps=n_steps_per_episode)
             
@@ -252,7 +301,7 @@ class PPOAgent:
             history['nav'].append(self.env.nav)
             
             # Print progress
-            print(f"Episode {episode+1}/{n_episodes}")
+            print(f"Episode {episode+1}/{n_episodes} completed")
             print(f"  Reward: {history['rewards'][-1]:.4f}")
             print(f"  Return: {history['returns'][-1]:.4f}")
             print(f"  NAV: {history['nav'][-1]:.4f}")
@@ -287,6 +336,7 @@ class PPOAgent:
         dates = []
         
         # Run episode
+        step = 0
         while not done:
             # Convert observation to tensor
             features = torch.FloatTensor(state['features']).unsqueeze(0).to(self.device)
@@ -309,6 +359,12 @@ class PPOAgent:
             
             # Update state
             state = next_state
+            
+            # Safety check
+            step += 1
+            if step > len(env.returns) * 2:  # Should never happen
+                print("Warning: Evaluation loop appears to be stuck, breaking")
+                break
         
         # Calculate metrics
         total_return = np.sum(strategy_returns)
