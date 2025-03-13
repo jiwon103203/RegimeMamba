@@ -56,6 +56,10 @@ class ActorCritic(nn.Module):
             nn.Linear(32, 1)
         )
         
+        # Store dimensions for debugging
+        self.d_model = d_model
+        self.input_dim = input_dim
+        
     def forward(self, features, position=None):
         """
         Forward pass through the network.
@@ -78,8 +82,22 @@ class ActorCritic(nn.Module):
         else:
             hidden = self.feature_extractor(features)
         
+        # Print shapes for debugging
+        # print(f"Before mean: hidden shape = {hidden.shape}")
+        
         # Average over sequence dimension
         hidden = torch.mean(hidden, dim=1)
+        
+        # Print shape after pooling
+        # print(f"After mean: hidden shape = {hidden.shape}")
+        
+        # Ensure correct dimensions - reshape if necessary
+        if hidden.dim() == 1:
+            hidden = hidden.unsqueeze(0)
+        
+        # Check if hidden state has the right dimension
+        if hidden.shape[-1] != self.d_model:
+            raise ValueError(f"Hidden state dimension {hidden.shape[-1]} doesn't match expected d_model {self.d_model}")
         
         # Get action and value
         action = self.actor(hidden)
