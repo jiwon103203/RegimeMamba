@@ -15,10 +15,12 @@ from collections import defaultdict
 from regime_mamba.utils.utils import set_seed
 from regime_mamba.evaluate.rolling_window_w_train import (
     RollingWindowTrainConfig, 
-    DateRangeRegimeMambaDataset,
     train_model_for_window, 
     identify_regimes_for_window
 )
+
+from regime_mamba.data.dataset import DateRangeRegimeMambaDataset
+
 from regime_mamba.evaluate.smoothing import (
     apply_regime_smoothing,
     apply_confirmation_rule,
@@ -674,6 +676,8 @@ def main():
     config.max_epochs = args.max_epochs
     config.patience = args.patience
     config.transaction_cost = args.transaction_cost
+    config.target_type = args.target_type
+    config.target_horizon = args.target_horizon
     
     # 설정 정보 저장
     with open(os.path.join(output_dir, 'config.txt'), 'w') as f:
