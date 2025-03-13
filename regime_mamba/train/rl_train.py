@@ -39,9 +39,33 @@ def train_rl_agent_for_window(config, train_start, train_end, valid_start, valid
         print(f"Warning: Not enough data for training. Got {len(train_data)} samples.")
         return None, None, None
     
+    # Determine feature columns
+    feature_cols = ['returns', 'dd_10', 'sortino_20', 'sortino_60']
+    
+    # Check if all columns exist in the dataset
+    for col in feature_cols:
+        if col not in train_data.columns:
+            print(f"Warning: Column '{col}' not found in dataset. Available columns: {train_data.columns.tolist()}")
+            return None, None, None
+    
     # Prepare features and returns
-    features = train_data[['returns', 'dd_10', 'sortino_20', 'sortino_60']].values
+    features = train_data[feature_cols].values
     returns = train_data['returns'].values / 100  # Convert to decimal
+    
+    # Print feature information for debugging
+    print(f"Features shape: {features.shape}")
+    print(f"Feature stats - Mean: {np.mean(features, axis=0)}, Std: {np.std(features, axis=0)}")
+    print(f"Returns shape: {returns.shape}")
+    print(f"Returns stats - Mean: {np.mean(returns)}, Std: {np.std(returns)}")
+    
+    # Check for NaN or infinity values
+    if np.isnan(features).any() or np.isinf(features).any():
+        print("Warning: Features contain NaN or infinity values")
+        features = np.nan_to_num(features, nan=0.0, posinf=0.0, neginf=0.0)
+    
+    if np.isnan(returns).any() or np.isinf(returns).any():
+        print("Warning: Returns contain NaN or infinity values")
+        returns = np.nan_to_num(returns, nan=0.0, posinf=0.0, neginf=0.0)
     
     # Create environment
     env = FinancialTradingEnv(
@@ -54,14 +78,22 @@ def train_rl_agent_for_window(config, train_start, train_end, valid_start, valid
         window_size=config.window_size
     )
     
+    # Calculate actual input dimension (features + one-hot position)
+    input_dim = features.shape[1] + 3  # +3 for one-hot position encoding
+    
+    print(f"Creating model with input_dim={input_dim}, d_model={config.d_model}")
+    
     # Create model
     model = ActorCritic(
-        input_dim=features.shape[1] + 3,  # +3 for one-hot position
+        input_dim=input_dim,
         d_model=config.d_model,
         d_state=config.d_state,
         n_layers=config.n_layers,
         dropout=config.dropout
     ).to(config.device)
+    
+    # Verify model architecture
+    print(f"Model structure: {model}")
     
     # Create agent
     agent = PPOAgent(
@@ -73,12 +105,18 @@ def train_rl_agent_for_window(config, train_start, train_end, valid_start, valid
     )
     
     # Train agent
-    history = agent.train(
-        n_episodes=config.n_episodes,
-        n_steps_per_episode=config.steps_per_episode,
-        n_epochs=config.n_epochs,
-        batch_size=config.batch_size
-    )
+    try:
+        history = agent.train(
+            n_episodes=config.n_episodes,
+            n_steps_per_episode=config.steps_per_episode,
+            n_epochs=config.n_epochs,
+            batch_size=config.batch_size
+        )
+    except Exception as e:
+        print(f"Error during training: {e}")
+        import traceback
+        traceback.print_exc()
+        return None, None, None
     
     # Validate on validation data
     valid_data = data[(data['Date'] >= valid_start) & (data['Date'] <= valid_end)].copy()
@@ -86,8 +124,17 @@ def train_rl_agent_for_window(config, train_start, train_end, valid_start, valid
     if len(valid_data) < config.seq_len:
         print(f"Warning: Not enough data for validation. Got {len(valid_data)} samples.")
     else:
-        valid_features = valid_data[['returns', 'dd_10', 'sortino_20', 'sortino_60']].values
+        valid_features = valid_data[feature_cols].values
         valid_returns = valid_data['returns'].values / 100
+        
+        # Check for NaN or infinity values
+        if np.isnan(valid_features).any() or np.isinf(valid_features).any():
+            print("Warning: Validation features contain NaN or infinity values")
+            valid_features = np.nan_to_num(valid_features, nan=0.0, posinf=0.0, neginf=0.0)
+        
+        if np.isnan(valid_returns).any() or np.isinf(valid_returns).any():
+            print("Warning: Validation returns contain NaN or infinity values")
+            valid_returns = np.nan_to_num(valid_returns, nan=0.0, posinf=0.0, neginf=0.0)
         
         valid_env = FinancialTradingEnv(
             returns=valid_returns,
