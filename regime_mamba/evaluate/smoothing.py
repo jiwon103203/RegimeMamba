@@ -5,6 +5,7 @@ from scipy.ndimage import gaussian_filter1d
 import torch
 import json
 from tqdm import tqdm
+import os
 
 def apply_regime_smoothing(regime_predictions, method="ma", window=5, threshold=0.5):
     """
