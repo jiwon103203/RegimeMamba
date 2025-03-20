@@ -21,8 +21,8 @@ RegimeMamba is a market regime identification system based on the Mamba State Sp
 ### Installation
 
 ```bash
-git clone https://github.com/jiwon103203/regime_mamba.git
-cd regime_mamba
+git clone https://github.com/jiwon103203/RegimeMamba.git
+cd RegimeMamba
 pip install -e .
 ```
 
@@ -149,8 +149,8 @@ RegimeMamba는 Mamba 상태 공간 모델(SSM)을 기반으로 한 시장 레짐
 ### 설치 방법
 
 ```bash
-git clone https://github.com/jiwon103203/regime_mamba.git
-cd regime_mamba
+git clone https://github.com/jiwon103203/RegimeMamba.git
+cd RegimeMamba
 pip install -e .
 ```
 
