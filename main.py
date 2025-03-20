@@ -25,6 +25,7 @@ def parse_args():
     parser.add_argument('--seed', type=int, default=42, help='랜덤 시드')
     parser.add_argument('--target_type', type=str, default="next_day")
     parser.add_argument('--target_horizon', type=int, default=1)
+    parser.add_argument('--preprocessed', type=bool, default=True)
 
     args = parser.parse_args()
     return args
@@ -52,6 +53,7 @@ def main():
     config.data_path = args.data_path
     config.target_type = args.target_type
     config.target_horizon = args.target_horizon
+    config.preprocessed = args.preprocessed
     
     # 1. 하이퍼파라미터 최적화 (선택 사항)
     if args.optimize:
