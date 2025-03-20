@@ -21,7 +21,7 @@ RegimeMamba is a market regime identification system based on the Mamba State Sp
 ### Installation
 
 ```bash
-git clone https://github.com/yourusername/regime_mamba.git
+git clone https://github.com/jiwon103203/regime_mamba.git
 cd regime_mamba
 pip install -e .
 ```
@@ -100,7 +100,7 @@ Project directory/
 ### Data Format
 
 Input data should be a CSV file with the following columns:
-- Date column: 'Date' or 'Price'
+- Date column: 'Date'
 - Feature columns: 'returns', 'dd_10', 'sortino_20', 'sortino_60'
 
 ### Supported Evaluation Methods
@@ -149,7 +149,7 @@ RegimeMamba는 Mamba 상태 공간 모델(SSM)을 기반으로 한 시장 레짐
 ### 설치 방법
 
 ```bash
-git clone https://github.com/yourusername/regime_mamba.git
+git clone https://github.com/jiwon103203/regime_mamba.git
 cd regime_mamba
 pip install -e .
 ```
@@ -228,7 +228,7 @@ Project directory/
 ### 데이터 형식
 
 입력 데이터는 다음 형식의 CSV 파일이어야 합니다:
-- 날짜 열: 'Date' 또는 'Price'
+- 날짜 열: 'Date'
 - 특성 열: 'returns', 'dd_10', 'sortino_20', 'sortino_60'
 
 ### 지원하는 평가 방법
