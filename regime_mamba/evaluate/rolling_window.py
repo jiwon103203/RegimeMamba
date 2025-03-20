@@ -235,16 +235,15 @@ def run_rolling_window_backtest(config, data_path):
     """
     # 데이터 로드
     data = pd.read_csv(data_path)
-    data = data.iloc[2:]  # 첫 2행 제외
     data.fillna(method='ffill', inplace=True)
     data.fillna(method='bfill', inplace=True)
-    data['returns'] = data['returns'] * 100
+    data['returns'] = data['returns'] * 100 if config.preprocessed = True else data['returns']
     data["dd_10"] = data["dd_10"] * 100
     data["sortino_20"] = data["sortino_20"] * 100
     data["sortino_60"] = data["sortino_60"] * 100
 
     # 날짜 칼럼 식별
-    date_col = 'Price' if 'Price' in data.columns else 'Date'
+    date_col = 'Date'
 
     # 사전 학습된 모델 로드
     model = load_pretrained_model(config)
