@@ -54,7 +54,7 @@ class RegimeMambaDataset(Dataset):
         self.targets = []
         self.dates = []  # 날짜 정보도 저장
 
-        features = np.array(self.subset[self.feature_cols])
+        features = np.array(self.subset[self.feature_cols],dtype=np.float32)
         dates = np.array(self.subset[date_col])
 
         if target_type == "average" and (f"target_SMA_{target_horizon}" in self.data.columns or f"target_returns_{target_horizon}" in self.data.columns):
@@ -62,15 +62,18 @@ class RegimeMambaDataset(Dataset):
             print("미리 처리된 데이터 포착")
             
             if preprocessed:
-                self.feature_cols.append(f"target_SMA_{target_horizon}")
-                features = np.array(self.subset[self.feature_cols])
+                self.target_col=f"target_returns_{target_horizon}"
             else:
-                self.feature_cols.append(f"target_returns_{target_horizon}")
-                features = np.array(self.subset[self.feature_cols])
+                self.target_col=f"target_SMA_{target_horizon}"
 
-            for i in range(len(features) - seq_len + 1):
+            targets = np.array(self.subset[self.target_col],dtype=np.float32)
+
+            for i in range(len(features) - seq_len+1):
                 self.sequences.append(features[i:i+seq_len])
-                self.targets.append(features[i+seq_len-1][-1])
+                self.targets.append(targets[i+seq_len-1])
+                # 타겟 날짜 저장 (타겟 기간의 마지막 날짜)
+                self.dates.append(dates[i+seq_len-1])
+
         else:
             # target_horizon을 고려한 인덱스 범위 조정
             for i in range(len(features) - seq_len - target_horizon + 1):
@@ -220,7 +223,7 @@ class DateRangeRegimeMambaDataset(Dataset):
         self.targets = []
         self.dates = []
 
-        features = np.array(self.data[self.feature_cols])
+        features = np.array(self.data[self.feature_cols],dtype=np.float32)
         dates = np.array(self.data[date_col])
 
         if target_type == "average" and (f"target_SMA_{target_horizon}" in self.data.columns or f"target_returns_{target_horizon}" in self.data.columns):
@@ -228,16 +231,18 @@ class DateRangeRegimeMambaDataset(Dataset):
             print("미리 처리된 데이터 포착")
             
             if preprocessed:
-                self.feature_cols.append(f"target_SMA_{target_horizon}")
-                features = np.array(self.data[self.feature_cols])
+                self.target_col=f"target_returns_{target_horizon}"
             else:
-                self.feature_cols.append(f"target_returns_{target_horizon}")
-                features = np.array(self.data[self.feature_cols])
+                self.target_col=f"target_SMA_{target_horizon}"
 
-            for i in range(len(features) - seq_len + 1):
+            targets = np.array(self.data[self.target_col],dtype=np.float32)
+
+            for i in range(len(features) - seq_len+1):
                 self.sequences.append(features[i:i+seq_len])
-                self.targets.append(features[i+seq_len-1][-1])
-        
+                self.targets.append(targets[i+seq_len-1])
+                # 타겟 날짜 저장 (타겟 기간의 마지막 날짜)
+                self.dates.append(dates[i+seq_len-1])
+
         else:        
             # target_horizon을 고려한 인덱스 범위 조정
             for i in range(len(features) - seq_len - target_horizon + 1):
@@ -333,7 +338,7 @@ def create_dataloaders(config):
     Returns:
         train_loader, valid_loader, test_loader: 데이터로더 튜플
     """
-    
+
     train_dataset = RegimeMambaDataset(
         path=config.data_path, 
         seq_len=config.seq_len, 
