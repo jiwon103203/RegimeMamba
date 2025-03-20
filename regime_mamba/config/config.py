@@ -8,6 +8,7 @@ class RegimeMambaConfig:
         self.seq_len = 128
         self.target_type = "next_day"
         self.target_horizon = 1
+        self.preprocessed = True
         
         # 모델 구조 관련 설정
         self.d_model = 128
