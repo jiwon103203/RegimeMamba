@@ -34,8 +34,9 @@ def evaluate_regime_strategy(predictions, returns, dates=None, transaction_cost=
     # 거래 비용 계산 (레짐이 변할 때마다 적용)
     df['Transaction_Cost'] = np.where(df['Regime_Change'], transaction_cost * 100, 0)
 
-    # 거래 비용을 고려한 전략 수익률 계산
-    df['Strategy_Return'] = df['Regime'] * df['Return'] - df['Transaction_Cost']
+    # 다음날 반영 방식으로 수정
+    df['Strategy_Regime'] = df['Regime'].shift(1).fillna(0)  # 첫날은 포지션 없음
+    df['Strategy_Return'] = df['Strategy_Regime'] * df['Return'] - df['Transaction_Cost']
 
     # 누적 수익률 계산
     df['Cum_Market'] = (1 + df['Return']/100).cumprod() - 1
