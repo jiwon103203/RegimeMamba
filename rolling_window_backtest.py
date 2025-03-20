@@ -15,6 +15,7 @@ def parse_args():
     parser.add_argument('--forward_months', type=int, default=12, help='적용 기간(월)')
     parser.add_argument('--transaction_cost', type=float, default=0.001, help='거래 비용 (0.001 = 0.1%)')
     parser.add_argument('--seed', type=int, default=42, help='랜덤 시드')
+    parser.add_argument('--preprocessed', type=bool, default=True)
     
     # 모델 파라미터 인수
     parser.add_argument('--d_model', type=int, default=128, help='모델 차원')
@@ -42,6 +43,7 @@ def main():
     config.lookback_years = args.lookback_years
     config.forward_months = args.forward_months
     config.transaction_cost = args.transaction_cost
+    config.preprocessed = args.preprocessed
     
     # 모델 파라미터 설정
     config.d_model = args.d_model
