@@ -4,7 +4,7 @@ import torch
 from torch.utils.data import Dataset, DataLoader
 
 class RegimeMambaDataset(Dataset):
-    def __init__(self, path, seq_len=128, mode="train", target_type="next_day", target_horizon=1):
+    def __init__(self, path, seq_len=128, mode="train", target_type="next_day", target_horizon=1, preprocessed = True):
         """
         RegimeMamba 모델을 위한 데이터셋 클래스
 
@@ -23,6 +23,7 @@ class RegimeMambaDataset(Dataset):
                 - up_ratio: 기간 중 상승한 날의 비율
                 - log_return_sum: 로그 수익률의 합계
             target_horizon: 타겟 계산을 위한 기간 (일)
+            preprocessed: 수익률 전처리 여부
         """
         super().__init__()
         self.data = pd.read_csv(path)
@@ -42,7 +43,7 @@ class RegimeMambaDataset(Dataset):
         self.target_col = "returns"  # 수익률을 타겟으로 사용
 
         # 일자 기준으로 데이터 분할
-        date_col = 'Price' if 'Price' in self.data.columns else 'Date'
+        date_col = 'Date'
 
         if mode == "train":
             self.subset = self.data[(self.data[date_col] >= '1970-01-01') & (self.data[date_col] <= '1999-12-31')]
@@ -59,79 +60,94 @@ class RegimeMambaDataset(Dataset):
         features = np.array(self.subset[self.feature_cols])
         dates = np.array(self.subset[date_col])
 
-        # target_horizon을 고려한 인덱스 범위 조정
-        for i in range(len(features) - seq_len - target_horizon + 1):
-            self.sequences.append(features[i:i+seq_len])
+        if target_type == "average" and (f"target_SMA_{target_horizon}" in self.data.columns or f"target_returns_{target_horizon}" in self.data.columns):
             
-            # 타겟 기간의 수익률 데이터 추출
-            target_returns = [features[i+seq_len+j][0] for j in range(target_horizon)]
-            decimal_returns = [r/100 for r in target_returns]  # 백분율 -> 소수
+            print("미리 처리된 데이터 포착")
+            
+            if preprocessed:
+                self.feature_cols.append(f"target_SMA_{target_horizon}")
+                features = np.array(self.subset[self.feature_cols])
+            else:
+                self.feature_cols.append(f"target_returns_{target_horizon}")
+                features = np.array(self.subset[self.feature_cols])
 
-            # 타겟 타입에 따른 계산 방식 선택
-            if target_type == "next_day":
-                # 다음 날의 수익률
-                self.targets.append([features[i+seq_len][0]])
+            for i in range(len(features) - seq_len + 1):
+                self.sequences.append(features[i:i+seq_len])
+                self.targets.append(features[i+seq_len-1][-1])
+        else:
+            # target_horizon을 고려한 인덱스 범위 조정
+            for i in range(len(features) - seq_len - target_horizon + 1):
+                self.sequences.append(features[i:i+seq_len])
                 
-            elif target_type == "average":
-                # 지정된 기간 동안의 평균 수익률
-                self.targets.append([np.mean(target_returns)])
-                
-            elif target_type == "cumulative":
-                # 지정된 기간 동안의 누적 수익률
-                cumulative_return = np.prod([1 + r for r in decimal_returns]) - 1
-                self.targets.append([cumulative_return * 100])  # 소수 -> 백분율
-                
-            elif target_type == "trend_strength":
-                # 선형 회귀로 측정한 추세 강도 (기울기)
-                if target_horizon >= 2:  # 최소 2일 이상 필요
-                    x = np.arange(target_horizon)
-                    slope, _ = np.polyfit(x, target_returns, 1)
-                    self.targets.append([slope])
-                else:
-                    self.targets.append([target_returns[0]])
+                # 타겟 기간의 수익률 데이터 추출
+                target_returns = [features[i+seq_len+j][0] for j in range(target_horizon)]
+                decimal_returns = [r/100 for r in target_returns]  # 백분율 -> 소수
+    
+                # 타겟 타입에 따른 계산 방식 선택
+                if target_type == "next_day":
+                    # 다음 날의 수익률
+                    self.targets.append([features[i+seq_len][0]])
                     
-            elif target_type == "direction":
-                # 기간의 누적 수익률의 방향 (양수:1, 음수:-1, 제로:0)
-                cumulative_return = np.prod([1 + r for r in decimal_returns]) - 1
-                direction = np.sign(cumulative_return)
-                self.targets.append([float(direction)])
-                
-            elif target_type == "volatility_adjusted":
-                # 변동성으로 조정된 수익률 (샤프 비율과 유사)
-                mean_return = np.mean(target_returns)
-                std_return = np.std(target_returns) if np.std(target_returns) > 0 else 1.0
-                sharpe_like = mean_return / std_return
-                self.targets.append([sharpe_like])
-                
-            elif target_type == "max_drawdown":
-                # 기간 내 최대 낙폭
-                # 누적 곱으로 가격 시뮬레이션
-                price_curve = np.cumprod([1 + r for r in decimal_returns])
-                max_dd = 0
-                peak = price_curve[0]
-                
-                for price in price_curve:
-                    if price > peak:
-                        peak = price
-                    drawdown = (peak - price) / peak
-                    max_dd = max(max_dd, drawdown)
-                
-                self.targets.append([max_dd * 100])  # 백분율로 변환
-                
-            elif target_type == "up_ratio":
-                # 상승한 날의 비율
-                up_days = sum(1 for r in target_returns if r > 0)
-                up_ratio = up_days / len(target_returns) if target_returns else 0
-                self.targets.append([up_ratio * 100])  # 백분율로 변환
-                
-            elif target_type == "log_return_sum":
-                # 로그 수익률의 합계 (복리 효과를 더 잘 반영)
-                log_returns = [np.log(1 + r) for r in decimal_returns]
-                log_return_sum = np.sum(log_returns) * 100  # 백분율로 변환
-                self.targets.append([log_return_sum])
-                
-            # 타겟 날짜 저장 (타겟 기간의 마지막 날짜)
-            self.dates.append(dates[i+seq_len+target_horizon-1])
+                elif target_type == "average":
+                    # 지정된 기간 동안의 평균 수익률
+                    self.targets.append([np.mean(target_returns)])
+                    
+                elif target_type == "cumulative":
+                    # 지정된 기간 동안의 누적 수익률
+                    cumulative_return = np.prod([1 + r for r in decimal_returns]) - 1
+                    self.targets.append([cumulative_return * 100])  # 소수 -> 백분율
+                    
+                elif target_type == "trend_strength":
+                    # 선형 회귀로 측정한 추세 강도 (기울기)
+                    if target_horizon >= 2:  # 최소 2일 이상 필요
+                        x = np.arange(target_horizon)
+                        slope, _ = np.polyfit(x, target_returns, 1)
+                        self.targets.append([slope])
+                    else:
+                        self.targets.append([target_returns[0]])
+                        
+                elif target_type == "direction":
+                    # 기간의 누적 수익률의 방향 (양수:1, 음수:-1, 제로:0)
+                    cumulative_return = np.prod([1 + r for r in decimal_returns]) - 1
+                    direction = np.sign(cumulative_return)
+                    self.targets.append([float(direction)])
+                    
+                elif target_type == "volatility_adjusted":
+                    # 변동성으로 조정된 수익률 (샤프 비율과 유사)
+                    mean_return = np.mean(target_returns)
+                    std_return = np.std(target_returns) if np.std(target_returns) > 0 else 1.0
+                    sharpe_like = mean_return / std_return
+                    self.targets.append([sharpe_like])
+                    
+                elif target_type == "max_drawdown":
+                    # 기간 내 최대 낙폭
+                    # 누적 곱으로 가격 시뮬레이션
+                    price_curve = np.cumprod([1 + r for r in decimal_returns])
+                    max_dd = 0
+                    peak = price_curve[0]
+                    
+                    for price in price_curve:
+                        if price > peak:
+                            peak = price
+                        drawdown = (peak - price) / peak
+                        max_dd = max(max_dd, drawdown)
+                    
+                    self.targets.append([max_dd * 100])  # 백분율로 변환
+                    
+                elif target_type == "up_ratio":
+                    # 상승한 날의 비율
+                    up_days = sum(1 for r in target_returns if r > 0)
+                    up_ratio = up_days / len(target_returns) if target_returns else 0
+                    self.targets.append([up_ratio * 100])  # 백분율로 변환
+                    
+                elif target_type == "log_return_sum":
+                    # 로그 수익률의 합계 (복리 효과를 더 잘 반영)
+                    log_returns = [np.log(1 + r) for r in decimal_returns]
+                    log_return_sum = np.sum(log_returns) * 100  # 백분율로 변환
+                    self.targets.append([log_return_sum])
+                    
+                # 타겟 날짜 저장 (타겟 기간의 마지막 날짜)
+                self.dates.append(dates[i+seq_len+target_horizon-1])
 
     def __len__(self):
         return len(self.sequences)
@@ -145,7 +161,7 @@ class RegimeMambaDataset(Dataset):
 
 class DateRangeRegimeMambaDataset(Dataset):
     def __init__(self, data=None, path=None, seq_len=128, start_date=None, end_date=None, 
-                 target_type="next_day", target_horizon=1):
+                 target_type="next_day", target_horizon=1, preprocessed=True):
         """
         날짜 범위를 기반으로 데이터를 필터링하는 데이터셋 클래스
 
@@ -166,6 +182,7 @@ class DateRangeRegimeMambaDataset(Dataset):
                 - up_ratio: 기간 중 상승한 날의 비율
                 - log_return_sum: 로그 수익률의 합계
             target_horizon: 타겟 계산을 위한 기간 (일)
+            preprocessed: 수익률 전처리 여부
         """
         super().__init__()
         self.seq_len = seq_len
@@ -188,7 +205,7 @@ class DateRangeRegimeMambaDataset(Dataset):
             raise ValueError("Either data or path must be provided")
 
         # 날짜 칼럼 식별
-        date_col = 'Price' if 'Price' in data.columns else 'Date'
+        date_col = 'Date'
 
         # 날짜 필터링
         if start_date and end_date:
@@ -212,79 +229,95 @@ class DateRangeRegimeMambaDataset(Dataset):
         features = np.array(self.data[self.feature_cols])
         dates = np.array(self.data[date_col])
 
-        # target_horizon을 고려한 인덱스 범위 조정
-        for i in range(len(features) - seq_len - target_horizon + 1):
-            self.sequences.append(features[i:i+seq_len])
+        if target_type == "average" and (f"target_SMA_{target_horizon}" in self.data.columns or f"target_returns_{target_horizon}" in self.data.columns):
             
-            # 타겟 기간의 수익률 데이터 추출
-            target_returns = [features[i+seq_len+j][0] for j in range(target_horizon)]
-            decimal_returns = [r/100 for r in target_returns]  # 백분율 -> 소수
+            print("미리 처리된 데이터 포착")
+            
+            if preprocessed:
+                self.feature_cols.append(f"target_SMA_{target_horizon}")
+                features = np.array(self.data[self.feature_cols])
+            else:
+                self.feature_cols.append(f"target_returns_{target_horizon}")
+                features = np.array(self.data[self.feature_cols])
 
-            # 타겟 타입에 따른 계산 방식 선택
-            if target_type == "next_day":
-                # 다음 날의 수익률
-                self.targets.append([features[i+seq_len][0]])
+            for i in range(len(features) - seq_len + 1):
+                self.sequences.append(features[i:i+seq_len])
+                self.targets.append(features[i+seq_len-1][-1])
+        
+        else:        
+            # target_horizon을 고려한 인덱스 범위 조정
+            for i in range(len(features) - seq_len - target_horizon + 1):
+                self.sequences.append(features[i:i+seq_len])
                 
-            elif target_type == "average":
-                # 지정된 기간 동안의 평균 수익률
-                self.targets.append([np.mean(target_returns)])
-                
-            elif target_type == "cumulative":
-                # 지정된 기간 동안의 누적 수익률
-                cumulative_return = np.prod([1 + r for r in decimal_returns]) - 1
-                self.targets.append([cumulative_return * 100])  # 소수 -> 백분율
-                
-            elif target_type == "trend_strength":
-                # 선형 회귀로 측정한 추세 강도 (기울기)
-                if target_horizon >= 2:  # 최소 2일 이상 필요
-                    x = np.arange(target_horizon)
-                    slope, _ = np.polyfit(x, target_returns, 1)
-                    self.targets.append([slope])
-                else:
-                    self.targets.append([target_returns[0]])
+                # 타겟 기간의 수익률 데이터 추출
+                target_returns = [features[i+seq_len+j][0] for j in range(target_horizon)]
+                decimal_returns = [r/100 for r in target_returns]  # 백분율 -> 소수
+    
+                # 타겟 타입에 따른 계산 방식 선택
+                if target_type == "next_day":
+                    # 다음 날의 수익률
+                    self.targets.append([features[i+seq_len][0]])
                     
-            elif target_type == "direction":
-                # 기간의 누적 수익률의 방향 (양수:1, 음수:-1, 제로:0)
-                cumulative_return = np.prod([1 + r for r in decimal_returns]) - 1
-                direction = np.sign(cumulative_return)
-                self.targets.append([float(direction)])
+                elif target_type == "average":
+                    # 지정된 기간 동안의 평균 수익률
+                    self.targets.append([np.mean(target_returns)])
+                    
+                elif target_type == "cumulative":
+                    # 지정된 기간 동안의 누적 수익률
+                    cumulative_return = np.prod([1 + r for r in decimal_returns]) - 1
+                    self.targets.append([cumulative_return * 100])  # 소수 -> 백분율
+                    
+                elif target_type == "trend_strength":
+                    # 선형 회귀로 측정한 추세 강도 (기울기)
+                    if target_horizon >= 2:  # 최소 2일 이상 필요
+                        x = np.arange(target_horizon)
+                        slope, _ = np.polyfit(x, target_returns, 1)
+                        self.targets.append([slope])
+                    else:
+                        self.targets.append([target_returns[0]])
+                        
+                elif target_type == "direction":
+                    # 기간의 누적 수익률의 방향 (양수:1, 음수:-1, 제로:0)
+                    cumulative_return = np.prod([1 + r for r in decimal_returns]) - 1
+                    direction = np.sign(cumulative_return)
+                    self.targets.append([float(direction)])
+                    
+                elif target_type == "volatility_adjusted":
+                    # 변동성으로 조정된 수익률 (샤프 비율과 유사)
+                    mean_return = np.mean(target_returns)
+                    std_return = np.std(target_returns) if np.std(target_returns) > 0 else 1.0
+                    sharpe_like = mean_return / std_return
+                    self.targets.append([sharpe_like])
+                    
+                elif target_type == "max_drawdown":
+                    # 기간 내 최대 낙폭
+                    # 누적 곱으로 가격 시뮬레이션
+                    price_curve = np.cumprod([1 + r for r in decimal_returns])
+                    max_dd = 0
+                    peak = price_curve[0]
+                    
+                    for price in price_curve:
+                        if price > peak:
+                            peak = price
+                        drawdown = (peak - price) / peak
+                        max_dd = max(max_dd, drawdown)
+                    
+                    self.targets.append([max_dd * 100])  # 백분율로 변환
+                    
+                elif target_type == "up_ratio":
+                    # 상승한 날의 비율
+                    up_days = sum(1 for r in target_returns if r > 0)
+                    up_ratio = up_days / len(target_returns) if target_returns else 0
+                    self.targets.append([up_ratio * 100])  # 백분율로 변환
+                    
+                elif target_type == "log_return_sum":
+                    # 로그 수익률의 합계 (복리 효과를 더 잘 반영)
+                    log_returns = [np.log(1 + r) for r in decimal_returns]
+                    log_return_sum = np.sum(log_returns) * 100  # 백분율로 변환
+                    self.targets.append([log_return_sum])
                 
-            elif target_type == "volatility_adjusted":
-                # 변동성으로 조정된 수익률 (샤프 비율과 유사)
-                mean_return = np.mean(target_returns)
-                std_return = np.std(target_returns) if np.std(target_returns) > 0 else 1.0
-                sharpe_like = mean_return / std_return
-                self.targets.append([sharpe_like])
-                
-            elif target_type == "max_drawdown":
-                # 기간 내 최대 낙폭
-                # 누적 곱으로 가격 시뮬레이션
-                price_curve = np.cumprod([1 + r for r in decimal_returns])
-                max_dd = 0
-                peak = price_curve[0]
-                
-                for price in price_curve:
-                    if price > peak:
-                        peak = price
-                    drawdown = (peak - price) / peak
-                    max_dd = max(max_dd, drawdown)
-                
-                self.targets.append([max_dd * 100])  # 백분율로 변환
-                
-            elif target_type == "up_ratio":
-                # 상승한 날의 비율
-                up_days = sum(1 for r in target_returns if r > 0)
-                up_ratio = up_days / len(target_returns) if target_returns else 0
-                self.targets.append([up_ratio * 100])  # 백분율로 변환
-                
-            elif target_type == "log_return_sum":
-                # 로그 수익률의 합계 (복리 효과를 더 잘 반영)
-                log_returns = [np.log(1 + r) for r in decimal_returns]
-                log_return_sum = np.sum(log_returns) * 100  # 백분율로 변환
-                self.targets.append([log_return_sum])
-            
-            # 타겟 날짜 저장 (타겟 기간의 마지막 날짜)
-            self.dates.append(dates[i+seq_len+target_horizon-1])
+                # 타겟 날짜 저장 (타겟 기간의 마지막 날짜)
+                self.dates.append(dates[i+seq_len+target_horizon-1])
 
     def __len__(self):
         return len(self.sequences)
@@ -301,22 +334,19 @@ def create_dataloaders(config):
     데이터셋 및 데이터로더 생성 함수
     
     Args:
-        config: 설정 객체 (필요한 속성: data_path, seq_len, batch_size, target_type, target_horizon)
+        config: 설정 객체 (필요한 속성: data_path, seq_len, batch_size, target_type, target_horizon, preprocessed)
         
     Returns:
         train_loader, valid_loader, test_loader: 데이터로더 튜플
     """
-    # target_type과 target_horizon이 없는 경우 기본값 설정
-    target_type = getattr(config, 'target_type', 'next_day')
-    target_horizon = getattr(config, 'target_horizon', 1)
-    data_path = getattr(config, 'data_path', 'data.csv')
     
     train_dataset = RegimeMambaDataset(
         path=config.data_path, 
         seq_len=config.seq_len, 
         mode="train",
         target_type=config.target_type,
-        target_horizon=config.target_horizon
+        target_horizon=config.target_horizon,
+        preprocessed=config.preprocessed
     )
     
     valid_dataset = RegimeMambaDataset(
@@ -324,7 +354,8 @@ def create_dataloaders(config):
         seq_len=config.seq_len, 
         mode="valid",
         target_type=config.target_type,
-        target_horizon=config.target_horizon
+        target_horizon=config.target_horizon,
+        preprocessed=config.preprocessed
     )
     
     test_dataset = RegimeMambaDataset(
@@ -332,7 +363,8 @@ def create_dataloaders(config):
         seq_len=config.seq_len, 
         mode="test",
         target_type=config.target_type,
-        target_horizon=config.target_horizon
+        target_horizon=config.target_horizon,
+        preprocessed=config.preprocessed
     )
     
     train_loader = DataLoader(
@@ -359,8 +391,8 @@ def create_dataloaders(config):
     return train_loader, valid_loader, test_loader
 
 def create_date_range_dataloader(data=None, path=None, seq_len=128, batch_size=64, 
-                                start_date=None, end_date=None, shuffle=False, 
-                                target_type="next_day", target_horizon=1, num_workers=4):
+                                start_date=None, end_date=None, shuffle=False, target_type="next_day",
+                                target_horizon=1, num_workers=4, preprocessed=True):
     """
     날짜 범위 기반 데이터로더 생성 유틸리티 함수
     
@@ -375,6 +407,7 @@ def create_date_range_dataloader(data=None, path=None, seq_len=128, batch_size=6
         target_type: 타겟 계산 방식
         target_horizon: 타겟 계산 기간
         num_workers: 데이터 로딩 워커 수
+        preprocessed: 수익률 전처리 여부
         
     Returns:
         dataloader: 생성된 데이터로더
@@ -386,7 +419,8 @@ def create_date_range_dataloader(data=None, path=None, seq_len=128, batch_size=6
         start_date=start_date,
         end_date=end_date,
         target_type=target_type,
-        target_horizon=target_horizon
+        target_horizon=target_horizon,
+        preprocessed=preprocessed
     )
     
     dataloader = DataLoader(
