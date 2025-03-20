@@ -27,9 +27,6 @@ class RegimeMambaDataset(Dataset):
         """
         super().__init__()
         self.data = pd.read_csv(path)
-        self.data = self.data.iloc[2:]
-        self.data.fillna(method='ffill', inplace=True)
-        self.data.fillna(method='bfill', inplace=True)
         self.data['returns'] = self.data['returns'] * 100
         self.data["dd_10"] = self.data["dd_10"] * 100
         self.data["sortino_20"] = self.data["sortino_20"] * 100
@@ -192,9 +189,6 @@ class DateRangeRegimeMambaDataset(Dataset):
         # 데이터 로드
         if data is None and path is not None:
             data = pd.read_csv(path)
-            data = data.iloc[2:]
-            data.fillna(method='ffill', inplace=True)
-            data.fillna(method='bfill', inplace=True)
             data['returns'] = data['returns'] * 100
             data["dd_10"] = data["dd_10"] * 100
             data["sortino_20"] = data["sortino_20"] * 100
