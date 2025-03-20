@@ -47,8 +47,8 @@ def optimize_regime_mamba_bayesian(data_path, base_config, n_iterations=30, save
 
         # 데이터셋 및 데이터로더 생성
         try:
-            train_dataset = RegimeMambaDataset(data_path, seq_len=current_config.seq_len, mode="train", target_type = base_config.target_type, target_horizon = base_config.target_horizon)
-            valid_dataset = RegimeMambaDataset(data_path, seq_len=current_config.seq_len, mode="valid", target_type = base_config.target_type, target_horizon = base_config.target_horizon)
+            train_dataset = RegimeMambaDataset(data_path, seq_len=current_config.seq_len, mode="train", target_type = base_config.target_type, target_horizon = base_config.target_horizon, preprocessed=base_config.preprocessed)
+            valid_dataset = RegimeMambaDataset(data_path, seq_len=current_config.seq_len, mode="valid", target_type = base_config.target_type, target_horizon = base_config.target_horizon,preprocessed=base_config.preprocessed)
 
             train_loader = DataLoader(
                 train_dataset,
