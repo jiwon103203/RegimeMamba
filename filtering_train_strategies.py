@@ -34,6 +34,7 @@ def parse_args():
     parser.add_argument('--results_dir', type=str, default='./smoothing_train_results', help='결과 저장 디렉토리')
     parser.add_argument('--start_date', type=str, default='2000-01-01', help='시작 날짜')
     parser.add_argument('--end_date', type=str, default='2023-12-31', help='종료 날짜')
+    parser.add_argument('--preprocessed', type=bool, default=True)
     
     # 기간 관련 설정
     parser.add_argument('--total_window_years', type=int, default=40, help='총 사용할 데이터 기간(년)')
@@ -63,7 +64,7 @@ def parse_args():
 
 def apply_and_evaluate_with_smoothing(model, data, kmeans, bull_regime, forward_start, forward_end, 
                                     smoothing_method, device, batch_size, seq_len, transaction_cost, 
-                                    smoothing_params, target_type, target_horizon):
+                                    smoothing_params, target_type, target_horizon,preprocessed):
     """
     특정 smoothing 기법을 적용하여 레짐 전략 평가
     
@@ -94,7 +95,8 @@ def apply_and_evaluate_with_smoothing(model, data, kmeans, bull_regime, forward_
         start_date=forward_start,
         end_date=forward_end,
         target_type=target_type,
-        target_horizon=target_horizon
+        target_horizon=target_horizon,
+        preprocessed=preprocessed
     )
     
     # 데이터 로더 생성
@@ -515,9 +517,6 @@ def run_smoothing_comparison(config):
     # 데이터 로드
     print("데이터 로드 중...")
     data = pd.read_csv(config.data_path)
-    data = data.iloc[2:]  # 첫 2행 제외
-    data.fillna(method='ffill', inplace=True)
-    data.fillna(method='bfill', inplace=True)
     data['returns'] = data['returns'] * 100
     data["dd_10"] = data["dd_10"] * 100
     data["sortino_20"] = data["sortino_20"] * 100
@@ -653,6 +652,7 @@ def main():
     config.results_dir = output_dir
     config.start_date = args.start_date
     config.end_date = args.end_date
+    config.preprocessed = args.preprocessed
     
     # 기간 관련 설정
     config.total_window_years = args.total_window_years
