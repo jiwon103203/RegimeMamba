@@ -102,7 +102,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument('--transaction_cost', type=float, default=0.001, help='Transaction cost (0.001 = 0.1%)')
     parser.add_argument('--target_type', type=str, default="next_day", help='Target type')
     parser.add_argument('--target_horizon', type=int, default=1, help='Target horizon')
-    parser.add_argument('--preprocessed', action='store_true', help='Data is preprocessed')
+    parser.add_argument('--preprocessed', type=bool, default=False, help='Data is preprocessed')
     
     # Optimization parameters
     parser.add_argument('--opt_iterations', type=int, default=30, help='Number of optimization iterations')
@@ -153,7 +153,7 @@ def load_config(args: argparse.Namespace) -> RegimeMambaConfig:
         config.device = f'cuda:{args.gpu}'
     else:
         config.device = 'cpu'
-    
+
     return config
 
 
@@ -193,9 +193,10 @@ def setup_output_directory(output_dir: str) -> Tuple[str, Dict[str, str]]:
         'cost_analysis_plot': os.path.join(dirs['plots'], 'transaction_cost_analysis.png'),
         'strategy_results': os.path.join(dirs['results'], 'regime_strategy_detailed_results.csv'),
         'strategy_performance': os.path.join(dirs['results'], 'regime_strategy_results_with_costs.json'),
-        'cost_analysis': os.path.join(dirs['results'], 'transaction_cost_analysis.csv')
+        'cost_analysis': os.path.join(dirs['results'], 'transaction_cost_analysis.csv'),
+        'logs':dirs['logs']
     }
-    
+
     return run_dir, paths
 
 
