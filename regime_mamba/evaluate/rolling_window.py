@@ -27,6 +27,7 @@ class RollingWindowConfig:
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         self.target_type = 'average'
         self.target_horizon = 5
+        self.preprocessed = False
 
         # 모델 파라미터 (기본값)
         self.d_model = 128
