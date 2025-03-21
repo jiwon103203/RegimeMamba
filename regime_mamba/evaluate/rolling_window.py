@@ -25,7 +25,9 @@ class RollingWindowConfig:
         self.transaction_cost = 0.001 # 거래 비용 (0.1%)
         self.model_path = None        # 사전 훈련된 모델 경로
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        
+        self.target_type = 'average'
+        self.target_horizon = 5
+
         # 모델 파라미터 (기본값)
         self.d_model = 128
         self.d_state = 128
@@ -237,7 +239,7 @@ def run_rolling_window_backtest(config, data_path):
     data = pd.read_csv(data_path)
     data.fillna(method='ffill', inplace=True)
     data.fillna(method='bfill', inplace=True)
-    data['returns'] = data['returns'] * 100 if config.preprocessed = True else data['returns']
+    data['returns'] = data['returns'] * 100 if config.preprocessed else data['returns']
     data["dd_10"] = data["dd_10"] * 100
     data["sortino_20"] = data["sortino_20"] * 100
     data["sortino_60"] = data["sortino_60"] * 100
