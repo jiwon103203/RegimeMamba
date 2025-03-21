@@ -32,6 +32,7 @@ class RollingWindowTrainConfig:
         self.end_date = '2023-12-31'       # 마지막 윈도우 종료일
         self.target_type = 'average'
         self.target_horizon = 5
+        self.preprocessed = False
         
         # 모델 관련 설정
         self.d_model = 128
