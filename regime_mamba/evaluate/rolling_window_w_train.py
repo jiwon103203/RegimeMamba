@@ -30,6 +30,8 @@ class RollingWindowTrainConfig:
         self.forward_months = 60           # 다음 윈도우까지의 간격(개월)
         self.start_date = '1990-01-01'     # 첫 번째 윈도우 시작일
         self.end_date = '2023-12-31'       # 마지막 윈도우 종료일
+        self.target_type = 'average'
+        self.target_horizon = 5
         
         # 모델 관련 설정
         self.d_model = 128
@@ -337,7 +339,6 @@ def run_rolling_window_train(config):
     # 데이터 로드
     print("데이터 로드 중...")
     data = pd.read_csv(config.data_path)
-    data = data.iloc[2:]  # 첫 2행 제외
     data.fillna(method='ffill', inplace=True)
     data.fillna(method='bfill', inplace=True)
     data['returns'] = data['returns'] * 100
