@@ -54,7 +54,7 @@ class RegimeMambaDataset(Dataset):
         self.targets = []
         self.dates = []  # 날짜 정보도 저장
 
-        features = np.array(self.subset[self.feature_cols],dtype=np.float32)
+        features = np.array(self.subset[self.feature_cols])
         dates = np.array(self.subset[date_col])
 
         if target_type == "average" and (f"target_SMA_{target_horizon}" in self.data.columns or f"target_returns_{target_horizon}" in self.data.columns):
@@ -66,7 +66,7 @@ class RegimeMambaDataset(Dataset):
             else:
                 self.target_col=f"target_SMA_{target_horizon}"
 
-            targets = np.array(self.subset[self.target_col],dtype=np.float32)
+            targets = np.array(self.subset[self.target_col])
 
             for i in range(len(features) - seq_len+1):
                 self.sequences.append(features[i:i+seq_len])
