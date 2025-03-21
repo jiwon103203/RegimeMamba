@@ -52,7 +52,7 @@ def parse_args():
     parser.add_argument('--results_dir', type=str, default='./smoothing_train_results', help='Results directory')
     parser.add_argument('--start_date', type=str, default='2000-01-01', help='Start date')
     parser.add_argument('--end_date', type=str, default='2023-12-31', help='End date')
-    parser.add_argument('--preprocessed', type=bool, default=True, help='Whether data is preprocessed')
+    parser.add_argument('--preprocessed', type=bool, default=False, help='Whether data is preprocessed')
     
     # Period-related settings
     parser.add_argument('--total_window_years', type=int, default=40, help='Total data period (years)')
@@ -116,6 +116,8 @@ def load_config(args) -> RollingWindowTrainConfig:
 def default_converter(o):
     """Convert numpy types to Python types for JSON serialization"""
     if isinstance(o, np.ndarray):
+        return o.item() if o.ndim == 0 else o.tolist()
+    if isinstance(o, np.float32):
         return o.item() if o.ndim == 0 else o.tolist()
     raise TypeError(f"Type {type(o).__name__} is not serializable")
 
