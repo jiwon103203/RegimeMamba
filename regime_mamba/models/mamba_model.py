@@ -101,7 +101,7 @@ def create_model_from_config(config):
         model: 생성된 모델
     """
     model = TimeSeriesMamba(
-        input_dim=4,  # 고정된 입력 차원 (returns, dd_10, sortino_20, sortino_60)
+        input_dim=config.input_dim,  # 기본적인 입력 차원은 4차원 (returns, dd_10, sortino_20, sortino_60)
         d_model=config.d_model,
         d_state=config.d_state,
         d_conv=config.d_conv,

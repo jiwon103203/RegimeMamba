@@ -88,26 +88,27 @@ def parse_args():
     parser.add_argument('--forward_months', type=int, help='Interval to next window (months)')
     
     # Model parameters
-    parser.add_argument('--d_model', type=int, help='Model dimension')
-    parser.add_argument('--d_state', type=int, help='State dimension')
-    parser.add_argument('--n_layers', type=int, help='Number of layers')
-    parser.add_argument('--dropout', type=float, help='Dropout rate')
-    parser.add_argument('--seq_len', type=int, help='Sequence length')
-    parser.add_argument('--batch_size', type=int, help='Batch size')
-    parser.add_argument('--learning_rate', type=float, help='Learning rate')
-    parser.add_argument('--target_type', type=str, help='Target type')
-    parser.add_argument('--target_horizon', type=int, help='Target horizon')
+    parser.add_argument('--input_dim', type=int, default=4, help='Input dimension')
+    parser.add_argument('--d_model', type=int, default=128, help='Model dimension')
+    parser.add_argument('--d_state', type=int, default=128, help='State dimension')
+    parser.add_argument('--n_layers', type=int, default=4, help='Number of layers')
+    parser.add_argument('--dropout', type=float, default=0.1, help='Dropout rate')
+    parser.add_argument('--seq_len', type=int, default=128, help='Sequence length')
+    parser.add_argument('--batch_size', type=int, default=64, help='Batch size')
+    parser.add_argument('--learning_rate', type=float, default=1e-6, help='Learning rate')
+    parser.add_argument('--target_type', type=str, default='average', help='Target type')
+    parser.add_argument('--target_horizon', type=int, default=5, help='Target horizon')
     parser.add_argument('--cluster_method', type=str, default='cosine_kmeans', help='Clustering method')
     
     # Training-related settings
-    parser.add_argument('--max_epochs', type=int, help='Maximum training epochs')
-    parser.add_argument('--patience', type=int, help='Early stopping patience')
-    parser.add_argument('--transaction_cost', type=float, help='Transaction cost (0.001 = 0.1%)')
-    parser.add_argument('--seed', type=int, help='Random seed')
+    parser.add_argument('--max_epochs', type=int, default=50, help='Maximum training epochs')
+    parser.add_argument('--patience', type=int, default=10, help='Early stopping patience')
+    parser.add_argument('--transaction_cost', type=float, default=0.001, help='Transaction cost (0.001 = 0.1%)')
+    parser.add_argument('--seed', type=int, default=42, help='Random seed')
     
     # Performance-related settings
     parser.add_argument('--max_workers', type=int, help='Maximum number of worker processes')
-    parser.add_argument('--gpu_id', type=int, help='GPU ID to use (-1 for CPU)')
+    parser.add_argument('--gpu_id', type=int, default=0, help='GPU ID to use (-1 for CPU)')
     parser.add_argument('--enable_checkpointing', action='store_true', help='Enable checkpointing')
     parser.add_argument('--checkpoint_interval', type=int, help='Checkpoint interval (windows)')
     

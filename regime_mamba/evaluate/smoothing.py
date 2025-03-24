@@ -1,7 +1,6 @@
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-from scipy.ndimage import gaussian_filter1d
 import torch
 import json
 from tqdm import tqdm
@@ -13,7 +12,7 @@ def apply_regime_smoothing(regime_predictions, method="ma", window=5, threshold=
 
     Args:
         regime_predictions: 원본 레짐 예측값 (1=Bull, 0=Bear)
-        method: 평활화 방법 ('ma'=이동평균, 'exp'=지수평활화, 'gaussian'=가우시안 필터)
+        method: 평활화 방법 ('ma'=이동평균, 'exp'=지수평활화)
         window: 평활화 윈도우 크기
         threshold: 레짐 결정 임계값
 
@@ -32,13 +31,6 @@ def apply_regime_smoothing(regime_predictions, method="ma", window=5, threshold=
     elif method == "exp":
         # 지수 이동 평균 적용
         smoothed_probs = regime_series.ewm(span=window, adjust=False).mean()
-
-    elif method == "gaussian":
-        # 가우시안 필터 적용
-        sigma = window / 3.0  # 윈도우 크기에 비례하는 시그마 값
-        smoothed_probs = pd.Series(
-            gaussian_filter1d(regime_series.values, sigma=sigma)
-        )
     else:
         raise ValueError(f"지원하지 않는 평활화 방법: {method}")
 
@@ -176,11 +168,6 @@ def apply_filtering(predictions, method='minimum_holding', window=10, confirmati
     elif method == 'exp':
         # 지수 이동평균 적용
         return apply_regime_smoothing(predictions, method="exp", window=window, threshold=threshold)
-        
-    elif method == 'gaussian':
-        # 가우시안 필터 적용
-        return apply_regime_smoothing(predictions, method="gaussian", window=window, threshold=threshold)
-
     elif method == 'confirmation':
         # 레짐 변경 확인 규칙 적용
         return apply_confirmation_rule(predictions, confirmation_days=confirmation_days).reshape(-1, 1)
@@ -266,8 +253,6 @@ def predict_regimes_with_filtering(model, dataloader, kmeans, bull_regime, devic
         predictions = apply_regime_smoothing(predictions, method="ma", window=window)
     elif filter_method == 'exp':
         predictions = apply_regime_smoothing(predictions, method="exp", window=window)
-    elif filter_method == 'gaussian':
-        predictions = apply_regime_smoothing(predictions, method="gaussian", window=window)
     elif filter_method == 'confirmation':
         predictions = apply_confirmation_rule(predictions, confirmation_days=confirmation_days)
     elif filter_method == 'minimum_holding':
@@ -301,11 +286,10 @@ def compare_filtering_strategies(original_regimes, returns, dates, transaction_c
         "MA(5)": apply_regime_smoothing(original_regimes, method="ma", window=5),
         "MA(10)": apply_regime_smoothing(original_regimes, method="ma", window=10),
         "EMA(10)": apply_regime_smoothing(original_regimes, method="exp", window=10),
-        "Gaussian(10)": apply_regime_smoothing(original_regimes, method="gaussian", window=10),
         "Confirm(3)": apply_confirmation_rule(original_regimes, confirmation_days=3),
         "Confirm(5)": apply_confirmation_rule(original_regimes, confirmation_days=5),
+        "MinHold(10)": apply_minimum_holding_period(original_regimes, min_holding_days=10),
         "MinHold(20)": apply_minimum_holding_period(original_regimes, min_holding_days=20),
-        "MinHold(30)": apply_minimum_holding_period(original_regimes, min_holding_days=30),
     }
 
     # 결과 저장 객체
@@ -629,9 +613,6 @@ def find_optimal_filtering(config, data_path, save_path=None):
     elif optimal_strategy.startswith('EMA'):
         window = int(optimal_strategy.split('(')[1].split(')')[0])
         optimal_params = {'filter_method': 'exp', 'window': window}
-    elif optimal_strategy.startswith('Gaussian'):
-        window = int(optimal_strategy.split('(')[1].split(')')[0])
-        optimal_params = {'filter_method': 'gaussian', 'window': window}
     elif optimal_strategy.startswith('Confirm'):
         days = int(optimal_strategy.split('(')[1].split(')')[0])
         optimal_params = {'filter_method': 'confirmation', 'confirmation_days': days}
@@ -657,12 +638,6 @@ def find_optimal_filtering(config, data_path, save_path=None):
             filtered_predictions = apply_regime_smoothing(
                 test_predictions, 
                 method="exp", 
-                window=optimal_params['window']
-            )
-        elif optimal_params['filter_method'] == 'gaussian':
-            filtered_predictions = apply_regime_smoothing(
-                test_predictions, 
-                method="gaussian", 
                 window=optimal_params['window']
             )
         elif optimal_params['filter_method'] == 'confirmation':

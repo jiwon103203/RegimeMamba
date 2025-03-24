@@ -99,6 +99,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument('--verbose', action='store_true', help='Enable verbose output')
     
     # Model parameters
+    parser.add_argument('--input_dim', type=int, default=4, help='Input dimension')
+    parser.add_argument('--d_model', type=int, default=64, help='Model dimension')
+    parser.add_argument('--d_state', type=int, default=64, help='State dimension')
+    parser.add_argument('--n_layers', type=int, default=4, help='Number of layers')
+    parser.add_argument('--dropout', type=float, default=0.1, help='Dropout rate')
     parser.add_argument('--transaction_cost', type=float, default=0.001, help='Transaction cost (0.001 = 0.1%)')
     parser.add_argument('--target_type', type=str, default="next_day", help='Target type')
     parser.add_argument('--target_horizon', type=int, default=1, help='Target horizon')
@@ -107,10 +112,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument('--n_clusters', type=int, default=2, help='Number of clusters')
     
     # Optimization parameters
+    parser.add_argument('--learning_rate', type=float, default=1e-6, help='Learning rate')
     parser.add_argument('--opt_iterations', type=int, default=30, help='Number of optimization iterations')
+    parser.add_argument('--max_epochs', type=int, default=50, help='Maximum number of training epochs')
+    parser.add_argument('--patience', type=int, default=10, help='Early stopping patience')
     
     # Performance parameters
-    parser.add_argument('--gpu', type=int, default=-1, help='GPU ID to use (-1 for CPU)')
+    parser.add_argument('--gpu', type=int, default=0, help='GPU ID to use (-1 for CPU)')
     parser.add_argument('--num_workers', type=int, default=4, help='Number of data loader workers')
     
     return parser.parse_args()

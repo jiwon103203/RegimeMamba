@@ -62,6 +62,7 @@ def parse_args():
     parser.add_argument('--forward_months', type=int, default=60, help='Interval to next window (months)')
     
     # Model parameters
+    parser.add_argument('--input_dim', type=int, default=4, help='Number of input variables')
     parser.add_argument('--d_model', type=int, default=128, help='Model dimension')
     parser.add_argument('--d_state', type=int, default=128, help='State dimension')
     parser.add_argument('--n_layers', type=int, default=4, help='Number of layers')

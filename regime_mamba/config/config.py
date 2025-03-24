@@ -23,7 +23,8 @@ class RegimeMambaConfig:
         # 훈련 관련 설정
         self.batch_size = 64
         self.learning_rate = 1e-6
-        self.epochs = 50
+        self.max_epochs = 50
+        self.patience = 10
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         
         # 클러스터링 관련 설정
@@ -105,7 +106,6 @@ class RollingWindowTrainconfig(RollingWindowConfig):
 
         # 훈련 관련 설정
         self.max_epochs = 100
-        self.patience = 10
         self.use_onecycle = True
 
         self.apply_filtering = True

@@ -65,7 +65,7 @@ def optimize_regime_mamba_bayesian(data_path, base_config, n_iterations=30, save
 
             # 모델 초기화
             model = TimeSeriesMamba(
-                input_dim=4,
+                input_dim=current_config.input_dim,
                 d_model=current_config.d_model,
                 d_state=current_config.d_state,
                 d_conv=current_config.d_conv,
@@ -77,7 +77,7 @@ def optimize_regime_mamba_bayesian(data_path, base_config, n_iterations=30, save
             # 조기 종료를 적용한 모델 훈련
             best_val_loss, early_stop_epoch, _ = train_with_early_stopping(
                 model, train_loader, valid_loader, current_config,
-                max_epochs=50, patience=10, use_onecycle=True
+                max_epochs=current_config.max_epochs, patience=current_config.patience, use_onecycle=True
             )
 
             # 베이지안 최적화는 최대화 문제를 해결하므로 손실의 음수를 반환

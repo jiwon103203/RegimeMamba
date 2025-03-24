@@ -58,6 +58,7 @@ def parse_args():
     parser.add_argument('--preprocessed', action='store_true', help='Whether data is preprocessed')
     
     # Model parameters
+    parser.add_argument('--input_dim', type=int, help='Input dimension')
     parser.add_argument('--d_model', type=int, help='Model dimension')
     parser.add_argument('--d_state', type=int, help='State dimension')
     parser.add_argument('--n_layers', type=int, help='Number of layers')
