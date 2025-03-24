@@ -26,8 +26,8 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 import traceback
 
 from regime_mamba.utils.utils import set_seed
+from regime_mamba.config.config import RollingWindowTrainConfig
 from regime_mamba.evaluate.rolling_window_w_train import (
-    RollingWindowTrainConfig, 
     DateRangeRegimeMambaDataset,
     train_model_for_window, 
     identify_regimes_for_window

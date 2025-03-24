@@ -17,7 +17,8 @@ from typing import Dict, Any, Optional
 import pandas as pd
 from tqdm import tqdm
 
-from regime_mamba.evaluate.rolling_window import RollingWindowConfig, run_rolling_window_backtest
+from regime_mamba.config.config import RollingWindowConfig
+from regime_mamba.evaluate.rolling_window import run_rolling_window_backtest
 from regime_mamba.utils.utils import set_seed
 
 

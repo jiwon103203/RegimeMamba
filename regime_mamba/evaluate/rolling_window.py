@@ -14,36 +14,36 @@ from .clustering import identify_bull_bear_regimes, predict_regimes, extract_hid
 from .strategy import evaluate_regime_strategy, visualize_all_periods_performance
 from ..data.dataset import RegimeMambaDataset, create_dataloaders, create_date_range_dataloader
 
-class RollingWindowConfig:
-    def __init__(self):
-        """롤링 윈도우 백테스트 설정 클래스"""
-        self.lookback_years = 10      # 클러스터링에 사용할 과거 데이터 기간(년)
-        self.forward_months = 12      # 적용할 미래 기간(개월)
-        self.start_date = '2010-01-01'  # 백테스트 시작일
-        self.end_date = '2023-12-31'    # 백테스트 종료일
-        self.n_clusters = 2           # 클러스터 수 (Bull/Bear)
-        self.cluster_method = 'cosine_kmeans'  # 클러스터링 방법
-        self.transaction_cost = 0.001 # 거래 비용 (0.1%)
-        self.model_path = None        # 사전 훈련된 모델 경로
-        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        self.target_type = 'average'
-        self.target_horizon = 5
-        self.preprocessed = False
+# class RollingWindowConfig:
+#     def __init__(self):
+#         """롤링 윈도우 백테스트 설정 클래스"""
+#         self.lookback_years = 10      # 클러스터링에 사용할 과거 데이터 기간(년)
+#         self.forward_months = 12      # 적용할 미래 기간(개월)
+#         self.start_date = '2010-01-01'  # 백테스트 시작일
+#         self.end_date = '2023-12-31'    # 백테스트 종료일
+#         self.n_clusters = 2           # 클러스터 수 (Bull/Bear)
+#         self.cluster_method = 'cosine_kmeans'  # 클러스터링 방법
+#         self.transaction_cost = 0.001 # 거래 비용 (0.1%)
+#         self.model_path = None        # 사전 훈련된 모델 경로
+#         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+#         self.target_type = 'average'
+#         self.target_horizon = 5
+#         self.preprocessed = False
 
-        # 모델 파라미터 (기본값)
-        self.d_model = 128
-        self.d_state = 128
-        self.n_layers = 4
-        self.dropout = 0.1
-        self.d_conv = 4
-        self.expand = 2
-        self.input_dim = 4
-        self.seq_len = 128
-        self.batch_size = 64
+#         # 모델 파라미터 (기본값)
+#         self.d_model = 128
+#         self.d_state = 128
+#         self.n_layers = 4
+#         self.dropout = 0.1
+#         self.d_conv = 4
+#         self.expand = 2
+#         self.input_dim = 4
+#         self.seq_len = 128
+#         self.batch_size = 64
 
-        # 저장 경로
-        self.results_dir = './rolling_window_results'
-        os.makedirs(self.results_dir, exist_ok=True)
+#         # 저장 경로
+#         self.results_dir = './rolling_window_results'
+#         os.makedirs(self.results_dir, exist_ok=True)
 
 def load_pretrained_model(config):
     """
@@ -239,15 +239,10 @@ def run_rolling_window_backtest(config, data_path):
     """
     # 데이터 로드
     data = pd.read_csv(data_path)
-    data.fillna(method='ffill', inplace=True)
-    data.fillna(method='bfill', inplace=True)
     data['returns'] = data['returns'] * 100 if config.preprocessed else data['returns']
     data["dd_10"] = data["dd_10"] * 100
     data["sortino_20"] = data["sortino_20"] * 100
     data["sortino_60"] = data["sortino_60"] * 100
-
-    # 날짜 칼럼 식별
-    date_col = 'Date'
 
     # 사전 학습된 모델 로드
     model = load_pretrained_model(config)
