@@ -37,6 +37,8 @@ pip install -e .
 - Bayesian Optimization >= 1.2.0
 - SciPy >= 1.5.0
 - tqdm >= 4.50.0
+- umap-learn >= 0.5.2
+- openTSNE >= 0.6.2
 
 ### Usage
 
@@ -74,27 +76,61 @@ python filtering_train_strategies.py --data_path path/to/data.csv --results_dir 
 
 ```
 Project directory/
- ├──regime_mamba/
- │  ├── config/             # Configuration related modules
- │  ├── data/               # Dataset related modules
- │  ├── models/             # Model definition modules
- │  ├── train/              # Model training modules
- │  │   ├── train.py        # Training functions
- │  │   └── optimize.py     # Hyperparameter optimization
- │  ├── evaluate/           # Model evaluation modules
- │  │   ├── clustering.py   # Clustering functions
- │  │   ├── strategy.py     # Strategy evaluation functions
- │  │   ├── rolling_window.py         # Rolling window backtest
- │  │   ├── rolling_window_w_train.py # Rolling window with retraining
- │  │   └── smoothing.py    # Regime smoothing techniques
- │  └── utils/              # Utility functions
- ├main.py
- ├filtering_strategies.py
- ├filtering_train_strategies.py
- ├rolling_window_backtest.py
- ├rolling_window_train_backtest.py
- ├README.md
- └setup.py
+ ├── RegimeMamba/
+ │   └── regime_mamba/
+ │       ├── config/                # Configuration related modules
+ │       │   ├── __init__.py
+ │       │   ├── config.py
+ │       │   └── rl_config.py
+ │       ├── data/                  # Dataset related modules
+ │       │   ├── __init__.py
+ │       │   ├── data_average_20_p.csv  # target : 20 days average returns(preprocessed)
+ │       │   ├── data_average_20.csv    # target : 20 days average close
+ │       │   ├── data_average_60_p.csv  # target : 60 days average returns(preprocessed)
+ │       │   ├── data_average_60.csv    # target : 60 days average close
+ │       │   ├── data_average_120_p.csv # target : 120 days average returns(preprocessed)
+ │       │   ├── data_average_120.csv   # target : 120 days average close
+ │       │   ├── data_average_200_p.csv # target : 200 days average returns(preprocessed)
+ │       │   ├── data_average_200.csv   # target : 200 days average close
+ │       │   ├── data.csv
+ │       │   └── dataset.py
+ │       ├── evaluate/              # Model evaluation modules
+ │       │   ├── __init__.py
+ │       │   ├── clustering.py      # Clustering functions
+ │       │   ├── rl_evaluate.py
+ │       │   ├── rolling_window.py  # Rolling window backtest
+ │       │   ├── rolling_window_w_train.py  # Rolling window with retraining
+ │       │   ├── smoothing.py       # Regime smoothing techniques
+ │       │   └── strategy.py        # Strategy evaluation functions
+ │       ├── models/                # Model definition modules
+ │       │   ├── __init__.py
+ │       │   ├── best_regime_mamba_6_average.pth
+ │       │   ├── best_regime_mamba_6_cumulative.pth
+ │       │   ├── best_regime_mamba_6.pth
+ │       │   ├── mamba_model.py
+ │       │   └── rl_model.py
+ │       ├── train/                 # Model training modules
+ │       │   ├── __init__.py
+ │       │   ├── optimize.py        # Hyperparameter optimization
+ │       │   ├── rl_train.py
+ │       │   └── train.py           # Training functions
+ │       ├── utils/                 # Utility functions
+ │       │   ├── __init__.py
+ │       │   ├── rl_agents.py
+ │       │   ├── rl_environments.py
+ │       │   ├── rl_investment.py
+ │       │   ├── rl_visualize.py
+ │       │   └── utils.py
+ │       └── __init__.py
+ ├── filtering_strategies.py
+ ├── filtering_train_strategies.py
+ ├── hidden_state_visualize.py
+ ├── main.py
+ ├── README.md
+ ├── rolling_window_backtest.py
+ ├── rolling_window_train_backtest.py
+ ├── run_rl_investment.py
+ └── setup.py
 ```
 
 ### Data Format
@@ -102,6 +138,16 @@ Project directory/
 Input data should be a CSV file with the following columns:
 - Date column: 'Date'
 - Feature columns: 'returns', 'dd_10', 'sortino_20', 'sortino_60'
+
+There are additional options for dependent variable(returns) (target_type & target_horizon)
+- next_day: The return for the next day
+- average: The average return over a specified period
+- cumulative: The cumulative return over a specified period
+- trend_strength: Trend strength measured using linear regression
+- direction: Direction over the period (converted into a classification problem)
+- volatility_adjusted: Volatility-adjusted return (similar to the Sharpe ratio)
+- up_ratio: The ratio of days with positive returns during the period
+- log_return_sum: The sum of log returns
 
 ### Supported Evaluation Methods
 
@@ -165,6 +211,8 @@ pip install -e .
 - Bayesian Optimization >= 1.2.0
 - SciPy >= 1.5.0
 - tqdm >= 4.50.0
+- umap-learn >= 0.5.2
+- openTSNE >= 0.6.2
 
 ### 사용 방법
 
@@ -202,27 +250,61 @@ python filtering_train_strategies.py --data_path path/to/data.csv --results_dir 
 
 ```
 Project directory/
- ├──regime_mamba/
- │  ├── config/             # Configuration related modules
- │  ├── data/               # Dataset related modules
- │  ├── models/             # Model definition modules
- │  ├── train/              # Model training modules
- │  │   ├── train.py        # Training functions
- │  │   └── optimize.py     # Hyperparameter optimization
- │  ├── evaluate/           # Model evaluation modules
- │  │   ├── clustering.py   # Clustering functions
- │  │   ├── strategy.py     # Strategy evaluation functions
- │  │   ├── rolling_window.py         # Rolling window backtest
- │  │   ├── rolling_window_w_train.py # Rolling window with retraining
- │  │   └── smoothing.py    # Regime smoothing techniques
- │  └── utils/              # Utility functions
- ├main.py
- ├filtering_strategies.py
- ├filtering_train_strategies.py
- ├rolling_window_backtest.py
- ├rolling_window_train_backtest.py
- ├README.md
- └setup.py
+ ├── RegimeMamba/
+ │   └── regime_mamba/
+ │       ├── config/                # Configuration related modules
+ │       │   ├── __init__.py
+ │       │   ├── config.py
+ │       │   └── rl_config.py
+ │       ├── data/                  # Dataset related modules
+ │       │   ├── __init__.py
+ │       │   ├── data_average_20_p.csv  # target : 20 days average returns(preprocessed)
+ │       │   ├── data_average_20.csv    # target : 20 days average close
+ │       │   ├── data_average_60_p.csv  # target : 60 days average returns(preprocessed)
+ │       │   ├── data_average_60.csv    # target : 60 days average close
+ │       │   ├── data_average_120_p.csv # target : 120 days average returns(preprocessed)
+ │       │   ├── data_average_120.csv   # target : 120 days average close
+ │       │   ├── data_average_200_p.csv # target : 200 days average returns(preprocessed)
+ │       │   ├── data_average_200.csv   # target : 200 days average close
+ │       │   ├── data.csv
+ │       │   └── dataset.py
+ │       ├── evaluate/              # Model evaluation modules
+ │       │   ├── __init__.py
+ │       │   ├── clustering.py      # Clustering functions
+ │       │   ├── rl_evaluate.py
+ │       │   ├── rolling_window.py  # Rolling window backtest
+ │       │   ├── rolling_window_w_train.py  # Rolling window with retraining
+ │       │   ├── smoothing.py       # Regime smoothing techniques
+ │       │   └── strategy.py        # Strategy evaluation functions
+ │       ├── models/                # Model definition modules
+ │       │   ├── __init__.py
+ │       │   ├── best_regime_mamba_6_average.pth
+ │       │   ├── best_regime_mamba_6_cumulative.pth
+ │       │   ├── best_regime_mamba_6.pth
+ │       │   ├── mamba_model.py
+ │       │   └── rl_model.py
+ │       ├── train/                 # Model training modules
+ │       │   ├── __init__.py
+ │       │   ├── optimize.py        # Hyperparameter optimization
+ │       │   ├── rl_train.py
+ │       │   └── train.py           # Training functions
+ │       ├── utils/                 # Utility functions
+ │       │   ├── __init__.py
+ │       │   ├── rl_agents.py
+ │       │   ├── rl_environments.py
+ │       │   ├── rl_investment.py
+ │       │   ├── rl_visualize.py
+ │       │   └── utils.py
+ │       └── __init__.py
+ ├── filtering_strategies.py
+ ├── filtering_train_strategies.py
+ ├── hidden_state_visualize.py
+ ├── main.py
+ ├── README.md
+ ├── rolling_window_backtest.py
+ ├── rolling_window_train_backtest.py
+ ├── run_rl_investment.py
+ └── setup.py
 ```
 
 ### 데이터 형식
@@ -230,6 +312,16 @@ Project directory/
 입력 데이터는 다음 형식의 CSV 파일이어야 합니다:
 - 날짜 열: 'Date'
 - 특성 열: 'returns', 'dd_10', 'sortino_20', 'sortino_60'
+
+종속 변수(수익률)에 대한 추가 옵션이 있습니다 (target_type 및 target_horizon)
+- next_day: 다음 날의 수익률
+- average: 지정된 기간 동안의 평균 수익률
+- cumulative: 지정된 기간 동안의 누적 수익률
+- trend_strength: 선형 회귀로 측정한 추세 강도
+- direction: 기간 동안의 방향성 (분류 문제로 변환)
+- volatility_adjusted: 변동성 조정 수익률 (샤프 비율과 유사)
+- up_ratio: 기간 중 상승한 날의 비율
+- log_return_sum: 로그 수익률의 합계
 
 ### 지원하는 평가 방법
 

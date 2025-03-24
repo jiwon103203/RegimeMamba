@@ -12,7 +12,7 @@ from ..utils.utils import set_seed
 from ..models.mamba_model import create_model_from_config
 from .clustering import identify_bull_bear_regimes, predict_regimes, extract_hidden_states
 from .strategy import evaluate_regime_strategy, visualize_all_periods_performance
-from ..data.dataset import RegimeMambaDataset, create_dataloaders
+from ..data.dataset import RegimeMambaDataset, create_dataloaders, create_date_range_dataloader
 
 class RollingWindowConfig:
     def __init__(self):
@@ -22,6 +22,7 @@ class RollingWindowConfig:
         self.start_date = '2010-01-01'  # 백테스트 시작일
         self.end_date = '2023-12-31'    # 백테스트 종료일
         self.n_clusters = 2           # 클러스터 수 (Bull/Bear)
+        self.cluster_method = 'cosine_kmeans'  # 클러스터링 방법
         self.transaction_cost = 0.001 # 거래 비용 (0.1%)
         self.model_path = None        # 사전 훈련된 모델 경로
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')

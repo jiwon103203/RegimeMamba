@@ -103,6 +103,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument('--target_type', type=str, default="next_day", help='Target type')
     parser.add_argument('--target_horizon', type=int, default=1, help='Target horizon')
     parser.add_argument('--preprocessed', type=bool, default=False, help='Data is preprocessed')
+    parser.add_argument('--cluster_method', type=str, default='cosine_kmeans', help='Clustering method')
+    parser.add_argument('--n_clusters', type=int, default=2, help='Number of clusters')
     
     # Optimization parameters
     parser.add_argument('--opt_iterations', type=int, default=30, help='Number of optimization iterations')

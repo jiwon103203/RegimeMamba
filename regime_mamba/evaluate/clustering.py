@@ -2,6 +2,8 @@ import numpy as np
 import torch
 from sklearn.cluster import KMeans
 from sklearn.metrics import silhouette_score
+from sklearn.preprocessing import normalize
+import matplotlib.pyplot as plt
 
 def extract_hidden_states(model, dataloader, device):
     """
@@ -30,10 +32,34 @@ def extract_hidden_states(model, dataloader, device):
             returns.append(y.numpy())
             dates.extend(date)
 
-    hidden_states = np.vstack(hidden_states)
-    returns = np.vstack(returns)
+    hidden_states = np.vstack(hidden_states) #  행 단위로 쌓기 (n_samples, hidden_size)
+    returns = np.vstack(returns) # 행 단위로 쌓기 (n_samples, 1)
 
     return hidden_states, returns, dates
+
+def cosine_kmeans(hidden_states, n_clusters=2, random_state=42, max_iter=300):
+    """
+    코사인 유사도 기반 KMeans 클러스터링 구현
+    
+    Args:
+        hidden_states: 클러스터링할 hidden states (n_samples, hidden_size)
+        n_clusters: 클러스터 수
+        random_state: 랜덤 시드
+        max_iter: 최대 반복 횟수
+        
+    Returns:
+        kmeans: 훈련된 KMeans 모델
+        normalized_states: 정규화된 hidden states
+        clusters: 클러스터 할당 레이블
+    """
+    # 1. 데이터 정규화 (L2 norm): 코사인 유사도를 위한 필수 단계
+    normalized_states = normalize(hidden_states, norm='l2')
+    
+    # 2. 표준 KMeans 적용 (정규화된 데이터에 유클리드 거리를 사용하면 코사인 유사도와 동일)
+    kmeans = KMeans(n_clusters=n_clusters, random_state=random_state, max_iter=max_iter)
+    clusters = kmeans.fit_predict(normalized_states)
+    
+    return kmeans, normalized_states, clusters
 
 def identify_bull_bear_regimes(hidden_states, returns, config):
     """
@@ -48,9 +74,13 @@ def identify_bull_bear_regimes(hidden_states, returns, config):
         kmeans: 훈련된 KMeans 모델
         bull_regime: Bull 레짐 클러스터 ID
     """
-    # K-Means 클러스터링
-    kmeans = KMeans(n_clusters=config.n_clusters, random_state=42)
-    clusters = kmeans.fit_predict(hidden_states)
+    if config.cluster_method == 'cosine_kmeans':
+        kmeans, states, clusters = cosine_kmeans(hidden_states, n_clusters=config.n_clusters, random_state=42)
+    
+    elif config.cluster_method == 'kmeans':
+        # K-Means 클러스터링
+        kmeans = KMeans(n_clusters=config.n_clusters, random_state=42)
+        clusters = kmeans.fit_predict(hidden_states)
     
     # 실루엣 점수 계산 (클러스터링 품질 평가)
     try:

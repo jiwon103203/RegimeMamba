@@ -61,6 +61,7 @@ def parse_args():
     parser.add_argument('--d_state', type=int, help='State dimension')
     parser.add_argument('--n_layers', type=int, help='Number of layers')
     parser.add_argument('--dropout', type=float, help='Dropout rate')
+    parser.add_argument('--cluster_method', type=str, default='cosine_kmeans', help='Clustering method')
     
     return parser.parse_args()
 

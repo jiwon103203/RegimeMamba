@@ -19,7 +19,6 @@ class RegimeMambaDataset(Dataset):
                 - trend_strength: 선형 회귀로 측정한 추세 강도
                 - direction: 기간 동안의 방향성 (분류 문제로 변환)
                 - volatility_adjusted: 변동성 조정 수익률 (샤프 비율과 유사)
-                - max_drawdown: 기간 내 최대 낙폭
                 - up_ratio: 기간 중 상승한 날의 비율
                 - log_return_sum: 로그 수익률의 합계
             target_horizon: 타겟 계산을 위한 기간 (일)
@@ -27,7 +26,9 @@ class RegimeMambaDataset(Dataset):
         """
         super().__init__()
         self.data = pd.read_csv(path)
-        self.data['returns'] = self.data['returns'] * 100
+        if preprocessed:
+            self.data['returns'] = self.data['returns'] * 100
+
         self.data["dd_10"] = self.data["dd_10"] * 100
         self.data["sortino_20"] = self.data["sortino_20"] * 100
         self.data["sortino_60"] = self.data["sortino_60"] * 100
@@ -63,10 +64,10 @@ class RegimeMambaDataset(Dataset):
             
             if preprocessed:
                 self.target_col=f"target_returns_{target_horizon}"
+                targets = np.array(self.subset[self.target_col]/self.target_horizon)
             else:
                 self.target_col=f"target_SMA_{target_horizon}"
-
-            targets = np.array(self.subset[self.target_col])
+                targets = np.array(self.subset[self.target_col])
 
             for i in range(len(features) - seq_len+1):
                 self.sequences.append(features[i:i+seq_len])
@@ -81,7 +82,10 @@ class RegimeMambaDataset(Dataset):
                 
                 # 타겟 기간의 수익률 데이터 추출
                 target_returns = [features[i+seq_len+j][0] for j in range(target_horizon)]
-                decimal_returns = [r/100 for r in target_returns]  # 백분율 -> 소수
+                if preprocessed:
+                    decimal_returns = [r/100 for r in target_returns]  # 백분율 -> 소수
+                else: # 수익률이 아니라 종가일 경우
+                    raise ValueError("수익률 전처리가 필요합니다.")
     
                 # 타겟 타입에 따른 계산 방식 선택
                 if target_type == "next_day":
@@ -118,21 +122,6 @@ class RegimeMambaDataset(Dataset):
                     std_return = np.std(target_returns) if np.std(target_returns) > 0 else 1.0
                     sharpe_like = mean_return / std_return
                     self.targets.append([sharpe_like])
-                    
-                elif target_type == "max_drawdown":
-                    # 기간 내 최대 낙폭
-                    # 누적 곱으로 가격 시뮬레이션
-                    price_curve = np.cumprod([1 + r for r in decimal_returns])
-                    max_dd = 0
-                    peak = price_curve[0]
-                    
-                    for price in price_curve:
-                        if price > peak:
-                            peak = price
-                        drawdown = (peak - price) / peak
-                        max_dd = max(max_dd, drawdown)
-                    
-                    self.targets.append([max_dd * 100])  # 백분율로 변환
                     
                 elif target_type == "up_ratio":
                     # 상승한 날의 비율
@@ -192,7 +181,9 @@ class DateRangeRegimeMambaDataset(Dataset):
         # 데이터 로드
         if data is None and path is not None:
             data = pd.read_csv(path)
-            data['returns'] = data['returns'] * 100
+            if preprocessed:
+                data['returns'] = data['returns'] * 100
+
             data["dd_10"] = data["dd_10"] * 100
             data["sortino_20"] = data["sortino_20"] * 100
             data["sortino_60"] = data["sortino_60"] * 100
@@ -223,7 +214,7 @@ class DateRangeRegimeMambaDataset(Dataset):
         self.targets = []
         self.dates = []
 
-        features = np.array(self.data[self.feature_cols],dtype=np.float32)
+        features = np.array(self.data[self.feature_cols])
         dates = np.array(self.data[date_col])
 
         if target_type == "average" and (f"target_SMA_{target_horizon}" in self.data.columns or f"target_returns_{target_horizon}" in self.data.columns):
@@ -232,10 +223,10 @@ class DateRangeRegimeMambaDataset(Dataset):
             
             if preprocessed:
                 self.target_col=f"target_returns_{target_horizon}"
+                targets = np.array(self.data[self.target_col])/self.target_horizon
             else:
                 self.target_col=f"target_SMA_{target_horizon}"
-
-            targets = np.array(self.data[self.target_col],dtype=np.float32)
+                targets = np.array(self.data[self.target_col])
 
             for i in range(len(features) - seq_len+1):
                 self.sequences.append(features[i:i+seq_len])
@@ -287,21 +278,6 @@ class DateRangeRegimeMambaDataset(Dataset):
                     std_return = np.std(target_returns) if np.std(target_returns) > 0 else 1.0
                     sharpe_like = mean_return / std_return
                     self.targets.append([sharpe_like])
-                    
-                elif target_type == "max_drawdown":
-                    # 기간 내 최대 낙폭
-                    # 누적 곱으로 가격 시뮬레이션
-                    price_curve = np.cumprod([1 + r for r in decimal_returns])
-                    max_dd = 0
-                    peak = price_curve[0]
-                    
-                    for price in price_curve:
-                        if price > peak:
-                            peak = price
-                        drawdown = (peak - price) / peak
-                        max_dd = max(max_dd, drawdown)
-                    
-                    self.targets.append([max_dd * 100])  # 백분율로 변환
                     
                 elif target_type == "up_ratio":
                     # 상승한 날의 비율

@@ -71,6 +71,7 @@ def parse_args():
     parser.add_argument('--learning_rate', type=float, default=1e-6, help='Learning rate')
     parser.add_argument('--target_type', type=str, help='Target type')
     parser.add_argument('--target_horizon', type=int, help='Target horizon')
+    parser.add_argument('--cluster_method', type=str, default='cosine_kmeans', help='Clustering method')
     
     # Training-related settings
     parser.add_argument('--max_epochs', type=int, default=100, help='Maximum training epochs')

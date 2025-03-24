@@ -35,13 +35,14 @@ def parse_args():
     parser.add_argument('--seed', type=int, default=42, help='Random seed')
     
     # Model parameters
-    parser.add_argument('--d_model', type=int, help='Model dimension')
-    parser.add_argument('--d_state', type=int, help='State dimension')
-    parser.add_argument('--n_layers', type=int, help='Number of layers')
-    parser.add_argument('--dropout', type=float, help='Dropout rate')
-    parser.add_argument('--seq_len', type=int, help='Sequence length')
-    parser.add_argument('--batch_size', type=int, help='Batch size')
-    parser.add_argument('--n_clusters', type=int, help='Number of clusters')
+    parser.add_argument('--d_model', type=int, default=128, help='Model dimension')
+    parser.add_argument('--d_state', type=int, default=128, help='State dimension')
+    parser.add_argument('--n_layers', type=int, default=6, help='Number of layers')
+    parser.add_argument('--dropout', type=float, default=0.1, help='Dropout rate')
+    parser.add_argument('--seq_len', type=int, default=256, help='Sequence length')
+    parser.add_argument('--batch_size', type=int, default=64, help='Batch size')
+    parser.add_argument('--n_clusters', type=int, default=2, help='Number of clusters')
+    parser.add_argument('--cluster_method', type=str, default='cosine_kmeans',help='Clustering method')
     
     # Target parameters
     parser.add_argument('--target_type', type=str, help='Target type')
