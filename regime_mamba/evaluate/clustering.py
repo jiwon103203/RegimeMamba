@@ -75,7 +75,7 @@ def identify_bull_bear_regimes(hidden_states, returns, config):
         bull_regime: Bull 레짐 클러스터 ID
     """
     if config.cluster_method == 'cosine_kmeans':
-        kmeans, states, clusters = cosine_kmeans(hidden_states, n_clusters=config.n_clusters, random_state=42)
+        kmeans, hidden_states, clusters = cosine_kmeans(hidden_states, n_clusters=config.n_clusters, random_state=42)
     
     elif config.cluster_method == 'kmeans':
         # K-Means 클러스터링
