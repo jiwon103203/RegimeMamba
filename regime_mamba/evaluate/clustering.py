@@ -29,11 +29,12 @@ def extract_hidden_states(model, dataloader, device):
             x = x.to(device)
             _, hidden = model(x, return_hidden=True)
             hidden_states.append(hidden.cpu().numpy())
-            returns.append(y.numpy())
+            returns.append(y.numpy().reshape(-1,1))
             dates.extend(date)
 
     hidden_states = np.vstack(hidden_states) #  행 단위로 쌓기 (n_samples, hidden_size)
     returns = np.vstack(returns) # 행 단위로 쌓기 (n_samples, 1)
+
 
     return hidden_states, returns, dates
 
