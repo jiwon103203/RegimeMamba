@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 from tqdm import tqdm
 
-def train_with_early_stopping(model, train_loader, valid_loader, config, max_epochs=50, patience=10, use_onecycle=True):
+def train_with_early_stopping(model, train_loader, valid_loader, config, use_onecycle=True):
     """
     조기 종료와 OneCycle 학습률 스케줄러를 적용한 모델 훈련
 
@@ -11,8 +11,6 @@ def train_with_early_stopping(model, train_loader, valid_loader, config, max_epo
         train_loader: 훈련 데이터 로더
         valid_loader: 검증 데이터 로더
         config: 설정 객체
-        max_epochs: 최대 훈련 에폭 수
-        patience: 조기 종료 인내심
         use_onecycle: OneCycleLR 스케줄러 사용 여부
 
     Returns:
@@ -28,7 +26,7 @@ def train_with_early_stopping(model, train_loader, valid_loader, config, max_epo
         scheduler = torch.optim.lr_scheduler.OneCycleLR(
             optimizer,
             max_lr=config.learning_rate * 5,
-            epochs=max_epochs,
+            epochs=config.max_epochs,
             steps_per_epoch=len(train_loader),
             pct_start=0.2,
             div_factor=5,
@@ -38,7 +36,7 @@ def train_with_early_stopping(model, train_loader, valid_loader, config, max_epo
     else:
         # ReduceLROnPlateau 스케줄러 설정
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-            optimizer, mode='min', factor=0.5, patience=5, min_lr=1e-8, verbose=True
+            optimizer, mode='min', factor=0.5, patience=config.patience, min_lr=1e-8, verbose=True
         )
 
     device = config.device
@@ -49,7 +47,7 @@ def train_with_early_stopping(model, train_loader, valid_loader, config, max_epo
     best_model_state = None
     no_improve_count = 0
 
-    for epoch in range(max_epochs):
+    for epoch in range(config.max_epochs):
         # 훈련 단계
         model.train()
         train_loss = 0
@@ -93,7 +91,7 @@ def train_with_early_stopping(model, train_loader, valid_loader, config, max_epo
             scheduler.step(avg_val_loss)
 
         current_lr = optimizer.param_groups[0]['lr']
-        print(f"에폭 {epoch+1}/{max_epochs}: 훈련 손실 = {avg_train_loss:.6f}, 검증 손실 = {avg_val_loss:.6f}, 학습률: {current_lr:.2e}")
+        print(f"에폭 {epoch+1}/{config.max_epochs}: 훈련 손실 = {avg_train_loss:.6f}, 검증 손실 = {avg_val_loss:.6f}, 학습률: {current_lr:.2e}")
 
         # 최적 모델 저장
         if avg_val_loss < best_val_loss:
@@ -104,11 +102,11 @@ def train_with_early_stopping(model, train_loader, valid_loader, config, max_epo
             print(f"  새로운 최적 모델 저장 (검증 손실: {best_val_loss:.6f})")
         else:
             no_improve_count += 1
-            print(f"  개선 없음: {no_improve_count}/{patience}")
+            print(f"  개선 없음: {no_improve_count}/{config.patience}")
 
         # 조기 종료 확인
-        if no_improve_count >= patience:
-            print(f"조기 종료: {patience} 에폭 동안 개선 없음")
+        if no_improve_count >= config.patience:
+            print(f"조기 종료: {config.patience} 에폭 동안 개선 없음")
             break
 
     # 최적 모델 상태로 복원
@@ -136,7 +134,7 @@ def train_regime_mamba(model, train_loader, valid_loader, config, save_path=None
     optimizer = torch.optim.AdamW(model.parameters(), lr=config.learning_rate)
 
     # OneCycleLR 스케줄러 설정
-    total_steps = config.epochs * len(train_loader)
+    total_steps = config.max_epochs * len(train_loader)
     scheduler = torch.optim.lr_scheduler.OneCycleLR(
         optimizer,
         max_lr=config.learning_rate * 5,  # 최대 학습률
@@ -152,7 +150,7 @@ def train_regime_mamba(model, train_loader, valid_loader, config, save_path=None
 
     best_val_loss = float('inf')
 
-    for epoch in range(config.epochs):
+    for epoch in range(config.max_epochs):
         # 훈련 단계
         model.train()
         train_loss = 0
