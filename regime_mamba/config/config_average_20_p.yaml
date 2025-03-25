@@ -9,7 +9,7 @@ seq_len: 199
 input_dim: 4
 
 # 데이터 관련 파라미터
-data_path: ./data/average_20_p.csv
+data_path: regime_mamba/data/data_average_20_p.csv
 preprocessed: True
 target_type: average
 target_horizon: 20
@@ -21,4 +21,3 @@ patience: 10
 #클러스터링 관련 설정
 n_clusters: 2
 cluster_method: cosine_kmeans
-

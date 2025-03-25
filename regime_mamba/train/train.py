@@ -58,7 +58,7 @@ def train_with_early_stopping(model, train_loader, valid_loader, config, use_one
 
             optimizer.zero_grad()
             pred = model(x)
-            loss = criterion(pred, y)
+            loss = criterion(pred.squeeze(), y) # Fixed
             loss.backward()
 
             # 그래디언트 클리핑 추가

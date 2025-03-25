@@ -138,6 +138,12 @@ def load_config(args: argparse.Namespace) -> RegimeMambaConfig:
     # Create default config
     config = RegimeMambaConfig()
     
+    # Command line arguments
+    arg_dict = vars(args)
+    for key, value in arg_dict.items():
+        if value is not None and hasattr(config, key):
+            setattr(config, key, value)
+
     # Load from YAML if provided
     if args.config and os.path.exists(args.config):
         try:
@@ -152,12 +158,6 @@ def load_config(args: argparse.Namespace) -> RegimeMambaConfig:
             logging.info(f"Loaded configuration from {args.config}")
         except Exception as e:
             logging.warning(f"Error loading config from {args.config}: {str(e)}")
-    
-    # Override with command line arguments
-    arg_dict = vars(args)
-    for key, value in arg_dict.items():
-        if value is not None and hasattr(config, key):
-            setattr(config, key, value)
     
     # Set device
     if args.gpu >= 0 and torch.cuda.is_available():
