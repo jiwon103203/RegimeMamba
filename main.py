@@ -18,6 +18,7 @@ import argparse
 from typing import Dict, Any, Tuple, Optional
 from datetime import datetime
 from tqdm import tqdm
+import traceback
 
 import torch
 import numpy as np
@@ -523,6 +524,11 @@ def main():
         if args.optimize:
             logger.info("Step 1: Hyperparameter Optimization")
             config = optimize_hyperparameters(config, paths, args.opt_iterations, logger)
+            config.input_dim = args.input_dim
+            config.target_type = args.target_type
+            config.target_horizon = args.target_horizon
+            config.preprocessed = args.preprocessed
+
         else:
             logger.info("Step 1: Skipping Hyperparameter Optimization")
         
