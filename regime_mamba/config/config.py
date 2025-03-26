@@ -25,6 +25,7 @@ class RegimeMambaConfig:
         self.learning_rate = 1e-6
         self.max_epochs = 50
         self.patience = 10
+        self.transaction_cost = 0.001
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         
         # 클러스터링 관련 설정
