@@ -81,7 +81,7 @@ def train_with_early_stopping(model, train_loader, valid_loader, config, use_one
                 y = y.to(device)
 
                 pred = model(x)
-                loss = criterion(pred, y)
+                loss = criterion(pred.squeeze(), y)
                 val_loss += loss.item()
 
         avg_train_loss = train_loss / len(train_loader)
@@ -162,7 +162,7 @@ def train_regime_mamba(model, train_loader, valid_loader, config, save_path=None
 
             optimizer.zero_grad()
             pred = model(x)
-            loss = criterion(pred, y)
+            loss = criterion(pred.squeeze(), y)
             loss.backward()
 
             # 그래디언트 클리핑
@@ -184,7 +184,7 @@ def train_regime_mamba(model, train_loader, valid_loader, config, save_path=None
                 y = y.to(device)
 
                 pred = model(x)
-                loss = criterion(pred, y)
+                loss = criterion(pred.squeeze(), y)
                 val_loss += loss.item()
 
         avg_train_loss = train_loss / len(train_loader)
