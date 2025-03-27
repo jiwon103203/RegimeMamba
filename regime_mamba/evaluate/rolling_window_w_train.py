@@ -184,7 +184,7 @@ def identify_regimes_for_window(config, model, data, clustering_start, clusterin
         return None, None
     
     # Hidden states 추출
-    hidden_states, returns, _ = extract_hidden_states(model, clustering_loader, config.device)
+    hidden_states, returns, _ = extract_hidden_states(model, clustering_loader, config)
     
     # 클러스터링
     kmeans, bull_regime = identify_bull_bear_regimes(hidden_states, returns, config)
@@ -233,7 +233,7 @@ def apply_and_evaluate_regimes(config, model, data, kmeans, bull_regime, forward
         return None, None
     
     # 레짐 예측
-    predictions, true_returns, dates = predict_regimes(model, forward_loader, kmeans, bull_regime, config.device)
+    predictions, true_returns, dates = predict_regimes(model, forward_loader, kmeans, bull_regime, config)
     
     # 원본 예측 저장
     raw_predictions = copy.deepcopy(predictions)
@@ -341,15 +341,7 @@ def run_rolling_window_train(config):
     # 데이터 로드
     print("데이터 로드 중...")
     data = pd.read_csv(config.data_path)
-    data.fillna(method='ffill', inplace=True)
-    data.fillna(method='bfill', inplace=True)
-    data['returns'] = data['returns'] * 100
-    data["dd_10"] = data["dd_10"] * 100
-    data["sortino_20"] = data["sortino_20"] * 100
-    data["sortino_60"] = data["sortino_60"] * 100
     
-    # 날짜 칼럼 식별
-    date_col = 'Price' if 'Price' in data.columns else 'Date'
     
     # 결과 저장 객체
     all_results = []

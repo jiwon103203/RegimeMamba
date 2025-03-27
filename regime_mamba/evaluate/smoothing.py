@@ -180,7 +180,7 @@ def apply_filtering(predictions, method='minimum_holding', window=10, confirmati
         print(f"Unknown filtering method: {method}, no filtering applied")
         return predictions
 
-def predict_regimes_with_filtering(model, dataloader, kmeans, bull_regime, device,
+def predict_regimes_with_filtering(model, dataloader, kmeans, bull_regime, config,
                                   filter_method='minimum_holding',
                                   window=10,
                                   confirmation_days=3,
@@ -194,7 +194,7 @@ def predict_regimes_with_filtering(model, dataloader, kmeans, bull_regime, devic
         dataloader: 데이터 로더
         kmeans: 훈련된 KMeans 모델
         bull_regime: Bull 레짐 클러스터 ID
-        device: 연산 장치
+        config: 설정 객체
         filter_method: 필터링 방식 ('smoothing', 'confirmation', 'minimum_holding', 'probability', 'none')
         기타 필터링 관련 파라미터들
 
@@ -212,33 +212,63 @@ def predict_regimes_with_filtering(model, dataloader, kmeans, bull_regime, devic
     dates = []
 
     with torch.no_grad():
-        for x, y, date in dataloader:
-            x = x.to(device)
-            _, hidden = model(x, return_hidden=True)
-            hidden_cpu = hidden.cpu().numpy()
+        if config.preprocessed:
+            for x, y, date in dataloader:
+                x = x.to(config.device)
+                _, hidden = model(x, return_hidden=True)
+                hidden_cpu = hidden.cpu().numpy()
 
-            # 군집 할당
-            cluster = kmeans.predict(hidden_cpu)
+                # 군집 할당
+                cluster = kmeans.predict(hidden_cpu)
 
-            # 확률 기반 레짐 결정 적용 시
-            if filter_method == 'probability':
-                # 클러스터까지의 거리 계산
-                distances = kmeans.transform(hidden_cpu)
-                # 확률로 변환
-                neg_distances = -distances
-                probabilities = np.exp(neg_distances) / np.sum(np.exp(neg_distances), axis=1, keepdims=True)
-                # Bull 레짐 확률
-                bull_probs = probabilities[:, bull_regime]
-                # 임계값 적용
-                regime_pred = (bull_probs > probability_threshold).astype(int)
-            else:
-                # 기본 레짐 예측 (Bull 레짐이면 1, 아니면 0)
-                regime_pred = np.where(cluster == bull_regime, 1, 0)
+                # 확률 기반 레짐 결정 적용 시
+                if filter_method == 'probability':
+                    # 클러스터까지의 거리 계산
+                    distances = kmeans.transform(hidden_cpu)
+                    # 확률로 변환
+                    neg_distances = -distances
+                    probabilities = np.exp(neg_distances) / np.sum(np.exp(neg_distances), axis=1, keepdims=True)
+                    # Bull 레짐 확률
+                    bull_probs = probabilities[:, bull_regime]
+                    # 임계값 적용
+                    regime_pred = (bull_probs > probability_threshold).astype(int)
+                else:
+                    # 기본 레짐 예측 (Bull 레짐이면 1, 아니면 0)
+                    regime_pred = np.where(cluster == bull_regime, 1, 0)
 
-            hidden_states_list.append(hidden_cpu)
-            predictions.extend(regime_pred)
-            true_returns.extend(y.numpy())
-            dates.extend(date)
+                hidden_states_list.append(hidden_cpu)
+                predictions.extend(regime_pred)
+                true_returns.extend(r.numpy())
+                dates.extend(date)
+        else:
+            for x, y, date, r in dataloader:
+                x = x.to(config.device)
+                _, hidden = model(x, return_hidden=True)
+                hidden_cpu = hidden.cpu().numpy()
+
+                # 군집 할당
+                cluster = kmeans.predict(hidden_cpu)
+
+                # 확률 기반 레짐 결정 적용 시
+                if filter_method == 'probability':
+                    # 클러스터까지의 거리 계산
+                    distances = kmeans.transform(hidden_cpu)
+                    # 확률로 변환
+                    neg_distances = -distances
+                    probabilities = np.exp(neg_distances) / np.sum(np.exp(neg_distances), axis=1, keepdims=True)
+                    # Bull 레짐 확률
+                    bull_probs = probabilities[:, bull_regime]
+                    # 임계값 적용
+                    regime_pred = (bull_probs > probability_threshold).astype(int)
+                else:
+                    # 기본 레짐 예측 (Bull 레짐이면 1, 아니면 0)
+                    regime_pred = np.where(cluster == bull_regime, 1, 0)
+
+                hidden_states_list.append(hidden_cpu)
+                predictions.extend(regime_pred)
+                true_returns.extend(r.numpy())
+                dates.extend(date)
+
 
     # NumPy 배열로 변환
     predictions = np.array(predictions)
@@ -572,7 +602,7 @@ def find_optimal_filtering(config, data_path, save_path=None):
 
     # 훈련 데이터로 레짐 식별
     print("훈련 데이터로 레짐 식별 중...")
-    train_hidden, train_returns, _ = extract_hidden_states(model, train_loader, config.device)
+    train_hidden, train_returns, _ = extract_hidden_states(model, train_loader, config)
     kmeans = KMeans(n_clusters=config.n_clusters, random_state=42)
     clusters = kmeans.fit_predict(train_hidden)
 
@@ -589,7 +619,7 @@ def find_optimal_filtering(config, data_path, save_path=None):
     # 테스트 데이터에 적용
     print("테스트 데이터에 레짐 예측 적용 중...")
     test_predictions, test_returns, test_dates = predict_regimes(
-        model, test_loader, kmeans, bull_regime, config.device
+        model, test_loader, kmeans, bull_regime, config
     )
 
     # 다양한 필터링 전략 비교

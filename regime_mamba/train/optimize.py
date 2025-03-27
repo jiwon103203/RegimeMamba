@@ -76,8 +76,7 @@ def optimize_regime_mamba_bayesian(data_path, base_config, n_iterations=30, save
 
             # 조기 종료를 적용한 모델 훈련
             best_val_loss, early_stop_epoch, _ = train_with_early_stopping(
-                model, train_loader, valid_loader, current_config,
-                max_epochs=current_config.max_epochs, patience=current_config.patience, use_onecycle=True
+                model, train_loader, valid_loader, current_config, use_onecycle=True
             )
 
             # 베이지안 최적화는 최대화 문제를 해결하므로 손실의 음수를 반환

@@ -119,26 +119,9 @@ def identify_regimes_for_period(model, data, config, period_start, period_end):
     )
 
     # Hidden states 추출
-    hidden_states, returns, dates = extract_hidden_states(model, dataloader, config.device)
+    hidden_states, returns, dates = extract_hidden_states(model, dataloader, config)
 
-    # K-Means 클러스터링
-    from sklearn.cluster import KMeans
-    
-    kmeans = KMeans(n_clusters=config.n_clusters, random_state=42)
-    clusters = kmeans.fit_predict(hidden_states)
-
-    # 각 클러스터의 평균 수익률 계산
-    cluster_returns = {}
-    for i in range(config.n_clusters):
-        cluster_mask = (clusters == i)
-        avg_return = returns[cluster_mask].mean()
-        cluster_returns[i] = avg_return
-
-    # 가장 높은 평균 수익률을 가진 클러스터를 Bull 레짐으로 선택
-    bull_regime = max(cluster_returns, key=cluster_returns.get)
-
-    print(f"클러스터 평균 수익률: {cluster_returns}")
-    print(f"Bull 레짐 클러스터: {bull_regime}")
+    kmeans, bull_regime = identify_bull_bear_regimes(hidden_states, returns, config)
 
     return kmeans, bull_regime
 
@@ -184,7 +167,7 @@ def apply_regimes_to_future_period(model, data, config, kmeans, bull_regime, fut
     )
 
     # 레짐 예측
-    predictions, true_returns, dates = predict_regimes(model, dataloader, kmeans, bull_regime, config.device)
+    predictions, true_returns, dates = predict_regimes(model, dataloader, kmeans, bull_regime, config)
 
     # 거래 비용을 고려한 성과 평가
     results_df, performance = evaluate_regime_strategy(
@@ -239,10 +222,6 @@ def run_rolling_window_backtest(config, data_path):
     """
     # 데이터 로드
     data = pd.read_csv(data_path)
-    data['returns'] = data['returns'] * 100 if config.preprocessed else data['returns']
-    data["dd_10"] = data["dd_10"] * 100
-    data["sortino_20"] = data["sortino_20"] * 100
-    data["sortino_60"] = data["sortino_60"] * 100
 
     # 사전 학습된 모델 로드
     model = load_pretrained_model(config)

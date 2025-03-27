@@ -394,7 +394,7 @@ def evaluate_method(
         
         # Get original regime predictions
         raw_predictions, true_returns, dates = predict_regimes(
-            model, forward_loader, kmeans, bull_regime, config.device
+            model, forward_loader, kmeans, bull_regime, config
         )
         
         # Apply smoothing

@@ -51,38 +51,66 @@ def train_with_early_stopping(model, train_loader, valid_loader, config, use_one
         # 훈련 단계
         model.train()
         train_loss = 0
+        if config.preprocessed:
+            for i, (x, y, _) in enumerate(train_loader):
+                x = x.to(device)
+                y = y.to(device)
 
-        for i, (x, y, _) in enumerate(train_loader):
-            x = x.to(device)
-            y = y.to(device)
+                optimizer.zero_grad()
+                pred = model(x)
+                loss = criterion(pred.squeeze(), y) # Fixed
+                loss.backward()
 
-            optimizer.zero_grad()
-            pred = model(x)
-            loss = criterion(pred.squeeze(), y) # Fixed
-            loss.backward()
+                # 그래디언트 클리핑 추가
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
 
-            # 그래디언트 클리핑 추가
-            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+                optimizer.step()
 
-            optimizer.step()
+                if use_onecycle:
+                    scheduler.step()
 
-            if use_onecycle:
-                scheduler.step()
+                train_loss += loss.item()
+        else:
+            for i, (x, y, _, _) in enumerate(train_loader):
+                x = x.to(device)
+                y = y.to(device)
 
-            train_loss += loss.item()
+                optimizer.zero_grad()
+                pred = model(x)
+                loss = criterion(pred.squeeze(), y)
+                loss.backward()
+
+                # 그래디언트 클리핑 추가
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+
+                optimizer.step()
+
+                if use_onecycle:
+                    scheduler.step()
+
+                train_loss += loss.item()
 
         # 검증 단계
         model.eval()
         val_loss = 0
 
         with torch.no_grad():
-            for x, y, _ in valid_loader:
-                x = x.to(device)
-                y = y.to(device)
+            if config.preprocessed:
+                for x, y, _ in valid_loader:
+                    x = x.to(device)
+                    y = y.to(device)
 
-                pred = model(x)
-                loss = criterion(pred.squeeze(), y)
-                val_loss += loss.item()
+                    pred = model(x)
+                    loss = criterion(pred.squeeze(), y)
+                    val_loss += loss.item()
+            else:
+                for x, y, _, _ in valid_loader:
+                    x = x.to(device)
+                    y = y.to(device)
+
+                    pred = model(x)
+                    loss = criterion(pred.squeeze(), y)
+                    val_loss += loss.item
 
         avg_train_loss = train_loss / len(train_loader)
         avg_val_loss = val_loss / len(valid_loader)
@@ -156,36 +184,64 @@ def train_regime_mamba(model, train_loader, valid_loader, config, save_path=None
         train_loss = 0
         train_pbar = tqdm(enumerate(train_loader), desc=f"에폭 {epoch+1} (훈련)")
 
-        for i, (x, y, _) in train_pbar:
-            x = x.to(device)
-            y = y.to(device)
+        if config.preprocessed:
+            for i, (x, y, _) in train_pbar:
+                x = x.to(device)
+                y = y.to(device)
 
-            optimizer.zero_grad()
-            pred = model(x)
-            loss = criterion(pred.squeeze(), y)
-            loss.backward()
+                optimizer.zero_grad()
+                pred = model(x)
+                loss = criterion(pred.squeeze(), y)
+                loss.backward()
 
-            # 그래디언트 클리핑
-            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+                # 그래디언트 클리핑
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
 
-            optimizer.step()
-            scheduler.step()
+                optimizer.step()
+                scheduler.step()
 
-            train_loss += loss.item()
-            train_pbar.set_postfix({"train_loss": train_loss / (i + 1)})
+                train_loss += loss.item()
+                train_pbar.set_postfix({"train_loss": train_loss / (i + 1)})
+        else:
+            for i, (x, y, _, _) in train_pbar:
+                x = x.to(device)
+                y = y.to(device)
+
+                optimizer.zero_grad()
+                pred = model(x)
+                loss = criterion(pred.squeeze(), y)
+                loss.backward()
+
+                # 그래디언트 클리핑
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+
+                optimizer.step()
+                scheduler.step()
+
+                train_loss += loss.item()
+                train_pbar.set_postfix({"train_loss": train_loss / (i + 1)})
 
         # 검증 단계
         model.eval()
         val_loss = 0
 
         with torch.no_grad():
-            for i, (x, y, _) in enumerate(valid_loader):
-                x = x.to(device)
-                y = y.to(device)
+            if config.preprocessed:
+                for i, (x, y, _) in enumerate(valid_loader):
+                    x = x.to(device)
+                    y = y.to(device)
 
-                pred = model(x)
-                loss = criterion(pred.squeeze(), y)
-                val_loss += loss.item()
+                    pred = model(x)
+                    loss = criterion(pred.squeeze(), y)
+                    val_loss += loss.item()
+            else:
+                for i, (x, y, _, _) in enumerate(valid_loader):
+                    x = x.to(device)
+                    y = y.to(device)
+
+                    pred = model(x)
+                    loss = criterion(pred.squeeze(), y)
+                    val_loss += loss.item()
 
         avg_train_loss = train_loss / len(train_loader)
         avg_val_loss = val_loss / len(valid_loader)

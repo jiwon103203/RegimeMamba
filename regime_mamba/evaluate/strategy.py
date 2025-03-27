@@ -182,7 +182,7 @@ def analyze_transaction_cost_impact(model, valid_loader, test_loader, config, km
     
     # 테스트 데이터에 대한 레짐 예측
     test_predictions, test_returns, test_dates = predict_regimes(
-        model, test_loader, kmeans, bull_regime, config.device
+        model, test_loader, kmeans, bull_regime, config
     )
 
     # 다양한 거래 비용 수준

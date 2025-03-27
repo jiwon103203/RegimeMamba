@@ -5,14 +5,14 @@ from sklearn.metrics import silhouette_score
 from sklearn.preprocessing import normalize
 import matplotlib.pyplot as plt
 
-def extract_hidden_states(model, dataloader, device):
+def extract_hidden_states(model, dataloader, config):
     """
     모델로부터 hidden states와 타겟 수익률을 추출
 
     Args:
         model: 평가할 모델
         dataloader: 데이터 로더
-        device: 연산 장치
+        config: 설정 객체
 
     Returns:
         hidden_states: 추출된 hidden states
@@ -25,12 +25,20 @@ def extract_hidden_states(model, dataloader, device):
     dates = []
 
     with torch.no_grad():
-        for x, y, date in dataloader:
-            x = x.to(device)
-            _, hidden = model(x, return_hidden=True)
-            hidden_states.append(hidden.cpu().numpy())
-            returns.append(y.numpy().reshape(-1,1))
-            dates.extend(date)
+        if config.preprocessed:
+            for x, y, date in dataloader:
+                x = x.to(config.device)
+                _, hidden = model(x, return_hidden=True)
+                hidden_states.append(hidden.cpu().numpy())
+                returns.append(y.numpy().reshape(-1,1))
+                dates.extend(date)
+        else:
+            for x, y, date, r in dataloader:
+                x = x.to(config.device)
+                _, hidden = model(x, return_hidden=True)
+                hidden_states.append(hidden.cpu().numpy())
+                returns.append(r.numpy().reshape(-1,1))
+                dates.extend(date)
 
     hidden_states = np.vstack(hidden_states) #  행 단위로 쌓기 (n_samples, hidden_size)
     returns = np.vstack(returns) # 행 단위로 쌓기 (n_samples, 1)
@@ -105,7 +113,7 @@ def identify_bull_bear_regimes(hidden_states, returns, config):
 
     return kmeans, bull_regime
 
-def predict_regimes(model, dataloader, kmeans, bull_regime, device):
+def predict_regimes(model, dataloader, kmeans, bull_regime, config):
     """
     테스트 데이터에 대해 레짐 예측
 
@@ -114,7 +122,7 @@ def predict_regimes(model, dataloader, kmeans, bull_regime, device):
         dataloader: 데이터 로더
         kmeans: 훈련된 KMeans 모델
         bull_regime: Bull 레짐 클러스터 ID
-        device: 연산 장치
+        config: 설정 객체
 
     Returns:
         predictions: 예측된 레짐 (1=Bull, 0=Bear)
@@ -127,19 +135,34 @@ def predict_regimes(model, dataloader, kmeans, bull_regime, device):
     dates = []
 
     with torch.no_grad():
-        for x, y, date in dataloader:
-            x = x.to(device)
-            _, hidden = model(x, return_hidden=True)
-            hidden = hidden.cpu().numpy()
+        if config.preprocessed:
+            for x, y, date in dataloader:
+                x = x.to(config.device)
+                _, hidden = model(x, return_hidden=True)
+                hidden = hidden.cpu().numpy()
 
-            # 클러스터 할당
-            cluster = kmeans.predict(hidden)
+                # 클러스터 할당
+                cluster = kmeans.predict(hidden)
 
-            # Bull 레짐이면 1, 아니면 0
-            regime_pred = np.where(cluster == bull_regime, 1, 0)
+                # Bull 레짐이면 1, 아니면 0
+                regime_pred = np.where(cluster == bull_regime, 1, 0)
 
-            predictions.extend(regime_pred)
-            true_returns.extend(y.numpy())
-            dates.extend(date)
+                predictions.extend(regime_pred)
+                true_returns.extend(y.numpy())
+                dates.extend(date)
+        else:
+            for x, y, date, r in dataloader:
+                x = x.to(config.device)
+                _, hidden = model(x, return_hidden=True)
+
+                # 클러스터 할당
+                cluster = kmeans.predict(hidden)
+
+                # Bull 레짐이면 1, 아니면 0
+                regime_pred = np.where(cluster == bull_regime, 1, 0)
+
+                predictions.extend(regime_pred)
+                true_returns.extend(r.numpy())
+                dates.extend(date)
 
     return np.array(predictions), np.array(true_returns), dates

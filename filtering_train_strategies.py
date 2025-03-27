@@ -227,7 +227,7 @@ def apply_and_evaluate_with_smoothing(
         
         # Get original regime predictions
         from regime_mamba.evaluate.clustering import predict_regimes
-        raw_predictions, true_returns, dates = predict_regimes(model, forward_loader, kmeans, bull_regime, config.device)
+        raw_predictions, true_returns, dates = predict_regimes(model, forward_loader, kmeans, bull_regime, config)
         
         # Apply smoothing
         smoothed_predictions = apply_smoothing_method(raw_predictions, smoothing_method, smoothing_params)

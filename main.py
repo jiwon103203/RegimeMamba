@@ -366,7 +366,7 @@ def identify_regimes(
     try:
         # Extract hidden states
         valid_hidden, valid_returns, valid_dates = extract_hidden_states(
-            model, valid_loader, config.device
+            model, valid_loader, config
         )
         
         # Identify bull/bear regimes
@@ -410,7 +410,7 @@ def evaluate_strategy(
     try:
         # Predict regimes
         test_predictions, test_returns, test_dates = predict_regimes(
-            model, test_loader, kmeans, bull_regime, config.device
+            model, test_loader, kmeans, bull_regime, config
         )
         
         # Evaluate strategy

@@ -375,6 +375,6 @@ def main():
     model = load_model(args)
     dataloader = load_dataloader(args)
 
-    hidden_states, returns, dates = extract_hidden_states(model, dataloader)
+    hidden_states, returns, dates = extract_hidden_states(model, dataloader, config)
     
     visualize_hidden_states(hidden_states, returns, args.results_dir)

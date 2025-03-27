@@ -26,8 +26,11 @@ class RegimeMambaDataset(Dataset):
         """
         super().__init__()
         self.data = pd.read_csv(path)
-        if preprocessed:
+        self.preprocessed = preprocessed
+        if self.preprocessed:
             self.data['returns'] = self.data['returns'] * 100
+        else:
+            self.data['Close'] = self.data['Close'] / 100 # 스케일 조정
 
         self.data["dd_10"] = self.data["dd_10"] * 100
         self.data["sortino_20"] = self.data["sortino_20"] * 100
@@ -37,8 +40,13 @@ class RegimeMambaDataset(Dataset):
         self.target_horizon = target_horizon
 
         # 특성과 타겟 칼럼 지정
-        self.feature_cols = ["returns", "dd_10", "sortino_20", "sortino_60"]
-        self.target_col = "returns"  # 수익률을 타겟으로 사용
+        if self.preprocessed:
+            self.feature_cols = ["returns", "dd_10", "sortino_20", "sortino_60"]
+            self.target_col = "returns"  # 수익률을 타겟으로 사용
+        else: 
+            self.feature_cols = ["Close", "dd_10", "sortino_20", "sortino_60"]
+            self.target_col = "Close" 
+        
 
         # 일자 기준으로 데이터 분할
         date_col = 'Date'
@@ -62,7 +70,7 @@ class RegimeMambaDataset(Dataset):
             
             print("미리 처리된 데이터 포착")
             
-            if preprocessed:
+            if self.preprocessed:
                 self.target_col=f"target_returns_{target_horizon}"
                 targets = np.array(self.subset[self.target_col]/self.target_horizon)
             else:
@@ -142,11 +150,19 @@ class RegimeMambaDataset(Dataset):
         return len(self.sequences)
 
     def __getitem__(self, idx):
-        return (
-            torch.tensor(self.sequences[idx], dtype=torch.float32),
-            torch.tensor(self.targets[idx], dtype=torch.float32),
-            self.dates[idx]
-        )
+        if self.preprocessed:
+            return (
+                torch.tensor(self.sequences[idx], dtype=torch.float32),
+                torch.tensor(self.targets[idx], dtype=torch.float32),
+                self.dates[idx]
+            )
+        else:
+            return(
+                torch.tensor(self.sequences[idx], dtype=torch.float32),
+                torch.tensor(self.targets[idx], dtype=torch.float32),
+                self.dates[idx],
+                torch.tensor(self.subset['returns'], dtype=torch.float32)
+            )
 
 class DateRangeRegimeMambaDataset(Dataset):
     def __init__(self, data=None, path=None, seq_len=128, start_date=None, end_date=None, 
@@ -177,12 +193,14 @@ class DateRangeRegimeMambaDataset(Dataset):
         self.seq_len = seq_len
         self.target_type = target_type
         self.target_horizon = target_horizon
-
+        self.preprocessed = preprocessed
         # 데이터 로드
         if data is None and path is not None:
             data = pd.read_csv(path)
-            if preprocessed:
+            if self.preprocessed:
                 data['returns'] = data['returns'] * 100
+            else:
+                data['Close'] = data['Close'] / 100
 
             data["dd_10"] = data["dd_10"] * 100
             data["sortino_20"] = data["sortino_20"] * 100
@@ -206,8 +224,12 @@ class DateRangeRegimeMambaDataset(Dataset):
             self.data = data.copy()
 
         # 특성과 타겟 칼럼 지정
-        self.feature_cols = ["returns", "dd_10", "sortino_20", "sortino_60"]
-        self.target_col = "returns"
+        if self.preprocessed:
+            self.feature_cols = ["returns", "dd_10", "sortino_20", "sortino_60"]
+            self.target_col = "returns"
+        else:
+            self.feature_cols = ["Close", "dd_10", "sortino_20", "sortino_60"]
+            self.target_col = "Close"
 
         # 시퀀스 및 타겟 생성
         self.sequences = []
@@ -221,7 +243,7 @@ class DateRangeRegimeMambaDataset(Dataset):
             
             print("미리 처리된 데이터 포착")
             
-            if preprocessed:
+            if self.preprocessed:
                 self.target_col=f"target_returns_{target_horizon}"
                 targets = np.array(self.data[self.target_col])/self.target_horizon
             else:
@@ -298,11 +320,19 @@ class DateRangeRegimeMambaDataset(Dataset):
         return len(self.sequences)
 
     def __getitem__(self, idx):
-        return (
-            torch.tensor(self.sequences[idx], dtype=torch.float32),
-            torch.tensor(self.targets[idx], dtype=torch.float32),
-            self.dates[idx]
-        )
+        if self.preprocessed:
+            return (
+                torch.tensor(self.sequences[idx], dtype=torch.float32),
+                torch.tensor(self.targets[idx], dtype=torch.float32),
+                self.dates[idx]
+            )
+        else:
+            return(
+                torch.tensor(self.sequences[idx], dtype=torch.float32),
+                torch.tensor(self.targets[idx], dtype=torch.float32),
+                self.dates[idx],
+                torch.tensor(self.subset['returns'], dtype=torch.float32)
+            )
 
 def create_dataloaders(config):
     """
