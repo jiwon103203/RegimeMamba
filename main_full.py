@@ -378,10 +378,10 @@ def evaluate_strategy(
             with torch.no_grad():
                 predictions = model(features)
             
-            binary = features[:,2] > predictions
-            test_predictions.append(binary.cpu().numpy())
-            test_returns.append(returns.cpu().numpy()) 
-            test_dates.extend(dates)
+            binary = features[:,1] > predictions # (batch_size, 5) -> (batch_size, 1)
+            test_predictions+binary.astype(int).cpu().numpy().flatten()
+            test_returns+returns.cpu().numpy().flatten()
+            test_dates+dates.flatten()
         # # Predict regimes
         # test_predictions, test_returns, test_dates = predict_regimes(
         #     model, test_loader, config

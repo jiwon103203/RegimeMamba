@@ -25,6 +25,9 @@ def evaluate_regime_strategy(predictions, returns, dates=None, transaction_cost=
         'Return': returns.flatten()
     })
 
+    # Date 순서로 정렬
+    df.sort_values('Date').reset_index(drop=True, inplace=True)
+
     # 레짐 변화 감지 (거래 발생)
     df['Regime_Change'] = df['Regime'].diff().fillna(0) != 0
 
