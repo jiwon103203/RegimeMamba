@@ -161,7 +161,7 @@ class RegimeMambaDataset(Dataset):
                 torch.tensor(self.sequences[idx], dtype=torch.float32),
                 torch.tensor(self.targets[idx], dtype=torch.float32),
                 self.dates[idx],
-                torch.tensor(self.subset['returns'], dtype=torch.float32)
+                torch.tensor(np.array(self.subset['returns']), dtype=torch.float32)
             )
 
 class DateRangeRegimeMambaDataset(Dataset):
@@ -331,7 +331,7 @@ class DateRangeRegimeMambaDataset(Dataset):
                 torch.tensor(self.sequences[idx], dtype=torch.float32),
                 torch.tensor(self.targets[idx], dtype=torch.float32),
                 self.dates[idx],
-                torch.tensor(self.subset['returns'], dtype=torch.float32)
+                torch.tensor(np.array(self.subset['returns']), dtype=torch.float32)
             )
 
 def create_dataloaders(config):

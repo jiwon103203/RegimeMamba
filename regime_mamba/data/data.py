@@ -173,7 +173,7 @@ data.to_csv("multi_index_data.csv")
 print("데이터 처리 완료. 결과가 'multi_index_data.csv'에 저장되었습니다.")
 
 # 주요 지표만 선택하여 별도 저장
-selected_data = data[['SP500_Close', 'SP500_Open', 'SP500_High', 'SP500_Low', 'SP500_target_SMA_20', 'SP500_target_SMA_60', 'SP500_target_SMA_120', 'SP500_target_SMA_200', 'SP500_returns', 'SP500_target_returns_5', 'SP500_target_returns_20', 'SP500_target_returns_60', 'SP500_target_returns_120', 'SP500_target_returns_200', 'SP500_returns_20', 'SP500_returns_60', 'SP500_dd_10', 'SP500_dd_20', 'SP500_dd_60', 'SP500_sortino_20', 'SP500_sortino_60', 'SP500_treasury_rate', 'SP500_daily_rf', 'SP500_daily_rf_20', 'SP500_daily_rf_60']]
+selected_data = data[['SP500_Close', 'SP500_Open', 'SP500_High', 'SP500_Low', 'SP500_target_SMA_20', 'SP500_target_SMA_60', 'SP500_target_SMA_120', 'SP500_target_SMA_200', 'SP500_returns', 'SP500_target_returns_20', 'SP500_target_returns_60', 'SP500_target_returns_120', 'SP500_target_returns_200', 'SP500_treasury_rate']]
 selected_data.to_csv('selected_metrics.csv')
 
 for col in selected_data.columns:
