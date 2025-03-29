@@ -83,7 +83,7 @@ class RegimeMambaDataset(Dataset):
                 self.targets.append(targets[i+seq_len-1])
                 # 타겟 날짜 저장 (타겟 기간의 마지막 날짜)
                 self.dates.append(dates[i+seq_len-1])
-                self.returns.append(self.subset['returns'][i+seq_len])
+                self.returns.append((targets[i+seq_len-1]-features[i+seq_len-1][0])/features[i+seq_len-1][0]) # 수익률 저장
 
         else:
             # target_horizon을 고려한 인덱스 범위 조정
@@ -163,7 +163,7 @@ class RegimeMambaDataset(Dataset):
                 torch.tensor(self.sequences[idx], dtype=torch.float32),
                 torch.tensor(self.targets[idx], dtype=torch.float32),
                 self.dates[idx],
-                torch.tensor(np.array(self.returns), dtype=torch.float32)
+                torch.tensor(np.array(self.returns)[idx], dtype=torch.float32)
             )
 
 class DateRangeRegimeMambaDataset(Dataset):
@@ -237,6 +237,7 @@ class DateRangeRegimeMambaDataset(Dataset):
         self.sequences = []
         self.targets = []
         self.dates = []
+        self.returns = []
 
         features = np.array(self.data[self.feature_cols])
         dates = np.array(self.data[date_col])
@@ -257,6 +258,7 @@ class DateRangeRegimeMambaDataset(Dataset):
                 self.targets.append(targets[i+seq_len-1])
                 # 타겟 날짜 저장 (타겟 기간의 마지막 날짜)
                 self.dates.append(dates[i+seq_len-1])
+                self.returns.append((targets[i+seq_len-1]-features[i+seq_len-1][0])/features[i+seq_len-1][0]) # 수익률 저장
 
         else:        
             # target_horizon을 고려한 인덱스 범위 조정
@@ -333,7 +335,7 @@ class DateRangeRegimeMambaDataset(Dataset):
                 torch.tensor(self.sequences[idx], dtype=torch.float32),
                 torch.tensor(self.targets[idx], dtype=torch.float32),
                 self.dates[idx],
-                torch.tensor(np.array(self.data['returns']), dtype=torch.float32)
+                torch.tensor(np.array(self.data['returns'])[idx], dtype=torch.float32)
             )
 
 def create_dataloaders(config):

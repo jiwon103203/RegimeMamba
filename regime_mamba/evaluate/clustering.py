@@ -154,6 +154,7 @@ def predict_regimes(model, dataloader, kmeans, bull_regime, config):
             for x, y, date, r in dataloader:
                 x = x.to(config.device)
                 _, hidden = model(x, return_hidden=True)
+                hidden = hidden.cpu().numpy()
 
                 # 클러스터 할당
                 cluster = kmeans.predict(hidden)
