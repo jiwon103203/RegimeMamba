@@ -95,7 +95,13 @@ def load_config(args) -> RollingWindowTrainConfig:
         RollingWindowTrainConfig: Configuration object
     """
     config = RollingWindowTrainConfig()
-    
+
+    # command-line arguments if provided
+    arg_dict = vars(args)
+    for key, value in arg_dict.items():
+        if value is not None and hasattr(config, key):
+            setattr(config, key, value)
+
     # If config file is provided, load it
     if args.config:
         with open(args.config, 'r') as f:
@@ -105,12 +111,6 @@ def load_config(args) -> RollingWindowTrainConfig:
         for key, value in yaml_config.items():
             if hasattr(config, key):
                 setattr(config, key, value)
-    
-    # Override with command-line arguments if provided
-    arg_dict = vars(args)
-    for key, value in arg_dict.items():
-        if value is not None and hasattr(config, key):
-            setattr(config, key, value)
     
     return config
 

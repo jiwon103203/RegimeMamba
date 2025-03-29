@@ -62,6 +62,12 @@ def load_config(args) -> RegimeMambaConfig:
 
     config = RegimeMambaConfig()
 
+    # command-line arguments if provided
+    arg_dict = vars(args)
+    for key, value in arg_dict.items():
+        if value is not None and hasattr(config, key):
+            setattr(config, key, value)
+
     if args.config:
         with open(args.config,"r") as f:
             yaml_config = yaml.safe_load(f)
@@ -69,12 +75,6 @@ def load_config(args) -> RegimeMambaConfig:
             for key, values in yaml_config.items():
                 if hasattr(config, key):
                     setattr(config, key, values)
-    
-    # Override with command-line arguments if provided
-    arg_dict = vars(args)
-    for key, value in arg_dict.items():
-        if value is not None and hasattr(config, key):
-            setattr(config, key, value)
 
     return config
 
