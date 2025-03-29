@@ -62,6 +62,7 @@ class RegimeMambaDataset(Dataset):
         self.sequences = []
         self.targets = []
         self.dates = []  # 날짜 정보도 저장
+        self.returns = []  # 수익률 정보도 저장
 
         features = np.array(self.subset[self.feature_cols])
         dates = np.array(self.subset[date_col])
@@ -75,13 +76,14 @@ class RegimeMambaDataset(Dataset):
                 targets = np.array(self.subset[self.target_col]/self.target_horizon)
             else:
                 self.target_col=f"target_SMA_{target_horizon}"
-                targets = np.array(self.subset[self.target_col])
+                targets = np.array(self.subset[self.target_col]/ 100)
 
             for i in range(len(features) - seq_len+1):
                 self.sequences.append(features[i:i+seq_len])
                 self.targets.append(targets[i+seq_len-1])
                 # 타겟 날짜 저장 (타겟 기간의 마지막 날짜)
                 self.dates.append(dates[i+seq_len-1])
+                self.returns.append(self.subset['returns'][i+seq_len])
 
         else:
             # target_horizon을 고려한 인덱스 범위 조정
@@ -161,7 +163,7 @@ class RegimeMambaDataset(Dataset):
                 torch.tensor(self.sequences[idx], dtype=torch.float32),
                 torch.tensor(self.targets[idx], dtype=torch.float32),
                 self.dates[idx],
-                torch.tensor(np.array(self.subset['returns']), dtype=torch.float32)
+                torch.tensor(np.array(self.returns), dtype=torch.float32)
             )
 
 class DateRangeRegimeMambaDataset(Dataset):
@@ -331,7 +333,7 @@ class DateRangeRegimeMambaDataset(Dataset):
                 torch.tensor(self.sequences[idx], dtype=torch.float32),
                 torch.tensor(self.targets[idx], dtype=torch.float32),
                 self.dates[idx],
-                torch.tensor(np.array(self.subset['returns']), dtype=torch.float32)
+                torch.tensor(np.array(self.data['returns']), dtype=torch.float32)
             )
 
 def create_dataloaders(config):
