@@ -29,7 +29,7 @@ from regime_mamba.config.config import RegimeMambaConfig
 from regime_mamba.data.dataset_full import create_dataloaders
 from regime_mamba.models.mamba_model import create_model_from_config
 from regime_mamba.train.train import train_regime_mamba
-from regime_mamba.train.optimize import optimize_regime_mamba_bayesian
+from regime_mamba.train.optimize_full import optimize_regime_mamba_bayesian
 from regime_mamba.evaluate.clustering import extract_hidden_states, identify_bull_bear_regimes, predict_regimes
 from regime_mamba.evaluate.strategy import evaluate_regime_strategy, analyze_transaction_cost_impact
 from regime_mamba.utils.utils import set_seed

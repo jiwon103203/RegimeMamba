@@ -53,7 +53,7 @@ class RegimeMambaDataset(Dataset):
                 targets = np.array(self.subset[self.target_col]/self.target_horizon)
             else:
                 self.target_col=f"target_SMA_{config.target_horizon}"
-                targets = np.array(self.subset[self.target_col])
+                targets = np.array(self.subset[self.target_col] / 100)
 
             for i in range(len(features) - config.seq_len+1):
                 self.sequences.append(features[i:i+config.seq_len])

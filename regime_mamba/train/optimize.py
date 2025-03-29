@@ -2,6 +2,7 @@ import json
 import numpy as np
 from torch.utils.data import DataLoader
 from bayes_opt import BayesianOptimization
+import torch
 
 from ..data.dataset import RegimeMambaDataset
 from ..models.mamba_model import TimeSeriesMamba
@@ -85,6 +86,10 @@ def optimize_regime_mamba_bayesian(data_path, base_config, n_iterations=30, save
                 return -float('inf')  # 최악의 점수 반환
 
             print(f"  검증 손실: {best_val_loss:.6f} (에폭 {early_stop_epoch})")
+
+            del model, train_loader, valid_loader, train_dataset, valid_dataset
+            torch.cuda.empty_cache()
+
             return -best_val_loss  # 음수로 변환하여 최대화 문제로 변경
 
         except Exception as e:

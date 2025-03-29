@@ -110,7 +110,7 @@ def train_with_early_stopping(model, train_loader, valid_loader, config, use_one
 
                     pred = model(x)
                     loss = criterion(pred.squeeze(), y)
-                    val_loss += loss.item
+                    val_loss += loss.item()
 
         avg_train_loss = train_loss / len(train_loader)
         avg_val_loss = val_loss / len(valid_loader)
