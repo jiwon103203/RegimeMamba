@@ -35,6 +35,7 @@ class TimeSeriesMamba(nn.Module):
         self.input_dim = input_dim # (batch_size, seq_len, input_dim)
         self.d_model = d_model
         self.output_dim = output_dim
+        self.softmax = nn.Softmax(dim=1)
 
         # 입력 임베딩
         self.input_embedding = nn.Linear(input_dim, d_model)
@@ -87,6 +88,8 @@ class TimeSeriesMamba(nn.Module):
 
         # 예측 헤드 (수익률만 예측)
         prediction = self.pred_head(hidden)  # [batch_size, 1]
+        if self.output_dim > 1:
+            prediction = self.softmax(prediction)
 
         if return_hidden:
             return prediction, hidden

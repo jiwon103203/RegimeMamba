@@ -39,6 +39,8 @@ def optimize_regime_mamba_bayesian(data_path, base_config, n_iterations=30, save
         current_config.seq_len = int(2 ** seq_len_exp)  # ~32 ~ 512 범위
         current_config.device = base_config.device
 
+        print(current_config)
+
         print(f"\n평가 중인 하이퍼파라미터:")
         print(f"  d_model: {current_config.d_model}")
         print(f"  d_state: {current_config.d_state}")

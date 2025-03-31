@@ -116,7 +116,7 @@ def train_with_early_stopping(model, train_loader, valid_loader, config, use_one
 
         with torch.no_grad():
             if config.direct_train:
-                for i, (x, y, _, _) in valid_loader:
+                for x, y, _, _ in valid_loader:
                     x = x.to(device)
                     y = y.to(device)
 

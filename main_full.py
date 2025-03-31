@@ -447,7 +447,6 @@ def main():
     try:
         # Load configuration
         config = load_config(args)
-        
         # Save initial configuration
         save_config(config, paths['config_save'])
         logger.info(f"Configuration saved to {paths['config_save']}")
