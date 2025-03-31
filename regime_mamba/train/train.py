@@ -214,7 +214,7 @@ def train_regime_mamba(model, train_loader, valid_loader, config, save_path=None
         train_pbar = tqdm(enumerate(train_loader), desc=f"에폭 {epoch+1} (훈련)")
 
         if config.direct_train:
-            for i, (x, y) in train_pbar:
+            for i, (x, y, _, _) in train_pbar:
                 x = x.to(device)
                 y = y.to(device)
 
@@ -276,7 +276,7 @@ def train_regime_mamba(model, train_loader, valid_loader, config, save_path=None
         with torch.no_grad():
 
             if config.direct_train:
-                for i, (x, y) in enumerate(valid_loader):
+                for i, (x, y, _, _) in enumerate(valid_loader):
                     x = x.to(device)
                     y = y.to(device)
 
