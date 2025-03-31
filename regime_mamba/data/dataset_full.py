@@ -2,6 +2,7 @@ import numpy as np
 import pandas as pd
 import torch
 from torch.utils.data import Dataset, DataLoader
+from sklearn.preprocessing import LabelEncoder
 
 class RegimeMambaDataset(Dataset):
     def __init__(self, config, mode="train"):
@@ -44,7 +45,13 @@ class RegimeMambaDataset(Dataset):
         features = np.array(self.subset[self.feature_cols])
         dates = np.array(self.subset[date_col])
 
-        if config.target_type == "average" and (f"target_SMA_{config.target_horizon}" in self.data.columns or f"target_returns_{config.target_horizon}" in self.data.columns):
+        if config.direct_train:
+            self.target_col = f"target_returns_{config.target_horizon}_c"
+            lb = LabelEncoder()
+            targets = np.array(lb.fit_transform(self.subset[self.target_col]))
+
+
+        elif config.target_type == "average" and (f"target_SMA_{config.target_horizon}" in self.data.columns or f"target_returns_{config.target_horizon}" in self.data.columns):
             
             print("미리 처리된 데이터 포착")
             
@@ -75,7 +82,7 @@ class RegimeMambaDataset(Dataset):
 
 class DateRangeRegimeMambaDataset(Dataset):
     def __init__(self, data=None, path=None, seq_len=128, start_date=None, end_date=None, 
-                 target_type="next_day", target_horizon=1, preprocessed=True):
+                 config=None):
         """
         날짜 범위를 기반으로 데이터를 필터링하는 데이터셋 클래스
 
@@ -92,9 +99,10 @@ class DateRangeRegimeMambaDataset(Dataset):
         """
         super().__init__()
         self.seq_len = seq_len
-        self.target_type = target_type
-        self.target_horizon = target_horizon
-        self.preprocessed = preprocessed
+        self.target_type = config.target_type
+        self.target_horizon = config.target_horizon
+        self.preprocessed = config.preprocessed
+        self.direct_train = config.direct_train
         # 데이터 로드
         if data is None and path is not None:
             data = pd.read_csv(path)
@@ -104,6 +112,8 @@ class DateRangeRegimeMambaDataset(Dataset):
         # 데이터가 제공되지 않은 경우 에러
         if data is None:
             raise ValueError("Either data or path must be provided")
+        if config is None:
+            raise ValueError("Config must be provided")
 
         # 날짜 칼럼 식별
         date_col = 'Date'
@@ -128,16 +138,20 @@ class DateRangeRegimeMambaDataset(Dataset):
 
         features = np.array(self.data[self.feature_cols])
         dates = np.array(self.data[date_col])
+        if self.direct_train:
+            self.target_col = f"target_returns_{config.target_horizon}_c"
+            lb = LabelEncoder()
+            targets = np.array(lb.fit_transform(self.data[self.target_col]))
 
-        if target_type == "average" and (f"target_SMA_{target_horizon}" in self.data.columns or f"target_returns_{target_horizon}" in self.data.columns):
+        elif config.target_type == "average" and (f"target_SMA_{config.target_horizon}" in self.data.columns or f"target_returns_{config.target_horizon}" in self.data.columns):
             
             print("미리 처리된 데이터 포착")
             
             if self.preprocessed:
-                self.target_col=f"target_returns_{target_horizon}"
+                self.target_col=f"target_returns_{config.target_horizon}"
                 targets = np.array(self.data[self.target_col])/self.target_horizon
             else:
-                self.target_col=f"target_SMA_{target_horizon}"
+                self.target_col=f"target_SMA_{config.target_horizon}"
                 targets = np.array(self.data[self.target_col])
 
             for i in range(len(features) - seq_len+1):

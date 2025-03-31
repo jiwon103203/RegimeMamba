@@ -98,7 +98,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument('--eval_only', action='store_true', help='Run evaluation only')
     parser.add_argument('--seed', type=int, default=42, help='Random seed')
     parser.add_argument('--verbose', action='store_true', help='Enable verbose output')
-    
+    parser.add_argument('--direct_train', action='store_true', help='Train model directly for clasification')
+
     # Model parameters
     parser.add_argument('--input_dim', type=int, default=5, help='Input dimension')
     parser.add_argument('--d_model', type=int, default=64, help='Model dimension')
@@ -378,10 +379,16 @@ def evaluate_strategy(
             with torch.no_grad():
                 predictions = model(features)
             
-            binary = features[:,1] > predictions # (batch_size, 5) -> (batch_size, 1)
-            test_predictions+binary.astype(int).cpu().numpy().flatten()
-            test_returns+returns.cpu().numpy().flatten()
-            test_dates+dates.flatten()
+            if config.direct_train:
+                predictions = torch.argmax(predictions, dim=1) # (batch_size ,3) -> (batch_size, 1)
+                test_predictions+=predictions.cpu().numpy().flatten()
+                test_returns+=returns.cpu().numpy().flatten()
+                test_dates+=dates.flatten()
+            else:
+                binary = features[:,1] > predictions # (batch_size, 5) -> (batch_size, 1)
+                test_predictions+binary.astype(int).cpu().numpy().flatten()
+                test_returns+returns.cpu().numpy().flatten()
+                test_dates+dates.flatten()
         # # Predict regimes
         # test_predictions, test_returns, test_dates = predict_regimes(
         #     model, test_loader, config

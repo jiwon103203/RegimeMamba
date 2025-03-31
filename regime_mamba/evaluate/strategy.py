@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 from scipy.interpolate import interp1d
 import json
 
-def evaluate_regime_strategy(predictions, returns, dates=None, transaction_cost=0.001, save_path=None):
+def evaluate_regime_strategy(predictions, returns, dates=None, transaction_cost=0.001, save_path=None, config=None):
     """
     레짐 기반 전략의 성과를 평가하며 거래 비용을 고려
 
@@ -28,11 +28,17 @@ def evaluate_regime_strategy(predictions, returns, dates=None, transaction_cost=
     # Date 순서로 정렬
     df.sort_values('Date').reset_index(drop=True, inplace=True)
 
-    # 레짐 변화 감지 (거래 발생)
-    df['Regime_Change'] = df['Regime'].diff().fillna(0) != 0
+    if config is None or config.num_clusters == 2:
+        # 레짐 변화 감지 (거래 발생)
+        df['Regime_Change'] = df['Regime'].diff().fillna(0) != 0
+        # 첫 번째 진입도 거래로 간주
+        df.loc[0, 'Regime_Change'] = df.loc[0, 'Regime'] == 1
+    elif config.num_clusters == 3:
+        # 3개의 레짐인 경우, Bull, Neutral이면 매수 포지션 유지 Bear는 매도
+        df['Regime_Change'] = (df['Regime'] == 0) & (df['Regime'].shift(1) == 1) | (df['Regime'] == 1) & (df['Regime'].shift(1) == 0) | (df['Regime'] == 2) & (df['Regime'].shift(1) == 0) | (df['Regime'] == 0) & (df['Regime'].shift(1) == 2)
+        # 첫 번째 진입도 거래로 간주
+        df.loc[0, 'Regime_Change'] = df.loc[0, 'Regime'] == 1 or df.loc[0, 'Regime'] == 2
 
-    # 첫 번째 진입도 거래로 간주
-    df.loc[0, 'Regime_Change'] = df.loc[0, 'Regime'] == 1
 
     # 거래 비용 계산 (레짐이 변할 때마다 적용)
     df['Transaction_Cost'] = np.where(df['Regime_Change'], transaction_cost * 100, 0)
@@ -76,7 +82,10 @@ def evaluate_regime_strategy(predictions, returns, dates=None, transaction_cost=
     plt.grid(True)
 
     plt.subplot(3, 1, 2)
-    plt.plot(df['Regime'], label='Regime (1=Bull, 0=Bear)', color='red')
+    if config == None or config.num_clusters == 2:
+        plt.plot(df['Regime'], label='Regime (1=Bull, 0=Bear)', color='red')
+    elif config.num_clusters == 3:
+        plt.plot(df['Regime'], label='Regime (0=Bear, 1=Bull, 2=Neutral)', color='red')
     plt.title('Regime Signal')
     plt.ylabel('Regime')
     plt.grid(True)
@@ -165,7 +174,7 @@ def evaluate_regime_strategy(predictions, returns, dates=None, transaction_cost=
 
     return df, performance
 
-def analyze_transaction_cost_impact(model, valid_loader, test_loader, config, kmeans, bull_regime, save_path=None):
+def analyze_transaction_cost_impact(model, valid_loader, test_loader, config, kmeans, bull_regime, bear_regime=None, save_path=None):
     """
     다양한 거래 비용 수준에서 전략 성과를 비교 분석
 
@@ -185,7 +194,7 @@ def analyze_transaction_cost_impact(model, valid_loader, test_loader, config, km
     
     # 테스트 데이터에 대한 레짐 예측
     test_predictions, test_returns, test_dates = predict_regimes(
-        model, test_loader, kmeans, bull_regime, config
+        model, test_loader, kmeans, bull_regime, config, bear_regime=bear_regime
     )
 
     # 다양한 거래 비용 수준

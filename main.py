@@ -371,7 +371,12 @@ def identify_regimes(
         
         # Identify bull/bear regimes
         logger.info("Performing clustering to identify bull/bear regimes")
-        kmeans, bull_regime = identify_bull_bear_regimes(valid_hidden, valid_returns, config)
+        if config.n_clusters == 2:
+            kmeans, bull_regime = identify_bull_bear_regimes(valid_hidden, valid_returns, config)
+        elif config.n_clusters == 3:
+            kmeans, bull_regime, bear_regime = identify_bull_bear_regimes(valid_hidden, valid_returns, config)
+            
+            return kmeans, bull_regime, bear_regime
         
         logger.info(f"Identified bull regime cluster: {bull_regime}")
         return kmeans, bull_regime
@@ -387,7 +392,8 @@ def evaluate_strategy(
     bull_regime: int,
     config: RegimeMambaConfig,
     paths: Dict[str, str],
-    logger: logging.Logger = None
+    logger: logging.Logger = None,
+    bear_regime: Optional[int] = None
 ) -> Tuple[pd.DataFrame, Dict[str, Any]]:
     """
     Evaluate regime-based trading strategy
@@ -400,6 +406,7 @@ def evaluate_strategy(
         config: Configuration object
         paths: Paths dictionary
         logger: Logger instance
+        bear_regime: Bear regime cluster ID (optional)
         
     Returns:
         Tuple[pd.DataFrame, Dict[str, Any]]: Results dataframe and performance metrics
@@ -410,7 +417,7 @@ def evaluate_strategy(
     try:
         # Predict regimes
         test_predictions, test_returns, test_dates = predict_regimes(
-            model, test_loader, kmeans, bull_regime, config
+            model, test_loader, kmeans, bull_regime, config, bear_regime
         )
         
         # Evaluate strategy
@@ -550,13 +557,21 @@ def main():
         
         # 4. Identify regimes
         logger.info("Step 4: Regime Identification")
-        kmeans, bull_regime = identify_regimes(model, valid_loader, config, logger)
+        if config.n_clusters == 2:
+            kmeans, bull_regime = identify_regimes(model, valid_loader, config, logger)
+        elif config.n_clusters == 3:
+            kmeans, bull_regime, bear_regime = identify_regimes(model, valid_loader, config, logger)
         
         # 5. Evaluate strategy
         logger.info("Step 5: Strategy Evaluation")
-        results_df, performance = evaluate_strategy(
-            model, test_loader, kmeans, bull_regime, config, paths, logger
-        )
+        if config.n_clusters == 2:
+            results_df, performance = evaluate_strategy(
+                model, test_loader, kmeans, bull_regime, config, paths, logger
+            )
+        elif config.n_clusters == 3:
+            results_df, performance = evaluate_strategy(
+                model, test_loader, kmeans, bull_regime, config, paths, logger, bear_regime
+            )
         
         # 6. Analyze transaction costs
         logger.info("Step 6: Transaction Cost Analysis")

@@ -18,7 +18,7 @@ def train_with_early_stopping(model, train_loader, valid_loader, config, use_one
         best_epoch: 최적 모델의 에폭
         model: 훈련된 모델
     """
-    criterion = nn.MSELoss()
+    criterion = nn.MSELoss() if not config.direct_train else nn.CrossEntropyLoss()
     optimizer = torch.optim.AdamW(model.parameters(), lr=config.learning_rate, weight_decay=0.01)
 
     if use_onecycle:
@@ -51,7 +51,27 @@ def train_with_early_stopping(model, train_loader, valid_loader, config, use_one
         # 훈련 단계
         model.train()
         train_loss = 0
-        if config.preprocessed:
+        if config.direct_train:
+            for i, (x, y) in enumerate(train_loader):
+                x = x.to(device)
+                y = y.to(device)
+
+                optimizer.zero_grad()
+                pred = model(x)
+                loss = criterion(pred.squeeze(), y)
+                loss.backward()
+
+                # 그래디언트 클리핑 추가
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+
+                optimizer.step()
+
+                if use_onecycle:
+                    scheduler.step()
+
+                train_loss += loss.item()
+
+        elif config.preprocessed:
             for i, (x, y, _) in enumerate(train_loader):
                 x = x.to(device)
                 y = y.to(device)
@@ -95,7 +115,16 @@ def train_with_early_stopping(model, train_loader, valid_loader, config, use_one
         val_loss = 0
 
         with torch.no_grad():
-            if config.preprocessed:
+            if config.direct_train:
+                for x, y in valid_loader:
+                    x = x.to(device)
+                    y = y.to(device)
+
+                    pred = model(x)
+                    loss = criterion(pred.squeeze(), y)
+                    val_loss += loss.item()
+
+            elif config.preprocessed:
                 for x, y, _ in valid_loader:
                     x = x.to(device)
                     y = y.to(device)
@@ -158,7 +187,7 @@ def train_regime_mamba(model, train_loader, valid_loader, config, save_path=None
     Returns:
         model: 훈련된 모델
     """
-    criterion = nn.MSELoss()
+    criterion = nn.MSELoss() if not config.direct_train else nn.CrossEntropy
     optimizer = torch.optim.AdamW(model.parameters(), lr=config.learning_rate)
 
     # OneCycleLR 스케줄러 설정
@@ -184,7 +213,26 @@ def train_regime_mamba(model, train_loader, valid_loader, config, save_path=None
         train_loss = 0
         train_pbar = tqdm(enumerate(train_loader), desc=f"에폭 {epoch+1} (훈련)")
 
-        if config.preprocessed:
+        if config.direct_train:
+            for i, (x, y) in train_pbar:
+                x = x.to(device)
+                y = y.to(device)
+
+                optimizer.zero_grad()
+                pred = model(x)
+                loss = criterion(pred.squeeze(), y)
+                loss.backward()
+
+                # 그래디언트 클리핑
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+
+                optimizer.step()
+                scheduler.step()
+
+                train_loss += loss.item()
+                train_pbar.set_postfix({"train_loss": train_loss / (i + 1)})
+
+        elif config.preprocessed:
             for i, (x, y, _) in train_pbar:
                 x = x.to(device)
                 y = y.to(device)
@@ -226,7 +274,17 @@ def train_regime_mamba(model, train_loader, valid_loader, config, save_path=None
         val_loss = 0
 
         with torch.no_grad():
-            if config.preprocessed:
+
+            if config.direct_train:
+                for i, (x, y) in enumerate(valid_loader):
+                    x = x.to(device)
+                    y = y.to(device)
+
+                    pred = model(x)
+                    loss = criterion(pred.squeeze(), y)
+                    val_loss += loss.item()
+
+            elif config.preprocessed:
                 for i, (x, y, _) in enumerate(valid_loader):
                     x = x.to(device)
                     y = y.to(device)

@@ -107,13 +107,22 @@ def identify_bull_bear_regimes(hidden_states, returns, config):
 
     # 가장 높은 평균 수익률을 가진 클러스터를 Bull 레짐으로 선택
     bull_regime = max(cluster_returns, key=cluster_returns.get)
+    if config.n_clusters == 3:
+        
+        bear_regime = min(cluster_returns, key=cluster_returns.get)
+
+        print(f"클러스터 평균 수익률: {cluster_returns}")
+        print(f"Bull 레짐 클러스터: {bull_regime}")
+        print(f"Bear 레짐 클러스터: {bear_regime}")
+
+        return kmeans, bull_regime, bear_regime
 
     print(f"클러스터 평균 수익률: {cluster_returns}")
     print(f"Bull 레짐 클러스터: {bull_regime}")
 
     return kmeans, bull_regime
 
-def predict_regimes(model, dataloader, kmeans, bull_regime, config):
+def predict_regimes(model, dataloader, kmeans, bull_regime, config, bear_regime=None):
     """
     테스트 데이터에 대해 레짐 예측
 
@@ -144,8 +153,14 @@ def predict_regimes(model, dataloader, kmeans, bull_regime, config):
                 # 클러스터 할당
                 cluster = kmeans.predict(hidden)
 
-                # Bull 레짐이면 1, 아니면 0
-                regime_pred = np.where(cluster == bull_regime, 1, 0)
+                if config.n_clusters == 2:
+                    # Bull 레짐이면 1, 아니면 0
+                    regime_pred = np.where(cluster == bull_regime, 1, 0)
+                elif config.n_clusters == 3:
+                    # Bull 레짐이면 2, Bear 레짐이면 0, 아니면 1
+                    regime_pred = np.where(cluster == bull_regime, 2, 0)
+                    regime_pred = np.where(cluster == bear_regime, 0, regime_pred)
+
 
                 predictions.extend(regime_pred)
                 true_returns.extend(y.numpy())
@@ -159,8 +174,13 @@ def predict_regimes(model, dataloader, kmeans, bull_regime, config):
                 # 클러스터 할당
                 cluster = kmeans.predict(hidden)
 
-                # Bull 레짐이면 1, 아니면 0
-                regime_pred = np.where(cluster == bull_regime, 1, 0)
+                if config.n_clusters == 2:
+                    # Bull 레짐이면 1, 아니면 0
+                    regime_pred = np.where(cluster == bull_regime, 1, 0)
+                elif config.n_clusters == 3:
+                    # Bull 레짐이면 2, Bear 레짐이면 0, 아니면 1
+                    regime_pred = np.where(cluster == bull_regime, 2, 0)
+                    regime_pred = np.where(cluster == bear_regime, 0, regime_pred)
 
                 predictions.extend(regime_pred)
                 true_returns.extend(r.numpy())

@@ -14,7 +14,8 @@ class TimeSeriesMamba(nn.Module):
         d_conv=4,           # 컨볼루션 커널 크기
         expand=2,           # 확장 계수
         n_layers=4,         # Mamba 레이어 수
-        dropout=0.1         # 드롭아웃 비율
+        dropout=0.1,         # 드롭아웃 비율
+        output_dim=1        # 출력 차원
     ):
         """
         Mamba 기반 시계열 모델 구현
@@ -31,8 +32,9 @@ class TimeSeriesMamba(nn.Module):
         """
         super().__init__()
 
-        self.input_dim = input_dim
+        self.input_dim = input_dim # (batch_size, seq_len, input_dim)
         self.d_model = d_model
+        self.output_dim = output_dim
 
         # 입력 임베딩
         self.input_embedding = nn.Linear(input_dim, d_model)
@@ -56,7 +58,7 @@ class TimeSeriesMamba(nn.Module):
         self.dropout = nn.Dropout(dropout)
 
         # 예측 헤드 (1개 값만 예측)
-        self.pred_head = nn.Linear(d_model, 1)
+        self.pred_head = nn.Linear(d_model, self.output_dim)
 
     def forward(self, x, return_hidden=False):
         """
@@ -107,6 +109,7 @@ def create_model_from_config(config):
         d_conv=config.d_conv,
         expand=config.expand,
         n_layers=config.n_layers,
-        dropout=config.dropout
+        dropout=config.dropout,
+        output_dim=3 if config.direct_train else 1
     )
     return model

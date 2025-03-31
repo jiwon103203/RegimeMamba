@@ -4,6 +4,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import time
 import random
+import pandas_ta as ta
 
 # 지수와 해당 국가의 3개월 국채 티커 정의
 indices = {
@@ -47,22 +48,60 @@ def get_index_data(ticker, start_date, end_date, name):
     df[f'{name}_Low'] = data['Low']
     df[f'{name}_Open'] = data['Open']
 
-    # 앞으로 N일 단순 이동평균(SMA)를 타겟으로 설정하기 - 20일, 60일, 120일
+    # ablation study를 위한 ta 지표 추가
+    # ta.overlap.alma(data['Close'], window=20, sigma=6, offset=0.85, fillna=True)
+    # ta.overlap.dema(data['Close'], window=20, alpha=0.5, offset=0, fillna=True)
+    # ta.overlap.ema(data['Close'], window=20, alpha=None, adjust=True, offset=0, fillna=True)
+    # ta.overlap.fwma(data['Close'], window=20, length=20, offset=0, fillna=True)
+    # ta.overlap.hilo(data['High'], data['Low'], window=20, offset=0, fillna=True)
+    # ta.overlap.hl2(data['High'], data['Low'], offset=0, fillna=True)
+    # ta.overlap.hlc3(data['High'], data['Low'], data['Close'], offset=0, fillna=True)
+    # ta.overlap.hma(data['Close'], window=20, length=20, offset=0, fillna=True)
+    # ta.overlap.hwma(data['Close'], window=20, length=20, offset=0, fillna=True)
+    # ta.overlap.jma(data['Close'], window=20, length=20, phase=0, offset=0, fillna=True)
+    # ta.overlap.kama(data['Close'], window=10, pow1=2, pow2=30, fillna=True)
+    # ta.overlap.linreg(data['Close'], window=20, offset=0, adjust=True, fillna=True)
+    # ta.overlap.mcgd(data['Close'], fast=12, slow=26, signal=9, offset=0, fillna=True)
+    # ta.overlap.midpoint(data['Close'], window=20, offset=0, fillna=True)
+    # ta.overlap.midprice(data['High'], data['Low'], window=20, offset=0, fillna=True)
+    # ta.overlap.ohlc4(data['Open'], data['High'], data['Low'], data['Close'], offset=0, fillna=True)
+    # ta.overlap.pwma(data['Close'], window=20, length=20, offset=0, fillna=True)
+    # ta.overlap.rma(data['Close'], window=20, length=20, offset=0, fillna=True)
+    # ta.overlap.sinwma(data['Close'], window=20, length=20, offset=0, fillna=True)
+    # ta.overlap.sma(data['Close'], window=20, offset=0, fillna=True)
+    # ta.overlap.ssf(data['Close'], window=20, offset=0, fillna=True)
+    # ta.overlap.supertrend(data['High'], data['Low'], data['Close'], window=7, multiplier=3, offset=0, fillna=True)
+    # ta.overlap.t3(data['Close'], window=20, volume=1, offset=0, fillna=True)
+    # ta.overlap.tema(data['Close'], window=20, offset=0, fillna=True)
+    # ta.overlap.trima(data['Close'], window=20, offset=0, fillna=True)
+    # ta.overlap.wma(data['Close'], window=20, offset=0, fillna=True)
+
+    # 앞으로 N일 종가를 타겟으로 설정하기 - 10일, 20일, 30일, 60일, 120일, 200일
+    df[f'{name}_target_10'] = data['Close'].shift(-10)
+    df[f'{name}_target_20'] = data['Close'].shift(-20)
+    df[f'{name}_target_30'] = data['Close'].shift(-30)
+    df[f'{name}_target_60'] = data['Close'].shift(-60)
+    df[f'{name}_target_120'] = data['Close'].shift(-120)
+    df[f'{name}_target_200'] = data['Close'].shift(-200)
+
+    # 앞으로 N일 단순 이동평균(SMA)를 타겟으로 설정하기 - 10일, 20일, 30일, 60일, 120일
+    df[f'{name}_target_SMA_10'] = data['Close'].rolling(window=10).mean().shift(-10)
     df[f'{name}_target_SMA_20'] = data['Close'].rolling(window=20).mean().shift(-20)
+    df[f'{name}_target_SMA_30'] = data['Close'].rolling(window=30).mean().shift(-30)
     df[f'{name}_target_SMA_60'] = data['Close'].rolling(window=60).mean().shift(-60)
     df[f'{name}_target_SMA_120'] = data['Close'].rolling(window=120).mean().shift(-120)
     df[f'{name}_target_SMA_200'] = data['Close'].rolling(window=200).mean().shift(-200)
 
-    # 로그 수익률 계산
-    log_prices = np.log(data['Close'])
-    df[f'{name}_returns'] = log_prices - log_prices.shift(1)
-    df[f'{name}_target_returns_5'] = (log_prices - log_prices.shift(5)).shift(-5)
-    df[f'{name}_target_returns_20'] = (log_prices - log_prices.shift(20)).shift(-20)
-    df[f'{name}_target_returns_60'] = (log_prices - log_prices.shift(60)).shift(-60)
-    df[f'{name}_target_returns_120'] = (log_prices - log_prices.shift(120)).shift(-120)
-    df[f'{name}_target_returns_200'] = (log_prices - log_prices.shift(200)).shift(-200)
-    df[f'{name}_returns_20'] = df[f'{name}_returns'].ewm(halflife=20, min_periods=1).mean().shift(1)
-    df[f'{name}_returns_60'] = df[f'{name}_returns'].ewm(halflife=60, min_periods=1).mean().shift(1)
+    # # 로그 수익률 계산
+    # log_prices = np.log(data['Close'])
+    # df[f'{name}_returns'] = log_prices - log_prices.shift(1)
+    # df[f'{name}_target_returns_5'] = (log_prices - log_prices.shift(5)).shift(-5)
+    # df[f'{name}_target_returns_20'] = (log_prices - log_prices.shift(20)).shift(-20)
+    # df[f'{name}_target_returns_60'] = (log_prices - log_prices.shift(60)).shift(-60)
+    # df[f'{name}_target_returns_120'] = (log_prices - log_prices.shift(120)).shift(-120)
+    # df[f'{name}_target_returns_200'] = (log_prices - log_prices.shift(200)).shift(-200)
+    # df[f'{name}_returns_20'] = df[f'{name}_returns'].ewm(halflife=20, min_periods=1).mean().shift(1)
+    # df[f'{name}_returns_60'] = df[f'{name}_returns'].ewm(halflife=60, min_periods=1).mean().shift(1)
 
     return df
 

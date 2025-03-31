@@ -32,7 +32,7 @@ def optimize_regime_mamba_bayesian(data_path, base_config, n_iterations=30, save
             setattr(current_config, key, value)
         current_config.d_model = int(2 ** d_model_exp)  # 64 ~ 256 범위
         current_config.d_state = int(2 ** d_state_exp)  # 64 ~ 256 범위
-        current_config.n_layers = 6                     # 6으로 고정
+        current_config.n_layers = base_config.n_layers  # config에서 고정
         current_config.dropout = dropout                # 0.05 ~ 0.4 범위
         current_config.learning_rate = 10 ** learning_rate_exp  # 1e-6 ~ 1e-4 범위
         current_config.batch_size = 256                 # 배치 사이즈 256로 고정
@@ -130,7 +130,7 @@ def optimize_regime_mamba_bayesian(data_path, base_config, n_iterations=30, save
     optimized_config.data_path = data_path
     optimized_config.d_model = int(2 ** best_params['d_model_exp'])
     optimized_config.d_state = int(2 ** best_params['d_state_exp'])
-    optimized_config.n_layers = 6      # 항상 6로 고정
+    optimized_config.n_layers = base_config.n_layers      # config에서 고정
     optimized_config.dropout = best_params['dropout']
     optimized_config.learning_rate = 10 ** best_params['learning_rate_exp']
     optimized_config.batch_size = 256  # 항상 256로 고정
