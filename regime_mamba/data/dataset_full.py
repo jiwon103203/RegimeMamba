@@ -47,6 +47,7 @@ class RegimeMambaDataset(Dataset):
         if config.direct_train:
             self.target_col = f"target_returns_{config.target_horizon}_c"
             targets = np.array(self.subset[self.target_col])
+            targets = torch.nn.functional.one_hot(torch.tensor(targets), num_classes=3).numpy()
 
             for i in range(len(features) - config.seq_len+1):
                 self.sequences.append(features[i:i+config.seq_len])
@@ -145,6 +146,7 @@ class DateRangeRegimeMambaDataset(Dataset):
         if self.direct_train:
             self.target_col = f"target_returns_{config.target_horizon}_c"
             targets = np.array(self.data[self.target_col])
+            targets = torch.nn.functional.one_hot(torch.tensor(targets), num_classes=3).numpy()
 
             for i in range(len(features) - config.seq_len+1):
                 self.sequences.append(features[i:i+config.seq_len])
@@ -192,19 +194,16 @@ def create_dataloaders(config):
     """
 
     train_dataset = RegimeMambaDataset(
-        path=config.data_path, 
         config=config,
         mode="train"
     )
     
     valid_dataset = RegimeMambaDataset(
-        path=config.data_path, 
         config=config,
         mode="valid",
     )
     
     test_dataset = RegimeMambaDataset(
-        path=config.data_path, 
         config=config, 
         mode="test"
     )

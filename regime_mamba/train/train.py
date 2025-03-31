@@ -187,7 +187,7 @@ def train_regime_mamba(model, train_loader, valid_loader, config, save_path=None
     Returns:
         model: 훈련된 모델
     """
-    criterion = nn.MSELoss() if not config.direct_train else nn.CrossEntropy
+    criterion = nn.MSELoss() if not config.direct_train else nn.CrossEntropyLoss()
     optimizer = torch.optim.AdamW(model.parameters(), lr=config.learning_rate)
 
     # OneCycleLR 스케줄러 설정
