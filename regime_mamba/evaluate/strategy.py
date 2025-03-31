@@ -28,7 +28,22 @@ def evaluate_regime_strategy(predictions, returns, dates=None, transaction_cost=
     # Date 순서로 정렬
     df.sort_values('Date').reset_index(drop=True, inplace=True)
 
-    if config is None or config.num_clusters == 2:
+    if config.direct_train: # j 0 (bear), 1(No Move) ,2 (bull)
+        current = 0  # 0: 매도 상태, 1: 매수 상태
+        for i, j in enumerate(df['Regime']):
+            if j == 0:
+                df.loc[i, 'Regime_Change'] = 1 if current == 1 else 0
+                current = 0
+            elif j == 1:
+                df.loc[i, 'Regime_Change'] = 0
+            elif j == 2:
+                if current == 0:
+                    df.loc[i, 'Regime_Change'] = 1
+                    current = 1
+                else:
+                    df.loc[i, 'Regime_Change'] = 0
+
+    elif config is None or config.num_clusters == 2:
         # 레짐 변화 감지 (거래 발생)
         df['Regime_Change'] = df['Regime'].diff().fillna(0) != 0
         # 첫 번째 진입도 거래로 간주
