@@ -74,7 +74,8 @@ def optimize_regime_mamba_bayesian(data_path, base_config, n_iterations=30, save
                 d_conv=current_config.d_conv,
                 expand=current_config.expand,
                 n_layers=current_config.n_layers,
-                dropout=current_config.dropout
+                dropout=current_config.dropout,
+                output_dim = 3 if current_config.n_clusters == 3 else 1
             )
 
             # 조기 종료를 적용한 모델 훈련

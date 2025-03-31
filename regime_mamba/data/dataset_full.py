@@ -2,7 +2,6 @@ import numpy as np
 import pandas as pd
 import torch
 from torch.utils.data import Dataset, DataLoader
-from sklearn.preprocessing import LabelEncoder
 
 class RegimeMambaDataset(Dataset):
     def __init__(self, config, mode="train"):
@@ -47,8 +46,13 @@ class RegimeMambaDataset(Dataset):
 
         if config.direct_train:
             self.target_col = f"target_returns_{config.target_horizon}_c"
-            lb = LabelEncoder()
-            targets = np.array(lb.fit_transform(self.subset[self.target_col]))
+            targets = np.array(self.subset[self.target_col])
+
+            for i in range(len(features) - config.seq_len+1):
+                self.sequences.append(features[i:i+config.seq_len])
+                self.targets.append(targets[i+config.seq_len-1])
+                # 타겟 날짜 저장 (타겟 기간의 마지막 날짜)
+                self.dates.append(dates[i+config.seq_len-1])
 
 
         elif config.target_type == "average" and (f"target_SMA_{config.target_horizon}" in self.data.columns or f"target_returns_{config.target_horizon}" in self.data.columns):
@@ -140,8 +144,13 @@ class DateRangeRegimeMambaDataset(Dataset):
         dates = np.array(self.data[date_col])
         if self.direct_train:
             self.target_col = f"target_returns_{config.target_horizon}_c"
-            lb = LabelEncoder()
-            targets = np.array(lb.fit_transform(self.data[self.target_col]))
+            targets = np.array(self.data[self.target_col])
+
+            for i in range(len(features) - config.seq_len+1):
+                self.sequences.append(features[i:i+config.seq_len])
+                self.targets.append(targets[i+config.seq_len-1])
+                # 타겟 날짜 저장 (타겟 기간의 마지막 날짜)
+                self.dates.append(dates[i+config.seq_len-1])
 
         elif config.target_type == "average" and (f"target_SMA_{config.target_horizon}" in self.data.columns or f"target_returns_{config.target_horizon}" in self.data.columns):
             
