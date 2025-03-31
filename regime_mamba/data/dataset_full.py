@@ -21,6 +21,7 @@ class RegimeMambaDataset(Dataset):
         self.data['Low'] = self.data['Low'] / 100
 
         self.seq_len = config.seq_len
+        self.preprocessed = config.preprocessed
 
         # 타겟 칼럼 지정
         self.feature_cols = ["Open", "Close", "High", "Low", "treasury_rate"]

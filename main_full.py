@@ -375,7 +375,7 @@ def evaluate_strategy(
         model.eval()
         for batch in test_loader:
             features, _, dates, returns = batch
-            features, targets = features.to(config.device), targets.to(config.device)
+            features = features.to(config.device)
             with torch.no_grad():
                 predictions = model(features)
             
