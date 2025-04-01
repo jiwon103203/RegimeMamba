@@ -41,6 +41,10 @@ class RegimeMambaDataset(Dataset):
         self.sequences = []
         self.targets = []
         self.dates = []  # 날짜 정보도 저장
+        self.seq_len = config.seq_len
+        self.preprocessed = config.preprocessed
+        self.target_type = config.target_type
+        self.target_horizon = config.target_horizon
 
         features = np.array(self.subset[self.feature_cols])
         dates = np.array(self.subset[date_col])

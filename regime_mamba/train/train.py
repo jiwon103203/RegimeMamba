@@ -53,7 +53,7 @@ def train_with_early_stopping(model, train_loader, valid_loader, config, use_one
         # 훈련 단계
         model.train()
         train_loss = 0
-        vae_loss = 0
+        train_vae_loss = 0
         if config.direct_train:
             for i, (x, y, _, _) in enumerate(train_loader):
                 x = x.to(device)
@@ -61,9 +61,8 @@ def train_with_early_stopping(model, train_loader, valid_loader, config, use_one
 
                 optimizer.zero_grad()
                 if config.vae:
-                    pred, h, _, z = model(x)
-                    loss_vae = criterion_2(h, z)
-                    loss = criterion(pred.squeeze(), y) + loss_vae
+                    pred, h, mu, log_var, z, recon = model(x)
+                    loss, vae_loss, kl_loss, pred_loss = model.vae_loss_function(recon, h, mu, log_var, pred, y)
                 else:
                     pred = model(x)
                     loss = criterion(pred.squeeze(), y)
@@ -80,7 +79,8 @@ def train_with_early_stopping(model, train_loader, valid_loader, config, use_one
 
                 train_loss += loss.item()
                 if config.vae:
-                    vae_loss += loss_vae.item()
+                    train_vae_loss += 0.1*vae_loss.item()
+                    train_vae_loss += 0.01*kl_loss.item()
 
         elif config.preprocessed:
             for i, (x, y, _) in enumerate(train_loader):
@@ -89,9 +89,8 @@ def train_with_early_stopping(model, train_loader, valid_loader, config, use_one
 
                 optimizer.zero_grad()
                 if config.vae:
-                    pred, h, _, z = model(x)
-                    loss_vae = criterion_2(h, z)
-                    loss = criterion(pred.squeeze(), y) + loss_vae
+                    pred, h, mu, log_var, z, recon = model(x)
+                    loss, vae_loss, kl_loss, pred_loss = model.vae_loss_function(recon, h, mu, log_var, pred, y)
                 else:
                     pred = model(x)
                     loss = criterion(pred.squeeze(), y)
@@ -108,7 +107,8 @@ def train_with_early_stopping(model, train_loader, valid_loader, config, use_one
 
                 train_loss += loss.item()
                 if config.vae:
-                    vae_loss += loss_vae.item()
+                    train_vae_loss += 0.1*vae_loss.item()
+                    train_vae_loss += 0.01*kl_loss.item()
         else:
             for i, (x, y, _, _) in enumerate(train_loader):
                 x = x.to(device)
@@ -116,9 +116,8 @@ def train_with_early_stopping(model, train_loader, valid_loader, config, use_one
 
                 optimizer.zero_grad()
                 if config.vae:
-                    pred, h, _, z = model(x)
-                    loss_vae = criterion_2(h, z)
-                    loss = criterion(pred.squeeze(), y) + loss_vae
+                    pred, h, mu, log_var, z, recon = model(x)
+                    loss, vae_loss, kl_loss, pred_loss = model.vae_loss_function(recon, h, mu, log_var, pred, y)
                 else:
                     pred = model(x)
                     loss = criterion(pred.squeeze(), y)
@@ -135,7 +134,8 @@ def train_with_early_stopping(model, train_loader, valid_loader, config, use_one
 
                 train_loss += loss.item()
                 if config.vae:
-                    vae_loss += loss_vae
+                    train_vae_loss += 0.1*vae_loss.item()
+                    train_vae_loss += 0.01*kl_loss.item()
 
         # 검증 단계
         model.eval()
@@ -149,49 +149,48 @@ def train_with_early_stopping(model, train_loader, valid_loader, config, use_one
                     y = y.to(device)
 
                     if config.vae:
-                        pred, h, _, z = model(x)
-                        loss_vae = criterion_2(h, z)
-                        loss = criterion(pred.squeeze(), y) + loss_vae
+                        pred, h, mu, log_var, z, recon = model(x)
+                        loss, vae_loss, kl_loss, pred_loss = model.vae_loss_function(recon, h, mu, log_var, pred, y)
                     else:
                         pred = model(x)
                         loss = criterion(pred.squeeze(), y)
 
                     val_loss += loss.item()
                     if config.vae:
-                        val_vae_loss += loss_vae.item()
-
+                        val_vae_loss += 0.1*vae_loss.item()
+                        val_vae_loss += 0.01*kl_loss.item()
             elif config.preprocessed:
                 for x, y, _ in valid_loader:
                     x = x.to(device)
                     y = y.to(device)
 
                     if config.vae:
-                        pred, h, _, z = model(x)
-                        loss_vae = criterion_2(h, z)
-                        loss = criterion(pred.squeeze(), y) + loss_vae
+                        pred, h, mu, log_var, z, recon = model(x)
+                        loss, vae_loss, kl_loss, pred_loss = model.vae_loss_function(recon, h, mu, log_var, pred, y)
                     else:
                         pred = model(x)
                         loss = criterion(pred.squeeze(), y)
                     
                     val_loss += loss.item()
                     if config.vae:
-                        val_vae_loss += loss_vae.item()
+                        val_vae_loss += 0.1*vae_loss.item()
+                        val_vae_loss += 0.01*kl_loss.item()
             else:
                 for x, y, _, _ in valid_loader:
                     x = x.to(device)
                     y = y.to(device)
 
                     if config.vae:
-                        pred, h, _, z = model(x)
-                        loss_vae = criterion_2(h, z)
-                        loss = criterion(pred.squeeze(), y) + loss_vae
+                        pred, h, mu, log_var, z, recon = model(x)
+                        loss, vae_loss, kl_loss, pred_loss = model.vae_loss_function(recon, h, mu, log_var, pred, y)
                     else:
                         pred = model(x)
                         loss = criterion(pred.squeeze(), y)
 
                     val_loss += loss.item()
                     if config.vae:
-                        val_vae_loss += loss_vae.item()
+                        val_vae_loss += 0.1*vae_loss.item()
+                        val_vae_loss += 0.01*kl_loss.item()
 
         avg_train_loss = train_loss / len(train_loader)
         avg_val_loss = val_loss / len(valid_loader)
@@ -204,7 +203,9 @@ def train_with_early_stopping(model, train_loader, valid_loader, config, use_one
 
         current_lr = optimizer.param_groups[0]['lr']
         print(f"에폭 {epoch+1}/{config.max_epochs}: 훈련 손실 = {avg_train_loss:.6f}, 검증 손실 = {avg_val_loss:.6f}, 학습률: {current_lr:.2e}")
-        print(f"  VAE 손실: {avg_vae_loss:.6f}, 검증 VAE 손실: {avg_val_vae_loss:.6f}")
+        if config.vae:
+            print(f"  VAE 손실: {avg_vae_loss:.6f}, 검증 VAE 손실: {avg_val_vae_loss:.6f}")
+
 
         # 최적 모델 저장
         if avg_val_loss < best_val_loss:
@@ -269,7 +270,7 @@ def train_regime_mamba(model, train_loader, valid_loader, config, save_path=None
         # 훈련 단계
         model.train()
         train_loss = 0
-        vae_loss = 0
+        train_vae_loss = 0
         train_pbar = tqdm(enumerate(train_loader), desc=f"에폭 {epoch+1} (훈련)")
 
         if config.direct_train:
@@ -279,9 +280,8 @@ def train_regime_mamba(model, train_loader, valid_loader, config, save_path=None
 
                 optimizer.zero_grad()
                 if config.vae:
-                    pred, h, _, z = model(x)
-                    loss_vae = criterion_2(h, z)
-                    loss = criterion(pred.squeeze(), y) + loss_vae
+                    pred, h, mu, log_var, z, recon = model(x)
+                    loss, vae_loss, kl_loss, pred_loss = model.vae_loss_function(recon, h, mu, log_var, pred, y)
                 else:
                     pred = model(x)
                     loss = criterion(pred.squeeze(), y)
@@ -295,7 +295,8 @@ def train_regime_mamba(model, train_loader, valid_loader, config, save_path=None
 
                 train_loss += loss.item()
                 if config.vae:
-                    vae_loss += loss_vae.item()
+                    train_vae_loss += 0.1*vae_loss.item()
+                    train_vae_loss += 0.01*kl_loss.item()
                 train_pbar.set_postfix({"train_loss": train_loss / (i + 1)})
 
         elif config.preprocessed:
@@ -305,9 +306,8 @@ def train_regime_mamba(model, train_loader, valid_loader, config, save_path=None
 
                 optimizer.zero_grad()
                 if config.vae:
-                    pred, h, _, z = model(x)
-                    loss_vae = criterion_2(h, z)
-                    loss = criterion(pred.squeeze(), y) + loss_vae
+                    pred, h, mu, log_var, z, recon = model(x)
+                    loss, vae_loss, kl_loss, pred_loss = model.vae_loss_function(recon, h, mu, log_var, pred, y)
                 else:
                     pred = model(x)
                     loss = criterion(pred.squeeze(), y)
@@ -321,7 +321,8 @@ def train_regime_mamba(model, train_loader, valid_loader, config, save_path=None
 
                 train_loss += loss.item()
                 if config.vae:
-                    vae_loss += loss_vae.item()
+                    train_vae_loss += 0.1*vae_loss.item()
+                    train_vae_loss += 0.01*kl_loss.item()
                 train_pbar.set_postfix({"train_loss": train_loss / (i + 1)})
         else:
             for i, (x, y, _, _) in train_pbar:
@@ -330,9 +331,8 @@ def train_regime_mamba(model, train_loader, valid_loader, config, save_path=None
 
                 optimizer.zero_grad()
                 if config.vae:
-                    pred, h, _, z = model(x)
-                    loss_vae = criterion_2(h, z)
-                    loss = criterion(pred.squeeze(), y) + loss_vae
+                    pred, h, mu, log_var, z, recon = model(x)
+                    loss, vae_loss, kl_loss, pred_loss = model.vae_loss_function(recon, h, mu, log_var, pred, y)
                 else:
                     pred = model(x)
                     loss = criterion(pred.squeeze(), y)
@@ -346,7 +346,8 @@ def train_regime_mamba(model, train_loader, valid_loader, config, save_path=None
 
                 train_loss += loss.item()
                 if config.vae:
-                    vae_loss += loss_vae.item()
+                    train_vae_loss += 0.1*vae_loss.item()
+                    train_vae_loss += 0.01*kl_loss.item()
                 train_pbar.set_postfix({"train_loss": train_loss / (i + 1)})
 
         # 검증 단계
@@ -362,15 +363,15 @@ def train_regime_mamba(model, train_loader, valid_loader, config, save_path=None
                     y = y.to(device)
 
                     if config.vae:
-                        pred, h, _, z = model(x)
-                        loss_vae = criterion_2(h, z)
-                        loss = criterion(pred.squeeze(), y) + loss_vae
+                        pred, h, mu, log_var, z, recon = model(x)
+                        loss, vae_loss, kl_loss, pred_loss = model.vae_loss_function(recon, h, mu, log_var, pred, y)
                     else:
                         pred = model(x)
                         loss = criterion(pred.squeeze(), y)
                     val_loss += loss.item()
                     if config.vae:
-                        val_vae_loss += loss_vae.item()
+                        val_vae_loss += 0.1*vae_loss.item()
+                        val_vae_loss += 0.01*kl_loss.item()
 
             elif config.preprocessed:
                 for i, (x, y, _) in enumerate(valid_loader):
@@ -378,30 +379,30 @@ def train_regime_mamba(model, train_loader, valid_loader, config, save_path=None
                     y = y.to(device)
 
                     if config.vae:
-                        pred, h, _, z = model(x)
-                        loss_vae = criterion_2(h, z)
-                        loss = criterion(pred.squeeze(), y) + loss_vae
+                        pred, h, mu, log_var, z, recon = model(x)
+                        loss, vae_loss, kl_loss, pred_loss = model.vae_loss_function(recon, h, mu, log_var, pred, y)
                     else:
                         pred = model(x)
                         loss = criterion(pred.squeeze(), y)
                     val_loss += loss.item()
                     if config.vae:
-                        val_vae_loss += loss_vae.item()
+                        val_vae_loss += 0.1*vae_loss.item()
+                        val_vae_loss += 0.01*kl_loss.item()
             else:
                 for i, (x, y, _, _) in enumerate(valid_loader):
                     x = x.to(device)
                     y = y.to(device)
 
                     if config.vae:
-                        pred, h, _, z = model(x)
-                        loss_vae = criterion_2(h, z)
-                        loss = criterion(pred.squeeze(), y) + loss_vae
+                        pred, h, mu, log_var, z, recon = model(x)
+                        loss, vae_loss, kl_loss, pred_loss = model.vae_loss_function(recon, h, mu, log_var, pred, y)
                     else:
                         pred = model(x)
                         loss = criterion(pred.squeeze(), y)
                     val_loss += loss.item()
                     if config.vae:
-                        val_vae_loss += loss_vae.item()
+                        val_vae_loss += 0.1*vae_loss.item()
+                        val_vae_loss += 0.01*kl_loss.item()
 
         avg_train_loss = train_loss / len(train_loader)
         avg_val_loss = val_loss / len(valid_loader)
@@ -411,7 +412,8 @@ def train_regime_mamba(model, train_loader, valid_loader, config, save_path=None
 
         current_lr = optimizer.param_groups[0]['lr']
         print(f"에폭 {epoch+1}: 훈련 손실 = {avg_train_loss:.6f}, 검증 손실 = {avg_val_loss:.6f}, 학습률: {current_lr:.2e}")
-        print(f"  VAE 손실: {avg_vae_loss:.6f}, 검증 VAE 손실: {avg_val_vae_loss:.6f}")
+        if config.vae:
+            print(f"  VAE 손실: {avg_vae_loss:.6f}, 검증 VAE 손실: {avg_val_vae_loss:.6f}")
 
         # 모델 저장
         if avg_val_loss < best_val_loss and save_path is not None:
