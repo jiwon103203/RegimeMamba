@@ -64,6 +64,8 @@ def parse_args():
     parser.add_argument('--n_layers', type=int, help='Number of layers')
     parser.add_argument('--dropout', type=float, help='Dropout rate')
     parser.add_argument('--cluster_method', type=str, default='cosine_kmeans', help='Clustering method')
+    parser.add_argument('--direct_train', action='store_true', help='Train model directly for clasification')
+    parser.add_argument('--vae', action='store_true', help='Train model with VAE')
     
     return parser.parse_args()
 

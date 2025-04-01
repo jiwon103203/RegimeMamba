@@ -99,6 +99,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument('--seed', type=int, default=42, help='Random seed')
     parser.add_argument('--verbose', action='store_true', help='Enable verbose output')
     parser.add_argument('--direct_train', action='store_true', help='Train model directly for clasification')
+    parser.add_argument('--vae', action='store_true', help='Train model with VAE')
 
     # Model parameters
     parser.add_argument('--input_dim', type=int, default=5, help='Input dimension')

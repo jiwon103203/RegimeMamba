@@ -44,6 +44,8 @@ def parse_args():
     parser.add_argument('--batch_size', type=int, default=64, help='Batch size')
     parser.add_argument('--n_clusters', type=int, default=2, help='Number of clusters')
     parser.add_argument('--cluster_method', type=str, default='cosine_kmeans',help='Clustering method')
+    parser.add_argument('--direct_train', action='store_true', help='Train model directly for clasification')
+    parser.add_argument('--vae', action='store_true', help='Train model with VAE')
     
     # Target parameters
     parser.add_argument('--target_type', type=str, help='Target type')

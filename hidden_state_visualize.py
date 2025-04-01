@@ -46,6 +46,8 @@ def parse_args():
     parser.add_argument("--target_type", type=str, default="average", help="Target type")
     parser.add_argument("--target_horizon", type=int, default=5, help="Target horizon")
     parser.add_argument("--cluster_method", type=str, default="cosine_kmeans", help="Clustering method")
+    parser.add_argument('--direct_train', action='store_true', help='Train model directly for clasification')
+    parser.add_argument('--vae', action='store_true', help='Train model with VAE')
 
     return parser.parse_args()
 

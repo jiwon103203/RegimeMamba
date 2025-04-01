@@ -111,6 +111,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument('--preprocessed', type=bool, default=False, help='Data is preprocessed')
     parser.add_argument('--cluster_method', type=str, default='cosine_kmeans', help='Clustering method')
     parser.add_argument('--n_clusters', type=int, default=2, help='Number of clusters')
+    parser.add_argument('--direct_train', action='store_true', help='Train model directly for clasification')
+    parser.add_argument('--vae', action='store_true', help='Train model with VAE')
     
     # Optimization parameters
     parser.add_argument('--learning_rate', type=float, default=1e-6, help='Learning rate')

@@ -15,7 +15,8 @@ class TimeSeriesMamba(nn.Module):
         expand=2,           # 확장 계수
         n_layers=4,         # Mamba 레이어 수
         dropout=0.1,         # 드롭아웃 비율
-        output_dim=1        # 출력 차원
+        output_dim=1,        # 출력 차원
+        config=None         # 설정 객체
     ):
         """
         Mamba 기반 시계열 모델 구현
@@ -29,13 +30,43 @@ class TimeSeriesMamba(nn.Module):
             expand: 확장 계수
             n_layers: Mamba 레이어 수
             dropout: 드롭아웃 비율
+            output_dim: 출력 차원
+            config: 설정 객체
         """
         super().__init__()
 
         self.input_dim = input_dim # (batch_size, seq_len, input_dim)
         self.d_model = d_model
         self.output_dim = output_dim
-        self.softmax = nn.Softmax(dim=1)
+        self.config = config
+
+        if self.config is not None:
+            self.input_dim = config.input_dim
+            self.d_model = config.d_model
+            self.output_dim = 3 if config.direct_train else 1
+            
+            if self.config.direct_train:
+                self.softmax = nn.Softmax(dim=1)
+            
+            if self.config.vae:
+                self.start_point = int(torch.log2(config.d_state)) - 1 # d_state가 128이면 6, 64이면 5
+                self.encoder = nn.Sequential(
+                    nn.Linear(config.d_state, 2^self.start_point),
+                    nn.ReLU(),
+                    nn.Linear(2^self.start_point, 2^(self.start_point-1)),
+                    nn.ReLU(),
+                    nn.Linear(2^(self.start_point-1), 2^(self.start_point-2)),
+                    nn.ReLU(),
+                    ) # 128 -> 64 -> 32 -> 16
+                self.decoder = nn.Sequential(
+                    nn.Linear(2^(self.start_point-2), 2^(self.start_point-1)),
+                    nn.ReLU(),
+                    nn.Linear(2^(self.start_point-1), 2^self.start_point),
+                    nn.ReLU(),
+                    nn.Linear(2^self.start_point, config.d_state),
+                    nn.ReLU(),
+                    )
+                
 
         # 입력 임베딩
         self.input_embedding = nn.Linear(input_dim, d_model)
@@ -60,6 +91,30 @@ class TimeSeriesMamba(nn.Module):
 
         # 예측 헤드 (1개 값만 예측)
         self.pred_head = nn.Linear(d_model, self.output_dim)
+
+    def encode(self, x):
+        """
+        VAE 인코더
+
+        Args:
+            x: 입력 텐서 [batch_size, d_state]
+
+        Returns:
+            인코딩된 텐서
+        """
+        return self.encoder(x)
+    
+    def decode(self, x):
+        """
+        VAE 디코더
+
+        Args:
+            x: 입력 텐서 [batch_size, d_state]
+
+        Returns:
+            디코딩된 텐서
+        """
+        return self.decoder(x)
 
     def forward(self, x, return_hidden=False):
         """
@@ -90,6 +145,9 @@ class TimeSeriesMamba(nn.Module):
         prediction = self.pred_head(hidden)  # [batch_size, 1]
         if self.output_dim > 1:
             prediction = self.softmax(prediction)
+
+        if self.config.vae:
+            return prediction, hidden, self.encode(hidden), self.decode(self.encode(hidden))
 
         if return_hidden:
             return prediction, hidden

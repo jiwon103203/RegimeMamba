@@ -28,14 +28,20 @@ def extract_hidden_states(model, dataloader, config):
         if config.preprocessed:
             for x, y, date in dataloader:
                 x = x.to(config.device)
-                _, hidden = model(x, return_hidden=True)
+                if config.vae:
+                    _, _, hidden, _ = model(x)
+                else:
+                    _, hidden = model(x, return_hidden=True)
                 hidden_states.append(hidden.cpu().numpy())
                 returns.append(y.numpy().reshape(-1,1))
                 dates.extend(date)
         else:
             for x, y, date, r in dataloader:
                 x = x.to(config.device)
-                _, hidden = model(x, return_hidden=True)
+                if config.vae:
+                    _, _, hidden, _ = model(x)
+                else:
+                    _, hidden = model(x, return_hidden=True)
                 hidden_states.append(hidden.cpu().numpy())
                 returns.append(r.numpy().reshape(-1,1))
                 dates.extend(date)

@@ -28,6 +28,7 @@ class RegimeMambaConfig:
         self.transaction_cost = 0.001
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         self.direct_train = False
+        self.vae = False
 
         # 클러스터링 관련 설정
         self.n_clusters = 2  # Bull과 Bear 두 개의 레짐으로 클러스터링
