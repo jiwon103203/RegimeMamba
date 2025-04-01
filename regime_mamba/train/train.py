@@ -19,8 +19,6 @@ def train_with_early_stopping(model, train_loader, valid_loader, config, use_one
         model: 훈련된 모델
     """
     criterion = nn.MSELoss() if not config.direct_train else nn.CrossEntropyLoss()
-    if config.vae:
-        criterion_2 = nn.MSELoss()
     optimizer = torch.optim.AdamW(model.parameters(), lr=config.learning_rate, weight_decay=0.01)
 
     if use_onecycle:
@@ -245,8 +243,6 @@ def train_regime_mamba(model, train_loader, valid_loader, config, save_path=None
         model: 훈련된 모델
     """
     criterion = nn.MSELoss() if not config.direct_train else nn.CrossEntropyLoss()
-    if config.vae:
-        criterion_2 = nn.MSELoss()
     optimizer = torch.optim.AdamW(model.parameters(), lr=config.learning_rate)
 
     # OneCycleLR 스케줄러 설정
