@@ -101,8 +101,8 @@ def optimize_regime_mamba_bayesian(data_path, base_config, n_iterations=30, save
 
     # 최적화할 하이퍼파라미터 범위 정의
     pbounds = {
-        'd_model_exp': (4, 8),         # 2^4=16 ~ 2^8=256
-        'd_state_exp': (5, 8),         # 2^5=32 ~ 2^8=256
+        'd_model_exp': (4, 8),         # 2^4=32 ~ 2^8=256
+        'd_state_exp': (4, 8),         # 2^4=32 ~ 2^8=256
         'learning_rate_exp': (-6, -3), # 10^-6 ~ 10^-3
         'seq_len_exp': (4, 9)          # 2^4=16 ~ 2^9=512
     }

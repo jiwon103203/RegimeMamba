@@ -1,0 +1,108 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 700 680">
+  <!-- Background -->
+  <rect width="700" height="680" fill="#ffffff"/>
+  
+  <!-- Title -->
+  <text x="350" y="40" font-family="'Helvetica Neue', 'Segoe UI', 'Calibri', sans-serif" font-size="24" font-weight="bold" text-anchor="middle" fill="#000000">TimeSeriesMamba + VAE Model Structure</text>
+  
+  <!-- Academic color palette -->
+  <defs>
+    <!-- Base block (sophisticated gray) -->
+    <linearGradient id="base-gradient" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#f5f7fa;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#e6eaef;stop-opacity:1" />
+    </linearGradient>
+    
+    <!-- Key block (IEEE style blue) -->
+    <linearGradient id="key-gradient" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#e7f0fa;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#d7e3f4;stop-opacity:1" />
+    </linearGradient>
+    
+    <!-- Core block (deep blue) -->
+    <linearGradient id="core-gradient" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#dae7f4;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#c7d8eb;stop-opacity:1" />
+    </linearGradient>
+    
+    <!-- Accent block (subtle accent) -->
+    <linearGradient id="accent-gradient" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#f1f5f8;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#e2ebf3;stop-opacity:1" />
+    </linearGradient>
+    
+    <!-- Arrow marker (sophisticated dark gray) -->
+    <marker id="arrowhead" markerWidth="8" markerHeight="6" refX="0" refY="3" orient="auto">
+      <polygon points="0 0, 8 3, 0 6" fill="#6e7a81"/>
+    </marker>
+    
+    <!-- Subtle shadow (non-intrusive for printing) -->
+    <filter id="academic-shadow" x="-5%" y="-5%" width="110%" height="110%">
+      <feDropShadow dx="0.8" dy="0.8" stdDeviation="0.8" flood-opacity="0.07"/>
+    </filter>
+  </defs>
+  
+  <!-- Input -->
+  <rect x="150" y="70" width="400" height="45" rx="2" ry="2" fill="url(#base-gradient)" stroke="#c9d0d6" stroke-width="1.5" filter="url(#academic-shadow)"/>
+  <text x="350" y="98" font-family="'Helvetica Neue', 'Segoe UI', 'Calibri', sans-serif" font-size="14" text-anchor="middle" fill="#000000">Input Time Series Data [batch_size, seq_len, input_dim]</text>
+  
+  <!-- Arrow -->
+  <line x1="350" y1="115" x2="350" y2="140" stroke="#6e7a81" stroke-width="1.2" marker-end="url(#arrowhead)"/>
+  
+  <!-- Embedding -->
+  <rect x="150" y="140" width="400" height="45" rx="2" ry="2" fill="url(#key-gradient)" stroke="#b3c4d6" stroke-width="1.5" filter="url(#academic-shadow)"/>
+  <text x="350" y="168" font-family="'Helvetica Neue', 'Segoe UI', 'Calibri', sans-serif" font-size="14" text-anchor="middle" fill="#000000">Input Embedding (Linear: input_dim → d_model)</text>
+  
+  <!-- Arrow -->
+  <line x1="350" y1="185" x2="350" y2="210" stroke="#6e7a81" stroke-width="1.2" marker-end="url(#arrowhead)"/>
+  
+  <!-- Mamba Block -->
+  <rect x="150" y="210" width="400" height="100" rx="2" ry="2" fill="url(#accent-gradient)" stroke="#c5d2e0" stroke-width="1.5" filter="url(#academic-shadow)"/>
+  <text x="350" y="235" font-family="'Helvetica Neue', 'Segoe UI', 'Calibri', sans-serif" font-size="15" font-weight="bold" text-anchor="middle" fill="#000000">Mamba Block (n_layers)</text>
+  <text x="170" y="262" font-family="'Helvetica Neue', 'Segoe UI', 'Calibri', sans-serif" font-size="14" text-anchor="start" fill="#000000">• SSM (State Space Model): d_state, d_conv</text>
+  <text x="170" y="290" font-family="'Helvetica Neue', 'Segoe UI', 'Calibri', sans-serif" font-size="14" text-anchor="start" fill="#000000">• GatedMLP + LayerNorm + Dropout</text>
+  
+  <!-- Arrow -->
+  <line x1="350" y1="310" x2="350" y2="335" stroke="#6e7a81" stroke-width="1.2" marker-end="url(#arrowhead)"/>
+  
+  <!-- VAE area dividing line -->
+  <line x1="120" y1="335" x2="580" y2="335" stroke="#a0acb8" stroke-width="1" stroke-dasharray="6,3"/>
+  <text x="350" y="355" font-family="'Helvetica Neue', 'Segoe UI', 'Calibri', sans-serif" font-size="15" font-weight="bold" text-anchor="middle" fill="#000000">VAE Component</text>
+  
+  <!-- Hidden State -->
+  <rect x="200" y="370" width="300" height="40" rx="2" ry="2" fill="url(#key-gradient)" stroke="#b3c4d6" stroke-width="1.5" filter="url(#academic-shadow)"/>
+  <text x="350" y="395" font-family="'Helvetica Neue', 'Segoe UI', 'Calibri', sans-serif" font-size="14" text-anchor="middle" fill="#000000">Hidden State [batch_size, d_model]</text>
+  
+  <!-- Arrow split - left (to VAE Encoder) -->
+  <path d="M350 410 C350 420, 350 425, 280 425 C230 425, 220 445, 220 465" stroke="#6e7a81" stroke-width="1.2" fill="none" marker-end="url(#arrowhead)"/>
+  
+  <!-- Arrow split - right (to Prediction Head) -->
+  <path d="M350 410 C350 420, 350 425, 420 425 C470 425, 480 445, 480 465" stroke="#6e7a81" stroke-width="1.2" fill="none" marker-end="url(#arrowhead)"/>
+  
+  <!-- VAE Encoder (left) -->
+  <rect x="120" y="465" width="220" height="50" rx="2" ry="2" fill="url(#core-gradient)" stroke="#a1b5c9" stroke-width="1.5" filter="url(#academic-shadow)"/>
+  <text x="230" y="490" font-family="'Helvetica Neue', 'Segoe UI', 'Calibri', sans-serif" font-size="14" font-weight="bold" text-anchor="middle" fill="#000000">VAE Encoder</text>
+  <text x="230" y="507" font-family="'Helvetica Neue', 'Segoe UI', 'Calibri', sans-serif" font-size="12" text-anchor="middle" fill="#000000">latent_dim : dynamically allocated</text>
+  
+  <!-- Prediction Head (right) -->
+  <rect x="360" y="465" width="220" height="50" rx="2" ry="2" fill="url(#core-gradient)" stroke="#a1b5c9" stroke-width="1.5" filter="url(#academic-shadow)"/>
+  <text x="470" y="490" font-family="'Helvetica Neue', 'Segoe UI', 'Calibri', sans-serif" font-size="14" font-weight="bold" text-anchor="middle" fill="#000000">Prediction Head</text>
+  <text x="470" y="507" font-family="'Helvetica Neue', 'Segoe UI', 'Calibri', sans-serif" font-size="12" text-anchor="middle" fill="#000000">Linear(d_model → output_dim)</text>
+  
+  <!-- Arrow merge - left (from VAE Encoder) -->
+  <path d="M230 515 C230 530, 230 540, 270 540 C320 540, 340 560, 350 575" stroke="#6e7a81" stroke-width="1.2" fill="none" marker-end="url(#arrowhead)"/>
+  
+  <!-- Arrow merge - right (from Prediction Head) -->
+  <path d="M470 515 C470 530, 470 540, 430 540 C380 540, 360 560, 350 575" stroke="#6e7a81" stroke-width="1.2" fill="none" marker-end="url(#arrowhead)"/>
+  
+  <!-- Latent Vector -->
+  <rect x="200" y="575" width="300" height="40" rx="2" ry="2" fill="url(#accent-gradient)" stroke="#c5d2e0" stroke-width="1.5" filter="url(#academic-shadow)"/>
+  <text x="350" y="600" font-family="'Helvetica Neue', 'Segoe UI', 'Calibri', sans-serif" font-size="14" text-anchor="middle" fill="#000000">Latent Vector [batch_size, latent_dim]</text>
+  
+  <!-- Arrow -->
+  <line x1="350" y1="615" x2="350" y2="630" stroke="#6e7a81" stroke-width="1.2" marker-end="url(#arrowhead)"/>
+  
+  <!-- Output -->
+  <rect x="150" y="630" width="400" height="45" rx="2" ry="2" fill="url(#base-gradient)" stroke="#c9d0d6" stroke-width="1.5" filter="url(#academic-shadow)"/>
+  <text x="350" y="658" font-family="'Helvetica Neue', 'Segoe UI', 'Calibri', sans-serif" font-size="14" text-anchor="middle" fill="#000000">Prediction, Hidden State, Encoded Hidden State</text>
+</svg>
