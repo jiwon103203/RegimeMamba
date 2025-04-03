@@ -71,6 +71,7 @@ class TimeSeriesMamba(nn.Module):
         self.input_embedding = nn.Linear(input_dim, d_model)
 
         # Mamba 블록
+        # 개선된 구현
         self.blocks = nn.ModuleList([
             Block(
                 dim=d_model,
@@ -80,7 +81,9 @@ class TimeSeriesMamba(nn.Module):
                     d_conv=d_conv,
                     expand=expand
                 ),
-                mlp_cls=lambda dim: GatedMLP(dim)
+                mlp_cls=lambda dim: GatedMLP(dim),
+                fused_add_norm=True,  # Add와 LayerNorm 융합으로 성능 향상
+                residual_in_fp32=True  # 정밀도 유지를 위한 fp32 형식의 잔차
             )
             for _ in range(n_layers)
         ])
@@ -151,14 +154,14 @@ class TimeSeriesMamba(nn.Module):
         """
         # 임베딩
         x = self.input_embedding(x)
+        x = self.dropout(x)
 
         # Mamba 처리
         residual = None
-        for block in self.blocks:
+        for i,block in enumerate(self.blocks):
             x, residual = block(x, residual)
-            x = self.dropout(x)
-
-        x = self.norm(x)
+            if i < len(self.blocks) - 1:
+                x = self.dropout(x)
 
         # 마지막 시퀀스 포지션의 hidden state 추출
         hidden = x[:, -1, :]  # [batch_size, d_model]
