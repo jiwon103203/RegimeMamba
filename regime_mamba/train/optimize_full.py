@@ -24,7 +24,7 @@ def optimize_regime_mamba_bayesian(data_path, base_config, n_iterations=30, save
         optimized_config: 최적화된 설정 객체
     """
     # 최적화 대상 함수 정의
-    def evaluate_model(d_model_exp, d_state_exp, learning_rate_exp, seq_len_exp):
+    def evaluate_model(d_model_exp, d_state_exp, learning_rate_exp):
         """하이퍼파라미터 조합을 평가하고 검증 성능을 반환 (배치 사이즈 고정)"""
         # 연속 파라미터 공간에서 실제 값으로 변환
         current_config = RegimeMambaConfig()
@@ -36,8 +36,9 @@ def optimize_regime_mamba_bayesian(data_path, base_config, n_iterations=30, save
         current_config.dropout = 0.1                    # 0.1로 고정
         current_config.learning_rate = 10 ** learning_rate_exp  # 1e-6 ~ 1e-4 범위
         current_config.batch_size = 512                 # 배치 사이즈 256로 고정
-        current_config.seq_len = int(2 ** seq_len_exp)  # ~32 ~ 512 범위
+        current_config.seq_len = base_config.target_horizon  # config에서 고정
         current_config.device = base_config.device
+        current_config.preprocessed = base_config.preprocessed
         print(f"\n평가 중인 하이퍼파라미터:")
         print(f"  d_model: {current_config.d_model}")
         print(f"  d_state: {current_config.d_state}")
@@ -103,8 +104,7 @@ def optimize_regime_mamba_bayesian(data_path, base_config, n_iterations=30, save
     pbounds = {
         'd_model_exp': (4, 8),         # 2^4=32 ~ 2^8=256
         'd_state_exp': (4, 8),         # 2^4=32 ~ 2^8=256
-        'learning_rate_exp': (-6, -3), # 10^-6 ~ 10^-3
-        'seq_len_exp': (4, 9)          # 2^4=16 ~ 2^9=512
+        'learning_rate_exp': (-6, -3) # 10^-6 ~ 10^-3
     }
 
     # 베이지안 최적화 객체 생성
@@ -134,17 +134,17 @@ def optimize_regime_mamba_bayesian(data_path, base_config, n_iterations=30, save
     optimized_config.dropout = base_config.dropout         # config에서 고정
     optimized_config.learning_rate = 10 ** best_params['learning_rate_exp']
     optimized_config.batch_size = 512  # 항상 512로 고정
-    optimized_config.seq_len = int(2 ** best_params['seq_len_exp'])
+    optimized_config.seq_len = base_config.target_horizon  # config에서 고정
 
     print("\n최적화 완료!")
     print("최적 하이퍼파라미터:")
     print(f"  d_model: {optimized_config.d_model}")
     print(f"  d_state: {optimized_config.d_state}")
     print(f"  n_layers: {optimized_config.n_layers} (고정)")
-    print(f"  dropout: {optimized_config.dropout:.3f}")
+    print(f"  dropout: {optimized_config.dropout:.3f} (고정)")
     print(f"  learning_rate: {optimized_config.learning_rate:.2e}")
     print(f"  batch_size: {optimized_config.batch_size} (고정)")
-    print(f"  seq_len: {optimized_config.seq_len}")
+    print(f"  seq_len: {optimized_config.seq_len} (고정)")
 
     # 최적화 결과 저장
     if save_path is not None:
@@ -168,7 +168,7 @@ def optimize_regime_mamba_bayesian(data_path, base_config, n_iterations=30, save
                         'dropout': 0.1,
                         'learning_rate': 10 ** res['params']['learning_rate_exp'],
                         'batch_size': 512,  # 항상 512로 고정
-                        'seq_len': int(2 ** res['params']['seq_len_exp'])
+                        'seq_len': base_config.target_horizon  # config에서 고정
                     },
                     'val_loss': -res['target']
                 }
