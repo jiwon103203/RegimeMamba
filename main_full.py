@@ -387,7 +387,7 @@ def evaluate_strategy(
                 test_dates+=dates.flatten()
             else:
                 binary = features[:,1] > predictions # (batch_size, 5) -> (batch_size, 1)
-                test_predictions+binary.astype(int).cpu().numpy().flatten()
+                test_predictions+binary.cpu().numpy().flatten().astype(int)
                 test_returns+returns.cpu().numpy().flatten()
                 test_dates+dates.flatten()
         # # Predict regimes
