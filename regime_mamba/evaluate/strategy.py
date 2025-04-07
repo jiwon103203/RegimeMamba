@@ -19,6 +19,9 @@ def evaluate_regime_strategy(predictions, returns, dates=None, transaction_cost=
         df: 상세 결과 데이터프레임
         performance: 성과 지표 딕셔너리
     """
+    if len(predictions) == 0 or len(returns)==0:
+      raise ValueError("빈 predictions 또는 returns 배열이 전달되었습니다.")
+    
     df = pd.DataFrame({
         'Date': dates,
         'Regime': predictions.flatten(),
@@ -47,12 +50,12 @@ def evaluate_regime_strategy(predictions, returns, dates=None, transaction_cost=
         # 레짐 변화 감지 (거래 발생)
         df['Regime_Change'] = df['Regime'].diff().fillna(0) != 0
         # 첫 번째 진입도 거래로 간주
-        df.loc[0, 'Regime_Change'] = df.loc[0, 'Regime'] == 1
+        #df.loc[0, 'Regime_Change'] = df.loc[0, 'Regime'] == 1
     elif config.num_clusters == 3:
         # 3개의 레짐인 경우, Bull, Neutral이면 매수 포지션 유지 Bear는 매도
         df['Regime_Change'] = (df['Regime'] == 0) & (df['Regime'].shift(1) == 1) | (df['Regime'] == 1) & (df['Regime'].shift(1) == 0) | (df['Regime'] == 2) & (df['Regime'].shift(1) == 0) | (df['Regime'] == 0) & (df['Regime'].shift(1) == 2)
         # 첫 번째 진입도 거래로 간주
-        df.loc[0, 'Regime_Change'] = df.loc[0, 'Regime'] == 1 or df.loc[0, 'Regime'] == 2
+        #df.loc[0, 'Regime_Change'] = df.loc[0, 'Regime'] == 1 or df.loc[0, 'Regime'] == 2
 
 
     # 거래 비용 계산 (레짐이 변할 때마다 적용)

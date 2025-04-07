@@ -382,14 +382,14 @@ def evaluate_strategy(
             
             if config.direct_train:
                 predictions = torch.argmax(predictions, dim=1) # (batch_size ,3) -> (batch_size, 1)
-                test_predictions+=predictions.cpu().numpy().flatten()
-                test_returns+=returns.cpu().numpy().flatten()
-                test_dates+=dates.flatten()
+                test_predictions.extend(predictions.cpu().numpy().flatten().tolist())
+                test_returns.extend(returns.cpu().numpy().tolist())
+                test_dates.extend(np.array(dates).tolist())
             else:
-                binary = features[:,1] > predictions # (batch_size, 5) -> (batch_size, 1)
-                test_predictions+binary.cpu().numpy().flatten().astype(int)
-                test_returns+returns.cpu().numpy().flatten()
-                test_dates+dates.flatten()
+                binary = predictions > features[:,-1, 1].reshape(-1, 1) # (batch_size, 1)
+                test_predictions.extend(binary.cpu().numpy().flatten().astype(int).tolist())
+                test_returns.extend(returns.cpu().numpy().tolist())
+                test_dates.extend(np.array(dates).tolist())
         # # Predict regimes
         # test_predictions, test_returns, test_dates = predict_regimes(
         #     model, test_loader, config
