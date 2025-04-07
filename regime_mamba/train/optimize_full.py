@@ -40,7 +40,6 @@ def optimize_regime_mamba_bayesian(data_path, base_config, n_iterations=30, save
         current_config.batch_size = 2048                 # 배치 사이즈 2048로 고정
         current_config.seq_len = base_config.target_horizon  # config에서 고정
         current_config.device = base_config.device
-        current_config.preprocessed = base_config.preprocessed
         print(f"\n평가 중인 하이퍼파라미터:")
         print(f"  d_model: {current_config.d_model}")
         print(f"  d_state: {current_config.d_state}")
@@ -52,7 +51,6 @@ def optimize_regime_mamba_bayesian(data_path, base_config, n_iterations=30, save
 
         # 데이터셋 및 데이터로더 생성
         try:
-            print(current_config)
             train_dataset = RegimeMambaDataset(config = current_config, mode="train")
             valid_dataset = RegimeMambaDataset(config = current_config, mode="valid")
             train_loader = DataLoader(
@@ -166,7 +164,7 @@ def optimize_regime_mamba_bayesian(data_path, base_config, n_iterations=30, save
                     'params': {
                         'd_model': int(2 ** res['params']['d_model_exp']),
                         'd_state': int(2 ** res['params']['d_state_exp']),
-                        'n_layers': 4,      # 항상 4으로 고정
+                        'n_layers': 2,      # 항상 2으로 고정
                         'dropout': 0.1,
                         'learning_rate': 10 ** res['params']['learning_rate_exp'],
                         'batch_size': 2048,  # 항상 2048로 고정
