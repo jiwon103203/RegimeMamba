@@ -29,7 +29,7 @@ def optimize_regime_mamba_bayesian(data_path, base_config, n_iterations=30, save
         # 연속 파라미터 공간에서 실제 값으로 변환
         current_config = RegimeMambaConfig()
         for key, value in base_config.__dict__.items():
-            if key in current_config.__dict__:
+            if value is not None and hasattr(current_config, key):
                 # base_config의 속성을 current_config에 복사
                 setattr(current_config, key, value)
         current_config.d_model = int(2 ** d_model_exp)  # 64 ~ 256 범위
