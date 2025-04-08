@@ -34,6 +34,9 @@ class RegimeMambaConfig:
         self.n_clusters = 2  # Bull과 Bear 두 개의 레짐으로 클러스터링
         self.cluster_method = 'cosine_kmeans'
 
+        # 예측 관련 설정
+        self.predict = False
+
     def __str__(self):
         """설정 정보를 문자열로 반환"""
         config_str = "RegimeMamba 설정:\n"

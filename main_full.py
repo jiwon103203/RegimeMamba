@@ -100,7 +100,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument('--verbose', action='store_true', help='Enable verbose output')
     parser.add_argument('--direct_train', action='store_true', help='Train model directly for clasification')
     parser.add_argument('--vae', action='store_true', help='Train model with VAE')
-    parser.add_argument('--predict', action='store_true', help='Predict price to decidie regime')
+    parser.add_argument('--predict', default=False, help='Predict price to decidie regime')
 
     # Model parameters
     parser.add_argument('--input_dim', type=int, default=5, help='Input dimension')
@@ -395,7 +395,7 @@ def evaluate_strategy(
         else:
             # Predict regimes
             hidden_states, returns, dates= extract_hidden_states(model, test_loader, config)
-            bull_regime, bear_regime = identify_bull_bear_regimes(hidden_states, config.n_clusters)
+            bull_regime, bear_regime = identify_bull_bear_regimes(hidden_states, returns, config)
             test_predictions, test_returns, test_dates = predict_regimes(model, test_loader, bull_regime, config, bear_regime)
 
                 
