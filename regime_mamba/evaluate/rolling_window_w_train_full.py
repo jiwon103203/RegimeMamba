@@ -166,8 +166,6 @@ def identify_regimes_for_window(config, model, data, clustering_start, clusterin
         seq_len=config.seq_len,
         start_date=clustering_start,
         end_date=clustering_end,
-        target_type=config.target_type,
-        target_horizon=config.target_horizon,
         config=config
     )
     
