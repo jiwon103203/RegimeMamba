@@ -395,8 +395,8 @@ def evaluate_strategy(
         else:
             # Predict regimes
             hidden_states, returns, dates= extract_hidden_states(model, test_loader, config)
-            bull_regime, bear_regime = identify_bull_bear_regimes(hidden_states, returns, config)
-            test_predictions, test_returns, test_dates = predict_regimes(model, test_loader, bull_regime, config, bear_regime)
+            kmeans, bull_regime = identify_bull_bear_regimes(hidden_states, returns, config)
+            test_predictions, test_returns, test_dates = predict_regimes(model, test_loader, kmeans, bull_regime, config)
 
                 
         
