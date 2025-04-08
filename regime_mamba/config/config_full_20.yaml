@@ -1,0 +1,23 @@
+# 모델 관련 파라미터
+d_model: 256
+d_state: 64
+n_layers: 2
+dropout: 0.1
+learning_rate: 0.00005 # 5e-5
+batch_size: 2048
+seq_len: 20
+input_dim: 5
+
+# 데이터 관련 파라미터
+data_path: regime_mamba/data/data_full_final.csv
+preprocessed: False
+target_type: average
+target_horizon: 20
+
+# 학습 관련 파라미터
+max_epochs: 100
+patience: 10
+
+#클러스터링 관련 설정
+n_clusters: 2
+cluster_method: cosine_kmeans
