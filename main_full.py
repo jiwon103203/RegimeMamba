@@ -100,6 +100,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument('--verbose', action='store_true', help='Enable verbose output')
     parser.add_argument('--direct_train', action='store_true', help='Train model directly for clasification')
     parser.add_argument('--vae', action='store_true', help='Train model with VAE')
+    parser.add_argument('--predict', action='store_true', help='Predict price to decidie regime')
 
     # Model parameters
     parser.add_argument('--input_dim', type=int, default=5, help='Input dimension')
@@ -374,34 +375,45 @@ def evaluate_strategy(
         test_dates = []
         model.to(config.device)
         model.eval()
-        for batch in test_loader:
-            features, _, dates, returns = batch
-            features = features.to(config.device)
-            with torch.no_grad():
-                predictions = model(features)
-            
-            if config.direct_train:
-                predictions = torch.argmax(predictions, dim=1) # (batch_size ,3) -> (batch_size, 1)
-                test_predictions.extend(predictions.cpu().numpy().flatten().tolist())
-                test_returns.extend(returns.cpu().numpy().tolist())
-                test_dates.extend(np.array(dates).tolist())
-            else:
-                binary = predictions > features[:,-1, 1].reshape(-1, 1) # (batch_size, 1)
-                test_predictions.extend(binary.cpu().numpy().flatten().astype(int).tolist())
-                test_returns.extend(returns.cpu().numpy().tolist())
-                test_dates.extend(np.array(dates).tolist())
-        # # Predict regimes
-        # test_predictions, test_returns, test_dates = predict_regimes(
-        #     model, test_loader, config
-        # )
+        if config.predict:
+            for batch in test_loader:
+                features, _, dates, returns = batch
+                features = features.to(config.device)
+                with torch.no_grad():
+                    predictions = model(features)
+                
+                if config.direct_train:
+                    predictions = torch.argmax(predictions, dim=1) # (batch_size ,3) -> (batch_size, 1)
+                    test_predictions.extend(predictions.cpu().numpy().flatten().tolist())
+                    test_returns.extend(returns.cpu().numpy().tolist())
+                    test_dates.extend(np.array(dates).tolist())
+                else:
+                    binary = predictions > features[:,-1, 1].reshape(-1, 1) # (batch_size, 1)
+                    test_predictions.extend(binary.cpu().numpy().flatten().astype(int).tolist())
+                    test_returns.extend(returns.cpu().numpy().tolist())
+                    test_dates.extend(np.array(dates).tolist())
+        else:
+            # Predict regimes
+            hidden_states, returns, dates= extract_hidden_states(model, test_loader, config)
+            bull_regime, bear_regime = identify_bull_bear_regimes(hidden_states, config.n_clusters)
+            test_predictions, test_returns, test_dates = predict_regimes(model, test_loader, bull_regime, config, bear_regime)
+
+                
         
         # Evaluate strategy
         logger.info(f"Evaluating trading strategy with transaction cost {config.transaction_cost*100:.2f}%")
-        results_df, performance = evaluate_regime_strategy(
-            test_predictions[:-1], test_returns, test_dates,
-            transaction_cost=config.transaction_cost,
-            save_path=paths['strategy_performance_plot']
-        )
+        if config.predict:
+            results_df, performance = evaluate_regime_strategy(
+                test_predictions[:-1], test_returns, test_dates,
+                transaction_cost=config.transaction_cost,
+                save_path=paths['strategy_performance_plot']
+            )
+        else:
+            results_df, performance = evaluate_regime_strategy(
+                test_predictions, test_returns, test_dates,
+                transaction_cost=config.transaction_cost,
+                save_path=paths['strategy_performance_plot']
+            )
         
         # Save results
         results_df.to_csv(paths['strategy_results'], index=False)

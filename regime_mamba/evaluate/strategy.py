@@ -24,14 +24,14 @@ def evaluate_regime_strategy(predictions, returns, dates=None, transaction_cost=
     
     df = pd.DataFrame({
         'Date': dates,
-        'Regime': predictions.flatten(),
-        'Return': returns.flatten()
+        'Regime': predictions.flatten() if isinstance(predictions, np.ndarray) else predictions,
+        'Return': returns.flatten() if isinstance(predictions, np.ndarray) else returns,
     })
 
     # Date 순서로 정렬
     df.sort_values('Date').reset_index(drop=True, inplace=True)
 
-    if config.direct_train: # j 0 (bear), 1(No Move) ,2 (bull)
+    if config is not None and config.direct_train: # j 0 (bear), 1(No Move) ,2 (bull)
         current = 0  # 0: 매도 상태, 1: 매수 상태
         for i, j in enumerate(df['Regime']):
             if j == 0:
