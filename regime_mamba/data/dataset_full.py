@@ -102,10 +102,7 @@ class DateRangeRegimeMambaDataset(Dataset):
             seq_len: 시퀀스 길이
             start_date: 시작 날짜 (문자열, 'YYYY-MM-DD' 형식)
             end_date: 종료 날짜 (문자열, 'YYYY-MM-DD' 형식)
-            target_type: 타겟 유형
-                - average: 지정된 기간 동안의 평균 수익률
-            target_horizon: 타겟 계산을 위한 기간 (일)
-            preprocessed: 수익률 전처리 여부
+            config: 설정 객체 (필요한 속성: target_type, target_horizon, preprocessed, direct_train)
         """
         super().__init__()
         self.seq_len = seq_len

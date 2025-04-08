@@ -27,8 +27,8 @@ import traceback
 
 from regime_mamba.utils.utils import set_seed
 from regime_mamba.config.config import RollingWindowTrainConfig
+from regime_mamba.evaluate.dataset_full import DateRangeRegimeMambaDataset
 from regime_mamba.evaluate.rolling_window_w_train import (
-    DateRangeRegimeMambaDataset,
     train_model_for_window, 
     identify_regimes_for_window
 )
@@ -378,9 +378,7 @@ def evaluate_method(
             seq_len=config.seq_len,
             start_date=forward_start,
             end_date=forward_end,
-            target_type=config.target_type,
-            target_horizon=config.target_horizon,
-            preprocessed=config.preprocessed
+            config=config
         )
         
         # Create data loader
