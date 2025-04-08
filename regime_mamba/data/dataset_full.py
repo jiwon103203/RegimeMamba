@@ -116,8 +116,10 @@ class DateRangeRegimeMambaDataset(Dataset):
         # 데이터 로드
         if data is None and path is not None:
             data = pd.read_csv(path)
-            data['returns'] = data['returns'] * 100
+            data['Open'] = data['Open'] / 100
             data['Close'] = data['Close'] / 100
+            data['High'] = data['High'] / 100
+            data['Low'] = data['Low'] / 100
 
         # 데이터가 제공되지 않은 경우 에러
         if data is None:
@@ -168,7 +170,7 @@ class DateRangeRegimeMambaDataset(Dataset):
                 targets = np.array(self.data[self.target_col])/self.target_horizon
             else:
                 self.target_col=f"target_EMA_{config.target_horizon}"
-                targets = np.array(self.data[self.target_col])
+                targets = np.array(self.data[self.target_col]/100)
 
             for i in range(len(features) - seq_len+1):
                 self.sequences.append(features[i:i+seq_len])
@@ -184,7 +186,7 @@ class DateRangeRegimeMambaDataset(Dataset):
                 torch.tensor(self.sequences[idx], dtype=torch.float32),
                 torch.tensor(self.targets[idx], dtype=torch.float32),
                 self.dates[idx],
-                torch.tensor(np.array(self.subset['returns'])[idx], dtype=torch.float32)
+                torch.tensor(np.array(self.data['returns'])[idx], dtype=torch.float32)
         )
 
 def create_dataloaders(config):

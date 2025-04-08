@@ -181,7 +181,7 @@ class TimeSeriesMamba(nn.Module):
             return prediction, hidden
         return prediction
 
-    def vae_loss_function(self, recon_hidden, hidden, mu, log_var, pred, target, beta=0.01):
+    def vae_loss_function(self, recon_hidden, hidden, mu, log_var, pred, target, beta=0.001):
         """
         VAE 손실 함수: 재구성 손실 + KL 발산 + 예측 손실
         
@@ -216,7 +216,7 @@ class TimeSeriesMamba(nn.Module):
             pred_loss = mse_loss(pred.squeeze(), target)
         
         # 전체 손실
-        total_loss = pred_loss + 0.1*recon_loss + beta * kl_loss
+        total_loss = pred_loss + 0.01*recon_loss + beta * kl_loss
         
         return total_loss, recon_loss, kl_loss, pred_loss
 

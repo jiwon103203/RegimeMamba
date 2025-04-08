@@ -151,10 +151,16 @@ def load_config(args) -> RollingWindowTrainConfig:
         'transaction_cost': 0.001,
         'seed': 42,
         'max_workers': None,
-        'gpu_id': -1,
+        'gpu_id': 0,
         'enable_checkpointing': False,
         'checkpoint_interval': 1
     }
+
+    # Update with command-line arguments if provided
+    arg_dict = vars(args)
+    for key, value in arg_dict.items():
+        if value is not None and hasattr(config, key):
+            setattr(config, key, value)
     
     # Load from YAML file if provided
     yaml_config = {}
@@ -167,11 +173,6 @@ def load_config(args) -> RollingWindowTrainConfig:
         if hasattr(config, key):
             setattr(config, key, value)
     
-    # Update with command-line arguments if provided (overrides YAML)
-    arg_dict = vars(args)
-    for key, value in arg_dict.items():
-        if value is not None and hasattr(config, key):
-            setattr(config, key, value)
     
     # Check for required parameters
     required_params = ['data_path']
