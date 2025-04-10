@@ -66,8 +66,12 @@ def evaluate_regime_strategy(predictions, returns, dates=None, transaction_cost=
     df['Strategy_Return'] = df['Strategy_Regime'] * df['Return'] - df['Transaction_Cost']
 
     # 누적 수익률 계산
-    df['Cum_Market'] = (1 + df['Return']/100).cumprod() - 1
-    df['Cum_Strategy'] = (1 + df['Strategy_Return']/100).cumprod() - 1
+    if config is not None and config.input_dim == 4:
+        df['Cum_Market'] = (1 + df['Return']/100).cumprod() - 1
+        df['Cum_Strategy'] = (1 + df['Strategy_Return']/100).cumprod() - 1
+    else:
+        df['Cum_Market'] = (1 + df['Return']).cumprod() - 1
+        df['Cum_Strategy'] = (1 + df['Strategy_Return']).cumprod() - 1
 
     # 기본 통계량
     market_return = df['Cum_Market'].iloc[-1] * 100
