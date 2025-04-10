@@ -46,12 +46,12 @@ def evaluate_regime_strategy(predictions, returns, dates=None, transaction_cost=
                 else:
                     df.loc[i, 'Regime_Change'] = 0
 
-    elif config is None or config.num_clusters == 2:
+    elif config is None or config.n_clusters == 2:
         # 레짐 변화 감지 (거래 발생)
         df['Regime_Change'] = df['Regime'].diff().fillna(0) != 0
         # 첫 번째 진입도 거래로 간주
         #df.loc[0, 'Regime_Change'] = df.loc[0, 'Regime'] == 1
-    elif config.num_clusters == 3:
+    elif config.n_clusters == 3:
         # 3개의 레짐인 경우, Bull, Neutral이면 매수 포지션 유지 Bear는 매도
         df['Regime_Change'] = (df['Regime'] == 0) & (df['Regime'].shift(1) == 1) | (df['Regime'] == 1) & (df['Regime'].shift(1) == 0) | (df['Regime'] == 2) & (df['Regime'].shift(1) == 0) | (df['Regime'] == 0) & (df['Regime'].shift(1) == 2)
         # 첫 번째 진입도 거래로 간주
@@ -100,9 +100,9 @@ def evaluate_regime_strategy(predictions, returns, dates=None, transaction_cost=
     plt.grid(True)
 
     plt.subplot(3, 1, 2)
-    if config == None or config.num_clusters == 2:
+    if config == None or config.n_clusters == 2:
         plt.plot(df['Regime'], label='Regime (1=Bull, 0=Bear)', color='red')
-    elif config.num_clusters == 3:
+    elif config.n_clusters == 3:
         plt.plot(df['Regime'], label='Regime (0=Bear, 1=Bull, 2=Neutral)', color='red')
     plt.title('Regime Signal')
     plt.ylabel('Regime')
@@ -142,8 +142,12 @@ def evaluate_regime_strategy(predictions, returns, dates=None, transaction_cost=
 
     # 샤프 비율 계산 (무위험 수익률 2% 가정)
     risk_free_rate = 0.02
-    market_daily_returns = df['Return'] / 100
-    strategy_daily_returns = df['Strategy_Return'] / 100
+    if config is not None and config.input_dim == 4:
+        market_daily_returns = df['Return'] / 100
+        strategy_daily_returns = df['Strategy_Return'] /100
+    else:
+        market_daily_returns = df['Return']
+        strategy_daily_returns = df['Strategy_Return']
 
     market_volatility = market_daily_returns.std() * np.sqrt(252)
     strategy_volatility = strategy_daily_returns.std() * np.sqrt(252)

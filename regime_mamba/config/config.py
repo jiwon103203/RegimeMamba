@@ -29,6 +29,7 @@ class RegimeMambaConfig:
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         self.direct_train = False
         self.vae = False
+        self.use_onecycle = True
 
         # 클러스터링 관련 설정
         self.n_clusters = 2  # Bull과 Bear 두 개의 레짐으로 클러스터링
@@ -112,7 +113,6 @@ class RollingWindowTrainConfig(RollingWindowConfig):
 
         # 훈련 관련 설정
         self.max_epochs = 100
-        self.use_onecycle = True
 
         self.apply_filtering = True
         self.filter_method = 'minimum_holding'

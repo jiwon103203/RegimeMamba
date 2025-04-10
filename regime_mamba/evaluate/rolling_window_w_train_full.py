@@ -251,7 +251,8 @@ def apply_and_evaluate_regimes(config, model, data, kmeans, bull_regime, forward
         predictions,
         true_returns,
         dates,
-        transaction_cost=config.transaction_cost
+        transaction_cost=config.transaction_cost,
+        config=config
     )
     
     # 결과에 기간 정보 추가

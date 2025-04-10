@@ -132,12 +132,13 @@ def parse_args():
     parser.add_argument('--cluster_method', type=str, default='cosine_kmeans', help='Clustering method')
     parser.add_argument('--direct_train', action='store_true', help='Train model directly for clasification')
     parser.add_argument('--vae', action='store_true', help='Train model with VAE')
-    
+
     # Training-related settings
     parser.add_argument('--max_epochs', type=int, default=50, help='Maximum training epochs')
     parser.add_argument('--patience', type=int, default=10, help='Early stopping patience')
     parser.add_argument('--transaction_cost', type=float, default=0.001, help='Transaction cost (0.001 = 0.1%)')
     parser.add_argument('--seed', type=int, default=42, help='Random seed')
+    parser.add_argument('--use_onecycle', type=bool, default=True, help='Use one-cycle learning rate policy')
     
     # Performance-related settings
     parser.add_argument('--max_workers', type=int, help='Maximum number of worker processes')
@@ -389,7 +390,8 @@ def evaluate_method(
             smoothed_predictions,
             true_returns,
             dates,
-            transaction_cost=config.transaction_cost
+            transaction_cost=config.transaction_cost,
+            config=config
         )
         
         if results_df is not None and performance is not None:
