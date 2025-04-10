@@ -29,7 +29,7 @@ def extract_hidden_states(model, dataloader, config):
             for x, y, date in dataloader:
                 x = x.to(config.device)
                 if config.vae:
-                    _, _, hidden, _ = model(x)
+                    _, _, _, _, hidden, _ = model(x)
                 else:
                     _, hidden = model(x, return_hidden=True)
                 hidden_states.append(hidden.cpu().numpy())
@@ -39,7 +39,7 @@ def extract_hidden_states(model, dataloader, config):
             for x, y, date, r in dataloader:
                 x = x.to(config.device)
                 if config.vae:
-                    _, _, hidden, _ = model(x)
+                    _, _, _, _, hidden, _ = model(x)
                 else:
                     _, hidden = model(x, return_hidden=True)
                 hidden_states.append(hidden.cpu().numpy())
@@ -174,7 +174,10 @@ def predict_regimes(model, dataloader, kmeans, bull_regime, config, bear_regime=
         else:
             for x, y, date, r in dataloader:
                 x = x.to(config.device)
-                _, hidden = model(x, return_hidden=True)
+                if config.vae:
+                    _, _, _, _, hidden, _ = model(x)
+                else:
+                    _, hidden = model(x, return_hidden=True)
                 hidden = hidden.cpu().numpy()
 
                 # 클러스터 할당

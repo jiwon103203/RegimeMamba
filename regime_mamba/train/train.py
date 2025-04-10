@@ -18,7 +18,7 @@ def train_with_early_stopping(model, train_loader, valid_loader, config, use_one
         best_epoch: 최적 모델의 에폭
         model: 훈련된 모델
     """
-    criterion = nn.MSELoss() if not config.direct_train else nn.CrossEntropyLoss()
+    criterion = nn.MSELoss() if not config.direct_train else nn.CrossEntropyLoss(label_smoothing=0.0)
     optimizer = torch.optim.AdamW(model.parameters(), lr=config.learning_rate, weight_decay=0.01)
 
     if use_onecycle:
@@ -63,7 +63,8 @@ def train_with_early_stopping(model, train_loader, valid_loader, config, use_one
                     loss, vae_loss, kl_loss, pred_loss = model.vae_loss_function(recon, h, mu, log_var, pred, y)
                 else:
                     pred = model(x)
-                    loss = criterion(pred.squeeze(), y)
+                    y_indices = torch.argmax(y, dim=1)
+                    loss = criterion(pred.squeeze(), y_indices)
                 
                 loss.backward()
 
@@ -151,7 +152,8 @@ def train_with_early_stopping(model, train_loader, valid_loader, config, use_one
                         loss, vae_loss, kl_loss, pred_loss = model.vae_loss_function(recon, h, mu, log_var, pred, y)
                     else:
                         pred = model(x)
-                        loss = criterion(pred.squeeze(), y)
+                        y_indices = torch.argmax(y, dim=1)
+                        loss = criterion(pred.squeeze(), y_indices)
 
                     val_loss += loss.item()
                     if config.vae:
@@ -242,7 +244,7 @@ def train_regime_mamba(model, train_loader, valid_loader, config, save_path=None
     Returns:
         model: 훈련된 모델
     """
-    criterion = nn.MSELoss() if not config.direct_train else nn.CrossEntropyLoss()
+    criterion = nn.MSELoss() if not config.direct_train else nn.CrossEntropyLoss(label_smoothing=0.0)
     optimizer = torch.optim.AdamW(model.parameters(), lr=config.learning_rate)
 
     # OneCycleLR 스케줄러 설정
@@ -280,7 +282,8 @@ def train_regime_mamba(model, train_loader, valid_loader, config, save_path=None
                     loss, vae_loss, kl_loss, pred_loss = model.vae_loss_function(recon, h, mu, log_var, pred, y)
                 else:
                     pred = model(x)
-                    loss = criterion(pred.squeeze(), y)
+                    y_indices = torch.argmax(y, dim=1)
+                    loss = criterion(pred.squeeze(), y_indices)
                 loss.backward()
 
                 # 그래디언트 클리핑
@@ -363,7 +366,8 @@ def train_regime_mamba(model, train_loader, valid_loader, config, save_path=None
                         loss, vae_loss, kl_loss, pred_loss = model.vae_loss_function(recon, h, mu, log_var, pred, y)
                     else:
                         pred = model(x)
-                        loss = criterion(pred.squeeze(), y)
+                        y_indices = torch.argmax(y, dim=1)
+                        loss = criterion(pred.squeeze(), y_indices)
                     val_loss += loss.item()
                     if config.vae:
                         val_vae_loss += 0.1*vae_loss.item()

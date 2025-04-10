@@ -46,8 +46,6 @@ class TimeSeriesMamba(nn.Module):
             self.d_model = config.d_model
             self.output_dim = 3 if config.direct_train else 1
             
-            if self.config.direct_train:
-                self.softmax = nn.Softmax(dim=1)
             
             if self.config.vae:
                 self.start_point = int(np.log2(config.d_model)) - 1 # d_state가 128이면 6, 64이면 5
@@ -168,8 +166,6 @@ class TimeSeriesMamba(nn.Module):
 
         # 예측 헤드 (수익률만 예측)
         prediction = self.pred_head(hidden)  # [batch_size, 1]
-        if self.output_dim > 1:
-            prediction = self.softmax(prediction)
 
         if self.config and self.config.vae:
             mu, log_var = self.encode(hidden)
@@ -181,7 +177,7 @@ class TimeSeriesMamba(nn.Module):
             return prediction, hidden
         return prediction
 
-    def vae_loss_function(self, recon_hidden, hidden, mu, log_var, pred, target, beta=0.001):
+    def vae_loss_function(self, recon_hidden, hidden, mu, log_var, pred, target, beta=0.01):
         """
         VAE 손실 함수: 재구성 손실 + KL 발산 + 예측 손실
         
@@ -216,7 +212,7 @@ class TimeSeriesMamba(nn.Module):
             pred_loss = mse_loss(pred.squeeze(), target)
         
         # 전체 손실
-        total_loss = pred_loss + 0.01*recon_loss + beta * kl_loss
+        total_loss = pred_loss + 0.1*recon_loss + beta * kl_loss
         
         return total_loss, recon_loss, kl_loss, pred_loss
 

@@ -24,6 +24,7 @@ from collections import defaultdict
 from typing import Dict, List, Tuple, Any, Optional, Callable
 from concurrent.futures import ProcessPoolExecutor, as_completed
 import traceback
+import copy
 
 from regime_mamba.utils.utils import set_seed
 from regime_mamba.config.config import RollingWindowTrainConfig
@@ -39,6 +40,35 @@ from regime_mamba.evaluate.smoothing import (
 )
 from regime_mamba.evaluate.strategy import evaluate_regime_strategy
 from regime_mamba.evaluate.clustering import predict_regimes
+
+
+def json_serializer(obj):
+    """JSON 직렬화를 위한 변환 함수 - 순환 참조 처리 및 다양한 타입 지원
+    
+    Args:
+        obj: 직렬화할 객체
+        
+    Returns:
+        직렬화 가능한 객체
+    """
+    if isinstance(obj, np.ndarray):
+        if obj.ndim == 0:
+            return obj.item()
+        return obj.tolist()
+    elif isinstance(obj, datetime):
+        return obj.isoformat()
+    elif isinstance(obj, pd.DataFrame) or isinstance(obj, pd.Series):
+        return obj.to_dict()
+    elif hasattr(obj, 'to_dict'):
+        return obj.to_dict()
+    elif isinstance(obj, (int, float, str, bool, type(None))):
+        return obj
+    else:
+        # 다른 유형의 경우 문자열로 변환 시도
+        try:
+            return str(obj)
+        except:
+            return None
 
 
 def setup_logging(log_file=None, log_level=logging.INFO):
@@ -96,6 +126,7 @@ def parse_args():
     parser.add_argument('--seq_len', type=int, default=128, help='Sequence length')
     parser.add_argument('--batch_size', type=int, default=64, help='Batch size')
     parser.add_argument('--learning_rate', type=float, default=1e-6, help='Learning rate')
+    parser.add_argument('--output_dim', type=int, default=1, help='Output dimension')
     parser.add_argument('--target_type', type=str, default='average', help='Target type')
     parser.add_argument('--target_horizon', type=int, default=5, help='Target horizon')
     parser.add_argument('--cluster_method', type=str, default='cosine_kmeans', help='Clustering method')
@@ -247,7 +278,6 @@ def get_smoothing_methods() -> List[Tuple[str, Dict[str, Any]]]:
         ('ma', {'window': 10}),
         ('ma', {'window': 20}),
         ('exp', {'window': 10}),
-        ('gaussian', {'window': 10}),
         ('confirmation', {'days': 3}),
         ('confirmation', {'days': 5}),
         ('min_holding', {'days': 10}),
@@ -282,11 +312,6 @@ def apply_smoothing_method(
         window = params.get('window', 10)
         return apply_regime_smoothing(
             raw_predictions, method='exp', window=window
-        ).reshape(-1, 1)
-    elif method_name == 'gaussian':
-        window = params.get('window', 10)
-        return apply_regime_smoothing(
-            raw_predictions, method='gaussian', window=window
         ).reshape(-1, 1)
     elif method_name == 'confirmation':
         days = params.get('days', 3)
@@ -336,9 +361,7 @@ def evaluate_method(
             seq_len=config.seq_len,
             start_date=forward_start,
             end_date=forward_end,
-            target_type=config.target_type,
-            target_horizon=config.target_horizon,
-            preprocessed=config.preprocessed
+            config=config
         )
         
         # Create data loader
@@ -455,8 +478,9 @@ def evaluate_smoothing_methods(
                 os.makedirs(method_dir, exist_ok=True)
                 result['df'].to_csv(os.path.join(method_dir, 'results.csv'), index=False)
                 
+                # 수정된 부분: 성능 지표 저장 시 커스텀 직렬화 함수 사용
                 with open(os.path.join(method_dir, 'performance.json'), 'w') as f:
-                    json.dump(result['performance'], f, default=lambda x: x.item() if isinstance(x, np.ndarray) and x.ndim == 0 else x, indent=4)
+                    json.dump(result['performance'], f, default=json_serializer, indent=4)
     else:
         # Use parallel evaluation for CPU
         max_workers = max_workers or min(len(smoothing_methods), os.cpu_count() or 1)
@@ -481,8 +505,9 @@ def evaluate_smoothing_methods(
                         os.makedirs(method_dir, exist_ok=True)
                         result['df'].to_csv(os.path.join(method_dir, 'results.csv'), index=False)
                         
+                        # 수정된 부분: 성능 지표 저장 시 커스텀 직렬화 함수 사용
                         with open(os.path.join(method_dir, 'performance.json'), 'w') as f:
-                            json.dump(result['performance'], f, default=lambda x: x.item() if isinstance(x, np.ndarray) and x.ndim == 0 else x, indent=4)
+                            json.dump(result['performance'], f, default=json_serializer, indent=4)
                 except Exception as e:
                     logging.error(f"Error processing future: {str(e)}")
     
@@ -753,9 +778,9 @@ def visualize_final_comparison(
             'best_window_count': best_method_counts.get(method, 0)
         }
     
-    # Save summary
+    # 수정된 부분: 커스텀 직렬화 함수로 요약 저장
     with open(os.path.join(save_dir, 'methods_summary.json'), 'w') as f:
-        json.dump(summary, f, indent=4)
+        json.dump(summary, f, default=json_serializer, indent=4)
     
     # Log summary
     logging.info("\n===== Smoothing Method Performance Summary =====")
@@ -876,8 +901,9 @@ def save_checkpoint(
         checkpoint_path: Path to save checkpoint
     """
     try:
+        # 수정된 부분: 체크포인트 저장 시 커스텀 직렬화 함수 사용
         with open(checkpoint_path, 'w') as f:
-            json.dump(checkpoint_data, f, indent=4)
+            json.dump(checkpoint_data, f, default=json_serializer, indent=4)
     except Exception as e:
         logging.error(f"Error saving checkpoint: {str(e)}")
 
@@ -1014,7 +1040,9 @@ def run_rolling_window_backtest(
                     combined_results[method_id]['returns'][window_number] = result['cum_return']
                     combined_results[method_id]['trades'][window_number] = result['n_trades']
                     combined_results[method_id]['sharpes'][window_number] = result['sharpe']
-                    combined_results[method_id]['performances'].append(result['performance'])
+                    
+                    # 수정된 부분: 깊은 복사를 통해 성능 지표 저장
+                    combined_results[method_id]['performances'].append(copy.deepcopy(result['performance']))
             else:
                 logger.warning("No valid smoothing method results found")
             
@@ -1061,8 +1089,9 @@ def run_rolling_window_backtest(
                 'sharpes': {str(k): v for k, v in result['sharpes'].items()}
             }
         
+        # 수정된 부분: 결합된 결과 저장 시 커스텀 직렬화 함수 사용
         with open(os.path.join(config.results_dir, 'combined_results.json'), 'w') as f:
-            json.dump(result_data, f, indent=4)
+            json.dump(result_data, f, default=json_serializer, indent=4)
         
         logger.info(f"Backtest complete with {len(result_data)} methods across {len(window_schedule)} windows")
         return {'combined_results': combined_results, 'summary': summary}

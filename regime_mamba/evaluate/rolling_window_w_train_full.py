@@ -104,14 +104,14 @@ def train_model_for_window(config, train_start, train_end, valid_start, valid_en
         train_dataset,
         batch_size=config.batch_size,
         shuffle=True,
-        num_workers=4
+        num_workers=2
     )
     
     valid_loader = DataLoader(
         valid_dataset,
         batch_size=config.batch_size,
         shuffle=False,
-        num_workers=4
+        num_workers=2
     )
     
     # 데이터가 충분한지 확인
@@ -127,7 +127,8 @@ def train_model_for_window(config, train_start, train_end, valid_start, valid_en
         d_conv=config.d_conv,
         expand=config.expand,
         n_layers=config.n_layers,
-        dropout=config.dropout
+        dropout=config.dropout,
+        config=config
     )
     
     # 조기 종료를 적용한 모델 학습
