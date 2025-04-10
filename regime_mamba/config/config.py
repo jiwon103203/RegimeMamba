@@ -100,7 +100,7 @@ class RollingWindowConfig(RegimeMambaConfig):
         config.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         return config
     
-class RollingWindowTrainconfig(RollingWindowConfig):
+class RollingWindowTrainConfig(RollingWindowConfig):
     def __init__(self):
         """Rolling Window 기반 RegimeMamba 훈련 설정 클래스"""
         super().__init__()
