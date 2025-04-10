@@ -3,7 +3,7 @@ d_model: 256
 d_state: 64
 n_layers: 2
 dropout: 0.1
-learning_rate: 0.00001 # 1e-5
+learning_rate: 0.00005 # 5e-5
 batch_size: 1024
 seq_len: 200
 input_dim: 5
@@ -15,7 +15,7 @@ target_type: average
 target_horizon: 200
 
 # 학습 관련 파라미터
-max_epochs: 100
+max_epochs: 50
 patience: 10
 
 #클러스터링 관련 설정
