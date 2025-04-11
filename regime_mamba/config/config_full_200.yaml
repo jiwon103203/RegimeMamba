@@ -20,4 +20,4 @@ patience: 10
 
 #클러스터링 관련 설정
 n_clusters: 2
-cluster_method: cosine_kmeans
+cluster_method: kmeans

@@ -49,10 +49,13 @@ class TimeSeriesMamba(nn.Module):
             
             if self.config.vae:
                 self.start_point = int(np.log2(config.d_model)) - 1 # d_state가 128이면 6, 64이면 5
-                self.latent_dim = 2**(self.start_point-2)
+                self.latent_dim = 2**(self.start_point-3)
                 self.fc_mu = nn.Linear(config.d_model, self.latent_dim)
                 self.fc_var = nn.Linear(config.d_model, self.latent_dim)
                 self.decoder = nn.Sequential(
+                    nn.Linear(2**(self.start_point-3), 2**(self.start_point-2)),
+                    nn.BatchNorm1d(2**(self.start_point-2)),
+                    nn.ReLU(),
                     nn.Linear(2**(self.start_point-2), 2**(self.start_point-1)),
                     nn.BatchNorm1d(2**(self.start_point-1)),
                     nn.ReLU(),
@@ -177,7 +180,7 @@ class TimeSeriesMamba(nn.Module):
             return prediction, hidden
         return prediction
 
-    def vae_loss_function(self, recon_hidden, hidden, mu, log_var, pred, target, beta=0.01):
+    def vae_loss_function(self, recon_hidden, hidden, mu, log_var, pred, target, beta=0.1):
         """
         VAE 손실 함수: 재구성 손실 + KL 발산 + 예측 손실
         
@@ -197,7 +200,7 @@ class TimeSeriesMamba(nn.Module):
             pred_loss: 예측 손실
         """
         # MSE 손실 계산기
-        mse_loss = nn.MSELoss(reduction='sum')
+        mse_loss = nn.MSELoss(reduction='mean')
         
         # 재구성 손실 (hidden state 복원에 대한 MSE)
         recon_loss = mse_loss(recon_hidden, hidden)
@@ -207,12 +210,13 @@ class TimeSeriesMamba(nn.Module):
         
         # 예측 손실 (주요 태스크에 대한 손실)
         if pred.shape[1] > 1:  # 다중 클래스 분류인 경우
+            target = torch.argmax(target, dim=1) # 벡터 타겟을 스칼라로 변환
             pred_loss = nn.CrossEntropyLoss()(pred, target)
         else:  # 회귀인 경우
             pred_loss = mse_loss(pred.squeeze(), target)
         
         # 전체 손실
-        total_loss = pred_loss + 0.1*recon_loss + beta * kl_loss
+        total_loss = pred_loss + recon_loss + beta * kl_loss
         
         return total_loss, recon_loss, kl_loss, pred_loss
 

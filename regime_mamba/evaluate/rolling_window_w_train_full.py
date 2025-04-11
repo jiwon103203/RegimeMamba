@@ -133,7 +133,7 @@ def train_model_for_window(config, train_start, train_end, valid_start, valid_en
     
     if config.progressive_train:
         for i in range(1,3):
-            best_val_loss, best_epoch, trained_model = train_with_early_stopping(
+            best_val_loss, best_epoch, model = train_with_early_stopping(
                 model, 
                 train_loader, 
                 valid_loader, 
@@ -143,7 +143,7 @@ def train_model_for_window(config, train_start, train_end, valid_start, valid_en
             )
     else:
         # 조기 종료를 적용한 모델 학습
-        best_val_loss, best_epoch, trained_model = train_with_early_stopping(
+        best_val_loss, best_epoch, model = train_with_early_stopping(
             model, 
             train_loader, 
             valid_loader, 
@@ -153,7 +153,7 @@ def train_model_for_window(config, train_start, train_end, valid_start, valid_en
     
     print(f"학습 완료. 최적 검증 손실: {best_val_loss:.6f} (에폭 {best_epoch+1})")
     
-    return trained_model, best_val_loss
+    return model, best_val_loss
 
 def identify_regimes_for_window(config, model, data, clustering_start, clustering_end):
     """

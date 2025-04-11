@@ -47,16 +47,19 @@ def train_with_early_stopping(model, train_loader, valid_loader, config, use_one
     best_epoch = 0
     best_model_state = None
     no_improve_count = 0
+
     if progressive_train == 1:
         # 모델의 fc_mu, fc_var, decoder 파라미터를 고정
         # 고정할 파라미터를 집합으로 정의
-        frozen_params = {model.fc_mu.weight, model.fc_var.weight, model.decoder[0].weight, model.decoder[1].weight, model.decoder[3].weight, model.decoder[4].weight, model.decoder[6].weight, model.decoder[7].weight}
+        frozen_params = {model.fc_mu.weight, model.fc_var.weight, model.decoder[0].weight, model.decoder[1].weight, model.decoder[3].weight,
+                         model.decoder[4].weight, model.decoder[6].weight, model.decoder[7].weight, model.decoder[9].weight, model.decoder[10].weight}
 
         for param in model.parameters():
-            param.requires_grad = param not in frozen_params
+            param.requires_grad = param not in frozen_params # 고정된 파라미터는 학습하지 않음
 
     elif progressive_train == 2:
-        active_params = {model.fc_mu.weight, model.fc_var.weight, model.decoder[0].weight, model.decoder[1].weight, model.decoder[3].weight, model.decoder[4].weight, model.decoder[6].weight, model.decoder[7].weight}
+        active_params = {model.fc_mu.weight, model.fc_var.weight, model.decoder[0].weight, model.decoder[1].weight, model.decoder[3].weight,
+                         model.decoder[4].weight, model.decoder[6].weight, model.decoder[7].weight, model.decoder[9].weight, model.decoder[10].weight}
         for param in model.parameters():
             param.requires_grad = param in active_params
     
@@ -74,6 +77,10 @@ def train_with_early_stopping(model, train_loader, valid_loader, config, use_one
                 if config.vae:
                     pred, h, mu, log_var, z, recon = model(x)
                     loss, vae_loss, kl_loss, pred_loss = model.vae_loss_function(recon, h, mu, log_var, pred, y)
+                    if progressive_train == 1:
+                        loss = pred_loss
+                    elif progressive_train == 2:
+                        loss = vae_loss + kl_loss
                 else:
                     pred = model(x)
                     y_indices = torch.argmax(y, dim=1)
@@ -103,10 +110,13 @@ def train_with_early_stopping(model, train_loader, valid_loader, config, use_one
                 if config.vae:
                     pred, h, mu, log_var, z, recon = model(x)
                     loss, vae_loss, kl_loss, pred_loss = model.vae_loss_function(recon, h, mu, log_var, pred, y)
+                    if progressive_train == 1:
+                        loss = pred_loss
+                    elif progressive_train == 2:
+                        loss = vae_loss + kl_loss
                 else:
                     pred = model(x)
                     loss = criterion(pred.squeeze(), y)
-                
                 loss.backward()
 
                 # 그래디언트 클리핑 추가
@@ -130,10 +140,16 @@ def train_with_early_stopping(model, train_loader, valid_loader, config, use_one
                 if config.vae:
                     pred, h, mu, log_var, z, recon = model(x)
                     loss, vae_loss, kl_loss, pred_loss = model.vae_loss_function(recon, h, mu, log_var, pred, y)
+                    if progressive_train == 1:
+                        loss = pred_loss
+                        print(loss.item())
+                        print(pred_loss.item())
+                    elif progressive_train == 2:
+                        loss = vae_loss + kl_loss
                 else:
                     pred = model(x)
                     loss = criterion(pred.squeeze(), y)
-                
+ 
                 loss.backward()
 
                 # 그래디언트 클리핑 추가
@@ -163,11 +179,15 @@ def train_with_early_stopping(model, train_loader, valid_loader, config, use_one
                     if config.vae:
                         pred, h, mu, log_var, z, recon = model(x)
                         loss, vae_loss, kl_loss, pred_loss = model.vae_loss_function(recon, h, mu, log_var, pred, y)
+                        if progressive_train == 1:
+                            loss = pred_loss
+                        elif progressive_train == 2:
+                            loss = vae_loss + kl_loss
                     else:
                         pred = model(x)
                         y_indices = torch.argmax(y, dim=1)
                         loss = criterion(pred.squeeze(), y_indices)
-
+                    
                     val_loss += loss.item()
                     if config.vae:
                         val_vae_loss += 0.1*vae_loss.item()
@@ -180,10 +200,14 @@ def train_with_early_stopping(model, train_loader, valid_loader, config, use_one
                     if config.vae:
                         pred, h, mu, log_var, z, recon = model(x)
                         loss, vae_loss, kl_loss, pred_loss = model.vae_loss_function(recon, h, mu, log_var, pred, y)
+                        if progressive_train == 1:
+                            loss = pred_loss
+                        elif progressive_train == 2:
+                            loss = vae_loss + kl_loss
                     else:
                         pred = model(x)
                         loss = criterion(pred.squeeze(), y)
-                    
+
                     val_loss += loss.item()
                     if config.vae:
                         val_vae_loss += 0.1*vae_loss.item()
@@ -196,6 +220,10 @@ def train_with_early_stopping(model, train_loader, valid_loader, config, use_one
                     if config.vae:
                         pred, h, mu, log_var, z, recon = model(x)
                         loss, vae_loss, kl_loss, pred_loss = model.vae_loss_function(recon, h, mu, log_var, pred, y)
+                        if progressive_train == 1:
+                            loss = pred_loss
+                        elif progressive_train == 2:
+                            loss = vae_loss + kl_loss
                     else:
                         pred = model(x)
                         loss = criterion(pred.squeeze(), y)
@@ -279,13 +307,15 @@ def train_regime_mamba(model, train_loader, valid_loader, config, save_path=None
     if progressive_train == 1:
         # 모델의 fc_mu, fc_var, decoder 파라미터를 고정
         # 고정할 파라미터를 집합으로 정의
-        frozen_params = {model.fc_mu.weight, model.fc_var.weight, model.decoder[0].weight, model.decoder[1].weight, model.decoder[3].weight, model.decoder[4].weight, model.decoder[6].weight, model.decoder[7].weight}
+        frozen_params = {model.fc_mu.weight, model.fc_var.weight, model.decoder[0].weight, model.decoder[1].weight, model.decoder[3].weight,
+                         model.decoder[4].weight, model.decoder[6].weight, model.decoder[7].weight, model.decoder[9].weight, model.decoder[10].weight}
 
         for param in model.parameters():
             param.requires_grad = param not in frozen_params
 
     elif progressive_train == 2:
-        active_params = {model.fc_mu.weight, model.fc_var.weight, model.decoder[0].weight, model.decoder[1].weight, model.decoder[3].weight, model.decoder[4].weight, model.decoder[6].weight, model.decoder[7].weight}
+        active_params = {model.fc_mu.weight, model.fc_var.weight, model.decoder[0].weight, model.decoder[1].weight, model.decoder[3].weight,
+                         model.decoder[4].weight, model.decoder[6].weight, model.decoder[7].weight, model.decoder[9].weight, model.decoder[10].weight}
         for param in model.parameters():
             param.requires_grad = param in active_params
 
@@ -307,10 +337,15 @@ def train_regime_mamba(model, train_loader, valid_loader, config, save_path=None
                 if config.vae:
                     pred, h, mu, log_var, z, recon = model(x)
                     loss, vae_loss, kl_loss, pred_loss = model.vae_loss_function(recon, h, mu, log_var, pred, y)
+                    if progressive_train == 1:
+                        loss = pred_loss
+                    elif progressive_train == 2:
+                        loss = vae_loss + kl_loss
                 else:
                     pred = model(x)
                     y_indices = torch.argmax(y, dim=1)
                     loss = criterion(pred.squeeze(), y_indices)
+                
                 loss.backward()
 
                 # 그래디언트 클리핑
@@ -334,9 +369,14 @@ def train_regime_mamba(model, train_loader, valid_loader, config, save_path=None
                 if config.vae:
                     pred, h, mu, log_var, z, recon = model(x)
                     loss, vae_loss, kl_loss, pred_loss = model.vae_loss_function(recon, h, mu, log_var, pred, y)
+                    if progressive_train == 1:
+                        loss = pred_loss
+                    elif progressive_train == 2:
+                        loss = vae_loss + kl_loss
                 else:
                     pred = model(x)
                     loss = criterion(pred.squeeze(), y)
+
                 loss.backward()
 
                 # 그래디언트 클리핑
@@ -359,9 +399,14 @@ def train_regime_mamba(model, train_loader, valid_loader, config, save_path=None
                 if config.vae:
                     pred, h, mu, log_var, z, recon = model(x)
                     loss, vae_loss, kl_loss, pred_loss = model.vae_loss_function(recon, h, mu, log_var, pred, y)
+                    if progressive_train == 1:
+                        loss = pred_loss
+                    elif progressive_train == 2:
+                        loss = vae_loss + kl_loss
                 else:
                     pred = model(x)
                     loss = criterion(pred.squeeze(), y)
+                
                 loss.backward()
 
                 # 그래디언트 클리핑
@@ -391,10 +436,15 @@ def train_regime_mamba(model, train_loader, valid_loader, config, save_path=None
                     if config.vae:
                         pred, h, mu, log_var, z, recon = model(x)
                         loss, vae_loss, kl_loss, pred_loss = model.vae_loss_function(recon, h, mu, log_var, pred, y)
+                        if progressive_train == 1:
+                            loss = pred_loss
+                        elif progressive_train == 2:
+                            loss = vae_loss + kl_loss
                     else:
                         pred = model(x)
                         y_indices = torch.argmax(y, dim=1)
                         loss = criterion(pred.squeeze(), y_indices)
+
                     val_loss += loss.item()
                     if config.vae:
                         val_vae_loss += 0.1*vae_loss.item()
@@ -408,9 +458,14 @@ def train_regime_mamba(model, train_loader, valid_loader, config, save_path=None
                     if config.vae:
                         pred, h, mu, log_var, z, recon = model(x)
                         loss, vae_loss, kl_loss, pred_loss = model.vae_loss_function(recon, h, mu, log_var, pred, y)
+                        if progressive_train == 1:
+                            loss = pred_loss
+                        elif progressive_train == 2:
+                            loss = vae_loss + kl_loss
                     else:
                         pred = model(x)
                         loss = criterion(pred.squeeze(), y)
+
                     val_loss += loss.item()
                     if config.vae:
                         val_vae_loss += 0.1*vae_loss.item()
@@ -423,9 +478,14 @@ def train_regime_mamba(model, train_loader, valid_loader, config, save_path=None
                     if config.vae:
                         pred, h, mu, log_var, z, recon = model(x)
                         loss, vae_loss, kl_loss, pred_loss = model.vae_loss_function(recon, h, mu, log_var, pred, y)
+                        if progressive_train == 1:
+                            loss = pred_loss
+                        elif progressive_train == 2:
+                            loss = vae_loss + kl_loss
                     else:
                         pred = model(x)
                         loss = criterion(pred.squeeze(), y)
+
                     val_loss += loss.item()
                     if config.vae:
                         val_vae_loss += 0.1*vae_loss.item()
