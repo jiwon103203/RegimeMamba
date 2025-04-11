@@ -139,6 +139,7 @@ def parse_args():
     parser.add_argument('--transaction_cost', type=float, default=0.001, help='Transaction cost (0.001 = 0.1%)')
     parser.add_argument('--seed', type=int, default=42, help='Random seed')
     parser.add_argument('--use_onecycle', type=bool, default=True, help='Use one-cycle learning rate policy')
+    parser.add_argument('--progressive_train', type=bool, default=False, help='Progressive training flag')
     
     # Performance-related settings
     parser.add_argument('--max_workers', type=int, help='Maximum number of worker processes')

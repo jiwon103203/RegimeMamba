@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 from tqdm import tqdm
 
-def train_with_early_stopping(model, train_loader, valid_loader, config, use_onecycle=True):
+def train_with_early_stopping(model, train_loader, valid_loader, config, use_onecycle=True, progressive_train=0):
     """
     조기 종료와 OneCycle 학습률 스케줄러를 적용한 모델 훈련
 
@@ -12,6 +12,7 @@ def train_with_early_stopping(model, train_loader, valid_loader, config, use_one
         valid_loader: 검증 데이터 로더
         config: 설정 객체
         use_onecycle: OneCycleLR 스케줄러 사용 여부
+        progressive_train: 점진적 훈련 단계 (0: 전체, 1: fc_mu, fc_var, decoder 고정, 2: fc_mu, fc_var, decoder만 학습)
 
     Returns:
         best_val_loss: 최적 검증 손실
@@ -46,7 +47,21 @@ def train_with_early_stopping(model, train_loader, valid_loader, config, use_one
     best_epoch = 0
     best_model_state = None
     no_improve_count = 0
-
+    if progressive_train == 1:
+        # 모델의 fc_mu, fc_var, decoder 파라미터를 고정
+        for param in model.parameters():
+            if param is model.fc_mu.weight or param is model.fc_var.weight or param is model.decoder.weight:
+                param.requires_grad = False # 파라미터 고정
+            else:
+                param.requires_grad = True # 파라미터 학습 가능
+    elif progressive_train == 2:
+        # 모델의 fc_mu, fc_var, decoder 파라미터만 학습
+        for param in model.parameters():
+            if param is model.fc_mu.weight or param is model.fc_var.weight or param is model.decoder.weight:
+                param.requires_grad = True
+            else:
+                param.requires_grad = False
+    
     for epoch in range(config.max_epochs):
         # 훈련 단계
         model.train()
@@ -230,7 +245,7 @@ def train_with_early_stopping(model, train_loader, valid_loader, config, use_one
 
     return best_val_loss, best_epoch, model
 
-def train_regime_mamba(model, train_loader, valid_loader, config, save_path=None):
+def train_regime_mamba(model, train_loader, valid_loader, config, save_path=None, progressive_train=0):
     """
     RegimeMamba 모델의 전체 훈련 과정
 
@@ -240,6 +255,7 @@ def train_regime_mamba(model, train_loader, valid_loader, config, save_path=None
         valid_loader: 검증 데이터 로더
         config: 설정 객체
         save_path: 모델 저장 경로 (None이면 저장하지 않음)
+        progressive_train: 점진적 훈련 단계 (0: 전체, 1: fc_mu, fc_var, decoder 고정, 2: fc_mu, fc_var, decoder만 학습)
 
     Returns:
         model: 훈련된 모델
@@ -261,6 +277,23 @@ def train_regime_mamba(model, train_loader, valid_loader, config, save_path=None
 
     device = config.device
     model.to(device)
+
+    if progressive_train == 1:
+        print("점진적 훈련 1단계: fc_mu, fc_var, decoder 파라미터 고정")
+        # 모델의 fc_mu, fc_var, decoder 파라미터를 고정
+        for param in model.parameters():
+            if param is model.fc_mu.weight or param is model.fc_var.weight or param is model.decoder.weight:
+                param.requires_grad = False
+            else:
+                param.requires_grad = True
+    elif progressive_train == 2:
+        print("점진적 훈련 2단계: fc_mu, fc_var, decoder 이외 파라미터 고정")
+        # 모델의 fc_mu, fc_var, decoder 파라미터만 학습
+        for param in model.parameters():
+            if param is model.fc_mu.weight or param is model.fc_var.weight or param is model.decoder.weight:
+                param.requires_grad = True
+            else:
+                param.requires_grad = False
 
     best_val_loss = float('inf')
 

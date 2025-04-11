@@ -120,6 +120,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument('--opt_iterations', type=int, default=30, help='Number of optimization iterations')
     parser.add_argument('--max_epochs', type=int, default=50, help='Maximum number of training epochs')
     parser.add_argument('--patience', type=int, default=10, help='Early stopping patience')
+    parser.add_argument('--progressive_train', type=bool, default=False, help='Progressive training')
     
     # Performance parameters
     parser.add_argument('--gpu', type=int, default=0, help='GPU ID to use (-1 for CPU)')
@@ -301,7 +302,15 @@ def train_model(
     start_time = time.time()
     
     try:
-        model = train_regime_mamba(model, train_loader, valid_loader, config, save_path=save_path)
+        if config.progressive_train:
+            # Progressive training
+            for i in range(1,3):
+                logger.info(f"Progressive training step {i}")
+                model = train_regime_mamba(model, train_loader, valid_loader, config, save_path=save_path, progressive_train=i)
+        else:
+            # Regular training
+            logger.info("Training model")
+            model = train_regime_mamba(model, train_loader, valid_loader, config, save_path=save_path)
         
         elapsed_time = time.time() - start_time
         logger.info(f"Training completed in {elapsed_time/60:.1f} minutes")

@@ -49,7 +49,7 @@ class TimeSeriesMamba(nn.Module):
             
             if self.config.vae:
                 self.start_point = int(np.log2(config.d_model)) - 1 # d_state가 128이면 6, 64이면 5
-                self.latent_dim = 2**(self.start_point-2)
+                self.latent_dim = 2**(self.start_point-1)
                 self.fc_mu = nn.Linear(config.d_model, self.latent_dim)
                 self.fc_var = nn.Linear(config.d_model, self.latent_dim)
                 self.decoder = nn.Sequential(

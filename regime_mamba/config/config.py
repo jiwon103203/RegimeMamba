@@ -30,6 +30,7 @@ class RegimeMambaConfig:
         self.direct_train = False
         self.vae = False
         self.use_onecycle = True
+        self.progressive_train = 0
 
         # 클러스터링 관련 설정
         self.n_clusters = 2  # Bull과 Bear 두 개의 레짐으로 클러스터링
