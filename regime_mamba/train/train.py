@@ -49,18 +49,16 @@ def train_with_early_stopping(model, train_loader, valid_loader, config, use_one
     no_improve_count = 0
     if progressive_train == 1:
         # 모델의 fc_mu, fc_var, decoder 파라미터를 고정
+        # 고정할 파라미터를 집합으로 정의
+        frozen_params = {model.fc_mu.weight, model.fc_var.weight, model.decoder[0].weight, model.decoder[1].weight, model.decoder[3].weight, model.decoder[4].weight, model.decoder[6].weight, model.decoder[7].weight}
+
         for param in model.parameters():
-            if param is model.fc_mu.weight or param is model.fc_var.weight or param is model.decoder.weight:
-                param.requires_grad = False # 파라미터 고정
-            else:
-                param.requires_grad = True # 파라미터 학습 가능
+            param.requires_grad = param not in frozen_params
+
     elif progressive_train == 2:
-        # 모델의 fc_mu, fc_var, decoder 파라미터만 학습
+        active_params = {model.fc_mu.weight, model.fc_var.weight, model.decoder[0].weight, model.decoder[1].weight, model.decoder[3].weight, model.decoder[4].weight, model.decoder[6].weight, model.decoder[7].weight}
         for param in model.parameters():
-            if param is model.fc_mu.weight or param is model.fc_var.weight or param is model.decoder.weight:
-                param.requires_grad = True
-            else:
-                param.requires_grad = False
+            param.requires_grad = param in active_params
     
     for epoch in range(config.max_epochs):
         # 훈련 단계
@@ -279,21 +277,17 @@ def train_regime_mamba(model, train_loader, valid_loader, config, save_path=None
     model.to(device)
 
     if progressive_train == 1:
-        print("점진적 훈련 1단계: fc_mu, fc_var, decoder 파라미터 고정")
         # 모델의 fc_mu, fc_var, decoder 파라미터를 고정
+        # 고정할 파라미터를 집합으로 정의
+        frozen_params = {model.fc_mu.weight, model.fc_var.weight, model.decoder[0].weight, model.decoder[1].weight, model.decoder[3].weight, model.decoder[4].weight, model.decoder[6].weight, model.decoder[7].weight}
+
         for param in model.parameters():
-            if param is model.fc_mu.weight or param is model.fc_var.weight or param is model.decoder.weight:
-                param.requires_grad = False
-            else:
-                param.requires_grad = True
+            param.requires_grad = param not in frozen_params
+
     elif progressive_train == 2:
-        print("점진적 훈련 2단계: fc_mu, fc_var, decoder 이외 파라미터 고정")
-        # 모델의 fc_mu, fc_var, decoder 파라미터만 학습
+        active_params = {model.fc_mu.weight, model.fc_var.weight, model.decoder[0].weight, model.decoder[1].weight, model.decoder[3].weight, model.decoder[4].weight, model.decoder[6].weight, model.decoder[7].weight}
         for param in model.parameters():
-            if param is model.fc_mu.weight or param is model.fc_var.weight or param is model.decoder.weight:
-                param.requires_grad = True
-            else:
-                param.requires_grad = False
+            param.requires_grad = param in active_params
 
     best_val_loss = float('inf')
 
