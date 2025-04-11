@@ -7,6 +7,7 @@ learning_rate: 0.00005 # 1e-5
 batch_size: 2048
 seq_len: 10
 input_dim: 5
+vae: True
 
 # 데이터 관련 파라미터
 data_path: regime_mamba/data/data_full_final.csv
@@ -17,6 +18,9 @@ target_horizon: 10
 # 학습 관련 파라미터
 max_epochs: 50
 patience: 10
+use_onecycle: False
+progressive_train: True
+direct_train: True
 
 #클러스터링 관련 설정
 n_clusters: 2
