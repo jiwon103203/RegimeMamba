@@ -31,7 +31,7 @@ def evaluate_regime_strategy(predictions, returns, dates=None, transaction_cost=
     # Date 순서로 정렬
     df.sort_values('Date').reset_index(drop=True, inplace=True)
 
-    if config is not None and config.direct_train: # j 0 (bear), 1(No Move) ,2 (bull)
+    if config is not None and config.direct_train and config.vae==False: # j 0 (bear), 1(No Move) ,2 (bull)
         current = 0  # 0: 매도 상태, 1: 매수 상태
         for i, j in enumerate(df['Regime']):
             if j == 0:
@@ -46,16 +46,17 @@ def evaluate_regime_strategy(predictions, returns, dates=None, transaction_cost=
                 else:
                     df.loc[i, 'Regime_Change'] = 0
 
-    elif config is None or config.n_clusters == 2:
-        # 레짐 변화 감지 (거래 발생)
-        df['Regime_Change'] = df['Regime'].diff().fillna(0) != 0
-        # 첫 번째 진입도 거래로 간주
-        df.loc[0, 'Regime_Change'] = df.loc[0, 'Regime'] == 1
     elif config.n_clusters == 3:
         # 3개의 레짐인 경우, Bull, Neutral이면 매수 포지션 유지 Bear는 매도
         df['Regime_Change'] = (df['Regime'] == 0) & (df['Regime'].shift(1) == 1) | (df['Regime'] == 1) & (df['Regime'].shift(1) == 0) | (df['Regime'] == 2) & (df['Regime'].shift(1) == 0) | (df['Regime'] == 0) & (df['Regime'].shift(1) == 2)
         # 첫 번째 진입도 거래로 간주
         df.loc[0, 'Regime_Change'] = df.loc[0, 'Regime'] == 1 or df.loc[0, 'Regime'] == 2
+    
+    else:
+        # 레짐 변화 감지 (거래 발생)
+        df['Regime_Change'] = df['Regime'].diff().fillna(0) != 0
+        # 첫 번째 진입도 거래로 간주
+        df.loc[0, 'Regime_Change'] = df.loc[0, 'Regime'] == 1
 
 
     # 거래 비용 계산 (레짐이 변할 때마다 적용)

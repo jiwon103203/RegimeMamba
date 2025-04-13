@@ -287,6 +287,7 @@ def get_smoothing_methods() -> List[Tuple[str, Dict[str, Any]]]:
         ('min_holding', {'days': 20}),
         ('min_holding', {'days': 30}),
         ('min_holding', {'days': 60}),
+
     ]
 
 
