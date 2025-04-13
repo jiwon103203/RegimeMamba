@@ -60,7 +60,10 @@ def evaluate_regime_strategy(predictions, returns, dates=None, transaction_cost=
 
 
     # 거래 비용 계산 (레짐이 변할 때마다 적용)
-    df['Transaction_Cost'] = np.where(df['Regime_Change'], transaction_cost * 100, 0)
+    if config is not None and config.input_dim == 4:
+        df['Transaction_Cost'] = np.where(df['Regime_Change'], transaction_cost * 100, 0)
+    else:
+        df['Transaction_Cost'] = np.where(df['Regime_Change'], transaction_cost, 0)
 
     # 다음날 반영 방식으로 수정
     df['Strategy_Regime'] = df['Regime'].shift(1).fillna(0)  # 첫날은 포지션 없음
