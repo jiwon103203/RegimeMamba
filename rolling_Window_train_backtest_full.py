@@ -277,15 +277,16 @@ def get_smoothing_methods() -> List[Tuple[str, Dict[str, Any]]]:
     """
     return [
         ('none', {}),
+        ('ma', {'window': 3}),
         ('ma', {'window': 5}),
-        ('ma', {'window': 10}),
-        ('ma', {'window': 20}),
-        ('exp', {'window': 10}),
+        ('exp', {'window': 5}),
+        ('confirmation', {'days': 1}),
+        ('confirmation', {'days': 2}),
         ('confirmation', {'days': 3}),
-        ('confirmation', {'days': 5}),
         ('min_holding', {'days': 10}),
         ('min_holding', {'days': 20}),
-        ('min_holding', {'days': 30})
+        ('min_holding', {'days': 30}),
+        ('min_holding', {'days': 60}),
     ]
 
 
