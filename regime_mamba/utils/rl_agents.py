@@ -93,7 +93,7 @@ class PPOAgent:
                     log_prob = action_dist.log_prob(action)
                 
                 if step == 0:
-                    print(f"Action mean: {action_mean.item()}, Action: {action.item()}, Value: {value.item()}")
+                    print(f"Action mean: {action_mean}, Action: {action}, Value: {value}")
                 
                 # Take step in environment
                 next_state, reward, done, info = self.env.step(action.cpu().numpy())

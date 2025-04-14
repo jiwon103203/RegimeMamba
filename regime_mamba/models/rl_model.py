@@ -110,6 +110,7 @@ class ActorCritic(nn.Module):
             _, hidden = self.feature_extractor(features, return_hidden=True)
         
         if position is not None:
+            hidden = hidden.view(hidden.size(0), -1)
             # Position 정보를 원-핫 인코딩으로 변환
             position_embedded = self.position_embedding(F.one_hot(position, self.n_positions))
             
