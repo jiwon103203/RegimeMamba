@@ -142,8 +142,6 @@ def train_with_early_stopping(model, train_loader, valid_loader, config, use_one
                     loss, vae_loss, kl_loss, pred_loss = model.vae_loss_function(recon, h, mu, log_var, pred, y)
                     if progressive_train == 1:
                         loss = pred_loss
-                        print(loss.item())
-                        print(pred_loss.item())
                     elif progressive_train == 2:
                         loss = vae_loss + kl_loss
                 else:

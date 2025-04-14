@@ -9,11 +9,11 @@ import numpy as np
 from datetime import datetime
 from dateutil.relativedelta import relativedelta
 
-from ..models.rl_model import ActorCritic
+#from ..models.rl_model import ActorCritic
 from ..utils.rl_environments import FinancialTradingEnv
 from ..utils.rl_agents import PPOAgent
 
-def train_rl_agent_for_window(config, train_start, train_end, valid_start, valid_end, data):
+def train_rl_agent_for_window(config, model, train_start, train_end, valid_start, valid_end, data):
     """
     Train RL agent for a specific window.
     
@@ -40,7 +40,7 @@ def train_rl_agent_for_window(config, train_start, train_end, valid_start, valid
         return None, None, None
     
     # Determine feature columns
-    feature_cols = ['returns', 'dd_10', 'sortino_20', 'sortino_60']
+    feature_cols = ["Open", "Close", "High", "Low", "treasury_rate"]
     
     # Check if all columns exist in the dataset
     for col in feature_cols:
@@ -50,8 +50,11 @@ def train_rl_agent_for_window(config, train_start, train_end, valid_start, valid
     
     # Prepare features and returns
     features = train_data[feature_cols].values
-    returns = train_data['returns'].values / 100  # Convert to decimal
-    
+    if config.input_dim == 4:
+        returns = train_data['returns'].values / 100  # Convert to decimal
+    else:
+        returns = train_data['returns'].values
+
     # Print feature information for debugging
     print(f"Features shape: {features.shape}")
     print(f"Feature stats - Mean: {np.mean(features, axis=0)}, Std: {np.std(features, axis=0)}")
@@ -78,19 +81,16 @@ def train_rl_agent_for_window(config, train_start, train_end, valid_start, valid
         window_size=config.window_size
     )
     
-    # Calculate actual input dimension (features + one-hot position)
-    input_dim = features.shape[1] + 3  # +3 for one-hot position encoding
-    
-    print(f"Creating model with input_dim={input_dim}, d_model={config.d_model}")
+    print(f"Creating model with input_dim={config.input_dim}, d_model={config.d_model}")
     
     # Create model
-    model = ActorCritic(
-        input_dim=input_dim,
-        d_model=config.d_model,
-        d_state=config.d_state,
-        n_layers=config.n_layers,
-        dropout=config.dropout
-    ).to(config.device)
+    # model = ActorCritic(
+    #     input_dim=input_dim,
+    #     d_model=config.d_model,
+    #     d_state=config.d_state,
+    #     n_layers=config.n_layers,
+    #     dropout=config.dropout
+    # ).to(config.device)
     
     # Verify model architecture
     print(f"Model structure: {model}")

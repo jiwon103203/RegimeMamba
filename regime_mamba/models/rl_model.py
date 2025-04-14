@@ -15,84 +15,108 @@ class ActorCritic(nn.Module):
     Uses Mamba model as the feature extractor for time series data.
     """
     
-    def __init__(self, input_dim, d_model=128, d_state=128, n_layers=4, dropout=0.1):
+    def __init__(self, config, n_positions = 3):
         """
         Initialize the Actor-Critic network.
         
         Args:
-            input_dim (int): Dimension of input features
-            d_model (int): Model dimension
-            d_state (int): State dimension for Mamba
-            n_layers (int): Number of Mamba layers
-            dropout (float): Dropout rate
+            config (dict, optional): Configuration dictionary for additional parameters
         """
         super(ActorCritic, self).__init__()
         
         # Feature extractor (Mamba)
         self.feature_extractor = TimeSeriesMamba(
-            input_dim=input_dim,
-            d_model=d_model,
-            d_state=d_state,
-            n_layers=n_layers,
-            dropout=dropout
+            input_dim=config.input_dim,
+            d_model=config.d_model,
+            d_state=config.d_state,
+            n_layers=config.n_layers,
+            dropout=config.dropout,
+            config=config
         )
+
+        self.n_positions = n_positions
+        self.position_embedding = nn.Embedding(n_positions, config.d_model//8)  if config.vae else nn.Embedding(n_positions, config.d_model) # 3 positions: -1, 0, 1
+
+
+        if config is not None and config.model_path is not None:
+            # Load pre-trained Mamba model
+            self.feature_extractor.load_state_dict(torch.load(config.model_path, map_location=config.device))
         
         # Actor network (policy)
-        self.actor = nn.Sequential(
-            nn.Linear(d_model, 64),
-            nn.ReLU(),
-            nn.Linear(64, 32),
-            nn.ReLU(),
-            nn.Linear(32, 1),
-            nn.Tanh()  # Output between -1 and 1
-        )
-        
-        # Critic network (value function)
-        self.critic = nn.Sequential(
-            nn.Linear(d_model, 64),
-            nn.ReLU(),
-            nn.Linear(64, 32),
-            nn.ReLU(),
-            nn.Linear(32, 1)
-        )
+        if config.vae:
+            # If using VAE, adjust input dimension
+            self.actor = nn.Sequential(              # 256//16 = 16 2^8=256, 2^4=16
+                nn.Linear(config.d_model//16, config.d_model//32),
+                nn.ReLU(),
+                nn.Linear(config.d_model//32, config.d_model//64),
+                nn.ReLU(),
+                nn.Linear(config.d_model//64, 1),
+                nn.Tanh()  # Output between -1 and 1
+            )
+
+            self.critic = nn.Sequential(
+                nn.Linear(config.d_model//16, config.d_model//32),
+                nn.ReLU(),
+                nn.Linear(config.d_model//32, config.d_model//64),
+                nn.ReLU(),
+                nn.Linear(config.d_model//64, 1)
+            )
+
+        else:
+            self.actor = nn.Sequential(
+                nn.Linear(config.d_model, 64),
+                nn.ReLU(),
+                nn.Linear(64, 16),
+                nn.ReLU(),
+                nn.Linear(16, 4),
+                nn.ReLU(),
+                nn.Linear(4, 1),
+                nn.Tanh()  # Output between -1 and 1
+            )
+            
+            # Critic network (value function)
+            self.critic = nn.Sequential(
+                nn.Linear(config.d_model, 64),
+                nn.ReLU(),
+                nn.Linear(64, 16),
+                nn.ReLU(),
+                nn.Linear(16, 4),
+                nn.ReLU(),
+                nn.Linear(4, 1)
+            )
         
         # Store dimensions for debugging
-        self.d_model = d_model
-        self.input_dim = input_dim
+        self.d_model = config.d_model
+        self.input_dim = config.input_dim
         
-    def forward(self, features, position=None):
-        """
-        Forward pass through the network.
+def forward(self, features, position=None):
+    """
+    Forward pass through the Actor-Critic network.
+
+    Args:
+        features (torch.Tensor): Input features from the environment.
+        position (torch.Tensor, optional): Position information for the agent.
+    
+    Returns:
+        action (torch.Tensor): Predicted action.
+        value (torch.Tensor): Estimated state value.
+    """
+    
+    # Mamba는 원래 입력 차원으로만 처리
+    _, hidden = self.feature_extractor(features, return_hidden=True)
+    
+    if position is not None:
+        # Position 정보를 원-핫 인코딩으로 변환
+        position_embedded = F.one_hot(position, self.n_positions).float()
         
-        Args:
-            features (torch.Tensor): Input features
-            position (torch.Tensor, optional): Current position
-            
-        Returns:
-            tuple: (action, value)
-        """
-        # Extract features with Mamba
-        if position is not None:
-            # Add position information to features
-            position_embedded = F.one_hot(position, 3).float()
-            position_embedded = position_embedded.unsqueeze(1).repeat(1, features.shape[1], 1)
-            # Concatenate features and position
-            combined_features = torch.cat([features, position_embedded], dim=-1)
-            _, hidden = self.feature_extractor(combined_features, return_hidden = True)
-        else:
-            _, hidden = self.feature_extractor(features, return_hidden = True)
+        # hidden과 position_embedded 결합
+        combined_hidden = torch.cat([hidden, position_embedded], dim=-1)
         
-        
-        # Ensure correct dimensions - reshape if necessary
-        if hidden.dim() == 1:
-            hidden = hidden.unsqueeze(0)
-        
-        # Check if hidden state has the right dimension
-        if hidden.shape[-1] != self.d_model:
-            raise ValueError(f"Hidden state dimension {hidden.shape[-1]} doesn't match expected d_model {self.d_model}")
-        
-        # Get action and value
+        # Actor와 Critic 네트워크도 입력 차원 변경 필요
+        action = self.actor_with_position(combined_hidden)
+        value = self.critic_with_position(combined_hidden)
+    else:
         action = self.actor(hidden)
         value = self.critic(hidden)
-        
-        return action, value
+    
+    return action, value

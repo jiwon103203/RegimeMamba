@@ -13,7 +13,9 @@ import copy
 from ..utils.utils import set_seed
 from ..data.dataset_full import RegimeMambaDataset, create_dataloaders, DateRangeRegimeMambaDataset
 from ..models.mamba_model import TimeSeriesMamba, create_model_from_config
+from ..models.rl_model import ActorCritic
 from ..train.train import train_with_early_stopping
+from ..train.rl_train import train_rl_agent_for_window
 from .clustering import identify_bull_bear_regimes, predict_regimes, extract_hidden_states
 from .strategy import evaluate_regime_strategy, visualize_all_periods_performance
 from .smoothing import apply_regime_smoothing, apply_minimum_holding_period
@@ -152,6 +154,22 @@ def train_model_for_window(config, train_start, train_end, valid_start, valid_en
         )
     
     print(f"학습 완료. 최적 검증 손실: {best_val_loss:.6f} (에폭 {best_epoch+1})")
+    
+    if config.rl_model:
+        rl_model=ActorCritic(config)
+        rl_model.feature_extractor = model
+        rl_model.to(config.device)
+        
+        # valid_start~valid end를 8:2 비율로 test, valid로 나누는 기준 만들기 (ex. valid_start = 2020-01-01, valid_end = 2020-12-31 -> test_start = 2020-10-01, test_end = 2020-12-31)
+        total_valid_days = (datetime.strptime(valid_end, "%Y-%m-%d") - datetime.strptime(valid_start, "%Y-%m-%d")).days
+        test_days = int(total_valid_days * 0.2)
+        rl_train_start = valid_start
+        rl_train_end = (datetime.strptime(valid_end, "%Y-%m-%d") - relativedelta(days=test_days)).strftime("%Y-%m-%d")
+        rl_test_start = (datetime.strptime(valid_end, "%Y-%m-%d") - relativedelta(days=test_days)).strftime("%Y-%m-%d")
+        rl_test_end = valid_end
+        agent, model, history = train_rl_agent_for_window(config, rl_model, rl_train_start, rl_train_end, rl_test_start, rl_test_end, data)
+        
+        return agent, model, history
     
     return model, best_val_loss
 

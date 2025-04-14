@@ -140,7 +140,8 @@ def parse_args():
     parser.add_argument('--seed', type=int, default=42, help='Random seed')
     parser.add_argument('--use_onecycle', type=bool, default=True, help='Use one-cycle learning rate policy')
     parser.add_argument('--progressive_train', type=bool, default=False, help='Progressive training flag')
-    #parser.add_argument('--jump_model', type=bool, default=False, help='Jump model flag')
+    parser.add_argument('--jump_model', type=bool, default=False, help='Jump model flag')
+    parser.add_argument('--rl_model', type=bool, default=False, help='Reinforcement learning model flag')
     
     # Performance-related settings
     parser.add_argument('--max_workers', type=int, help='Maximum number of worker processes')
@@ -996,29 +997,45 @@ def run_rolling_window_backtest(
         try:
             # 1. Train model
             logger.info("Training model...")
-            model, val_loss = train_model_for_window(
-                config,
-                window_info['train_period']['start'],
-                window_info['train_period']['end'],
-                window_info['valid_period']['start'],
-                window_info['valid_period']['end'],
-                data
-            )
-            
+            if config.rl_model:
+                agent, model, history = train_model_for_window(
+                    config,
+                    window_info['train_period']['start'],
+                    window_info['train_period']['end'],
+                    window_info['valid_period']['start'],
+                    window_info['valid_period']['end'],
+                    data
+                )
+            else:
+                model, val_loss = train_model_for_window(
+                    config,
+                    window_info['train_period']['start'],
+                    window_info['train_period']['end'],
+                    window_info['valid_period']['start'],
+                    window_info['valid_period']['end'],
+                    data
+                )
+
+
             # Skip to next window if training fails
             if model is None:
                 logger.warning("Model training failed, skipping window")
                 continue
             
             # 2. Identify regimes
-            logger.info("Identifying regimes...")
-            kmeans, bull_regime = identify_regimes_for_window(
-                config,
-                model,
-                data,
-                window_info['clustering_period']['start'],
-                window_info['clustering_period']['end']
-            )
+            if config.rl_model:
+                """
+                RL 모델은 클러스터링이 아니라 Agent가 판단함
+                """
+            else:
+                logger.info("Identifying regimes...")
+                kmeans, bull_regime = identify_regimes_for_window(
+                    config,
+                    model,
+                    data,
+                    window_info['clustering_period']['start'],
+                    window_info['clustering_period']['end']
+                )
             
             # Skip to next window if regime identification fails
             if kmeans is None or bull_regime is None:
@@ -1026,17 +1043,27 @@ def run_rolling_window_backtest(
                 continue
             
             # 3. Evaluate smoothing methods
-            logger.info("Evaluating smoothing methods...")
-            methods_results = evaluate_smoothing_methods(
-                model,
-                data,
-                kmeans,
-                bull_regime,
-                config,
-                window_info['forward_period'],
-                window_dir,
-                config.max_workers
-            )
+            if config.rl_model:
+                """
+                RL 모델 벡테스팅 결과
+                형식 : methods_results
+                          - window
+                          - returns
+                          - trades
+                          - sharpes
+                """
+            else:
+                logger.info("Evaluating smoothing methods...")
+                methods_results = evaluate_smoothing_methods(
+                    model,
+                    data,
+                    kmeans,
+                    bull_regime,
+                    config,
+                    window_info['forward_period'],
+                    window_dir,
+                    config.max_workers
+                )
             
             # 4. Save results
             if methods_results:

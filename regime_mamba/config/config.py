@@ -36,6 +36,7 @@ class RegimeMambaConfig:
         self.n_clusters = 2  # Bull과 Bear 두 개의 레짐으로 클러스터링
         self.cluster_method = 'cosine_kmeans'
         self.jump_model = False
+        self.rl_model = False
 
         # 예측 관련 설정
         self.predict = False

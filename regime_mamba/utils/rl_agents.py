@@ -17,7 +17,7 @@ class PPOAgent:
     """
     
     def __init__(self, env, model, device, lr=3e-4, gamma=0.99, epsilon=0.2, 
-                 value_coef=0.5, entropy_coef=0.01):
+                 value_coef=0.5, entropy_coef=0.01, freeze_feature_extractor=True):
         """
         Initialize the PPO agent.
         
@@ -40,6 +40,12 @@ class PPOAgent:
         self.epsilon = epsilon
         self.value_coef = value_coef
         self.entropy_coef = entropy_coef
+
+        # Freeze feature_extractor
+        if freeze_feature_extractor:
+            model.feature_extractor.eval()
+            for param in self.model.feature_extractor.parameters():
+                param.requires_grad = False
         
     def collect_trajectories(self, n_steps=2048):
         """

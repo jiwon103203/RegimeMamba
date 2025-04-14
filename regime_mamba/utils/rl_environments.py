@@ -12,10 +12,12 @@ class FinancialTradingEnv(gym.Env):
     
     This environment simulates a trading scenario where an agent can take long (1),
     neutral (0), or short (-1) positions on a financial asset.
+    Or it can take long(1) or neutral(0) positions on a financial asset.
+    The agent receives a reward based on the Sharpe ratio of its strategy returns.
     """
     
     def __init__(self, returns, features, dates=None, seq_len=128, transaction_cost=0.001, reward_type='sharpe', 
-                 position_penalty=0.01, window_size=252):
+                 position_penalty=0.01, window_size=252, n_positions=3):
         """
         Initialize the environment.
         
@@ -39,16 +41,20 @@ class FinancialTradingEnv(gym.Env):
         self.reward_type = reward_type
         self.position_penalty = position_penalty
         self.window_size = window_size
+        self.n_positions = n_positions
         
         # State space: Sequence of feature vectors + current position
         self.observation_space = spaces.Dict({
             'features': spaces.Box(low=-np.inf, high=np.inf, shape=(seq_len, features.shape[1])),
-            'position': spaces.Discrete(3)  # -1 (short), 0 (neutral), 1 (long)
+            'position': spaces.Discrete(n_positions)  # -1 (short), 0 (neutral), 1 (long) or 0 (neutral), 1 (long)
         })
         
         # Action space: Continuous value between -1 and 1
         # -1: fully short, 0: neutral, 1: fully long
-        self.action_space = spaces.Box(low=-1, high=1, shape=(1,), dtype=np.float32)
+        if n_positions == 3:
+            self.action_space = spaces.Box(low=-1, high=1, shape=(1,), dtype=np.float32)
+        else:
+            self.action_space = spaces.Box(low=0, high=1, shape=(1,), dtype=np.float32)
         
         # Initialize state variables
         self.current_step = seq_len
@@ -143,21 +149,25 @@ class FinancialTradingEnv(gym.Env):
         
         return {
             'features': feature_seq,
-            'position': self.current_position + 1  # Map [-1, 0, 1] to [0, 1, 2]
+            'position': self.current_position + 1 if self.n_positions == 3 else self.current_position # Map [-1, 0, 1] to [0, 1, 2] or [0, 1]
         }
     
     def _action_to_position(self, action):
         """Convert continuous action to discrete position."""
         action_value = action[0]
         
-        # Discretize the action space
-        if action_value < -0.33:
-            return -1  # Short
-        elif action_value > 0.33:
-            return 1   # Long
+        if self.n_positions == 3:
+            # Discretize the action space
+            if action_value < -0.33:
+                return -1  # Short
+            elif action_value > 0.33:
+                return 1   # Long
+            else:
+                return 0   # Neutral
         else:
-            return 0   # Neutral
-    
+            # Map action to [0, 1] for long and neutral
+            return int(action_value > 0.5)
+            
     def _calculate_sharpe_ratio(self):
         """Calculate Sharpe ratio based on recent returns."""
         recent_returns = self.strategy_returns[-self.window_size:]
