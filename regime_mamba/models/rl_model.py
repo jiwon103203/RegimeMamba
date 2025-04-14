@@ -111,14 +111,14 @@ class ActorCritic(nn.Module):
         
         if position is not None:
             # Position 정보를 원-핫 인코딩으로 변환
-            position_embedded = F.one_hot(position, self.n_positions).float()
+            position_embedded = self.position_embedding(F.one_hot(position, self.n_positions).float())
             
-            # hidden과 position_embedded 결합
-            combined_hidden = torch.cat([hidden, position_embedded], dim=-1)
+            # Mamba의 hidden state와 position embedding을 결합
+            combined_hidden = hidden + position_embedded
             
             # Actor와 Critic 네트워크도 입력 차원 변경 필요
-            action = self.actor_with_position(combined_hidden)
-            value = self.critic_with_position(combined_hidden)
+            action = self.actor(combined_hidden)
+            value = self.critic(combined_hidden)
         else:
             action = self.actor(hidden)
             value = self.critic(hidden)
