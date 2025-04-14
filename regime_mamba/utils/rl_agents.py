@@ -86,6 +86,7 @@ class PPOAgent:
                 # Get action and value
                 with torch.no_grad():
                     action_mean, value = self.model(features, position)
+                    print(action_mean.shape, value.shape)
                     # Add small noise for exploration
                     action_std = torch.ones_like(action_mean) * 0.1
                     action_dist = Normal(action_mean, action_std)
