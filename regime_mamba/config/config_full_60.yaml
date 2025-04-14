@@ -10,7 +10,7 @@ input_dim: 5
 vae: True
 
 # 데이터 관련 파라미터
-data_path: regime_mamba/data/data_full_final.csv
+data_path: regime_mamba/data/data_full_close.csv
 preprocessed: False
 target_type: average
 target_horizon: 60
@@ -18,7 +18,7 @@ target_horizon: 60
 # 학습 관련 파라미터
 max_epochs: 50
 patience: 10
-use_onecycle: True
+use_onecycle: False
 progressive_train: True
 direct_train: True
 
