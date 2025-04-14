@@ -36,7 +36,7 @@ class ActorCritic(nn.Module):
 
         self.vae = config.vae
         self.n_positions = n_positions
-        self.position_embedding = nn.Embedding(n_positions, config.d_model//8)  if config.vae else nn.Embedding(n_positions, config.d_model) # 3 positions: -1, 0, 1
+        self.position_embedding = nn.Embedding(n_positions, config.d_model//16)  if config.vae else nn.Embedding(n_positions, config.d_model) # 3 positions: -1, 0, 1
 
 
         if config is not None and config.model_path is not None:
@@ -111,7 +111,7 @@ class ActorCritic(nn.Module):
         
         if position is not None:
             # Position 정보를 원-핫 인코딩으로 변환
-            position_embedded = self.position_embedding(F.one_hot(position, self.n_positions).float())
+            position_embedded = self.position_embedding(F.one_hot(position, self.n_positions))
             
             # Mamba의 hidden state와 position embedding을 결합
             combined_hidden = hidden + position_embedded
