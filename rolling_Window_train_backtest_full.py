@@ -1046,11 +1046,11 @@ def run_rolling_window_backtest(
             if config.rl_model:
                 """
                 RL 모델 벡테스팅 결과
-                형식 : methods_results
-                          - window
-                          - returns
-                          - trades
-                          - sharpes
+                형식 : methods_results {method_id : {results}}
+                                                    - cum_return
+                                                    - n_trades
+                                                    - sharpe
+                                                    - performance
                 """
             else:
                 logger.info("Evaluating smoothing methods...")
