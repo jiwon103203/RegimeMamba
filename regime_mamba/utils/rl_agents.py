@@ -85,8 +85,8 @@ class PPOAgent:
                 
                 # Get action and value
                 with torch.no_grad():
+                    _, _, _, _, hidden , _=self.model.feature_extractor(features, return_hidden=True)
                     action_mean, value = self.model(features, position)
-                    print(action_mean.shape, value.shape)
                     # Add small noise for exploration
                     action_std = torch.ones_like(action_mean) * 0.1
                     action_dist = Normal(action_mean, action_std)
@@ -170,7 +170,7 @@ class PPOAgent:
     
     def update(self, trajectory, n_epochs=10, batch_size=64):
         """
-        Update the model using PPO.
+        Update the model using PPO, with explicit tensor dimension management.
         
         Args:
             trajectory (dict): Collected trajectory data
@@ -187,7 +187,7 @@ class PPOAgent:
         returns = torch.FloatTensor(trajectory['returns']).to(self.device).unsqueeze(1)
         
         # Calculate advantage
-        values = torch.FloatTensor(trajectory['values']).to(self.device)
+        values = torch.FloatTensor(trajectory['values']).to(self.device).unsqueeze(1)
         advantages = returns - values
         
         # PPO update
@@ -216,12 +216,17 @@ class PPOAgent:
                 batch_actions = actions[batch_indices]
                 batch_old_log_probs = old_log_probs[batch_indices]
                 batch_returns = returns[batch_indices]
-                batch_advantages = advantages[batch_indices]
+                batch_advantages = advantages[batch_indices]  # Correctly indexed now
                 
                 try:
                     # Forward pass
                     features_batch = torch.FloatTensor(np.stack([s['features'] for s in batch_states])).to(self.device)
                     position_batch = torch.LongTensor([s['position'] for s in batch_states]).to(self.device)
+                    
+                    # Debug shapes before model forward pass
+                    if epoch == 0 and start_idx == 0:
+                        print(f"Batch shapes - features: {features_batch.shape}, position: {position_batch.shape}")
+                        print(f"Batch shapes - actions: {batch_actions.shape}, advantages: {batch_advantages.shape}")
                     
                     action_mean, value = self.model(features_batch, position_batch)
                     action_std = torch.ones_like(action_mean) * 0.1
@@ -229,8 +234,42 @@ class PPOAgent:
                     log_prob = action_dist.log_prob(batch_actions)
                     entropy = action_dist.entropy().mean()
                     
-                    # Calculate losses
+                    # Ensure log_prob and batch_old_log_probs have matching dimensions
+                    if log_prob.dim() != batch_old_log_probs.dim() or log_prob.shape != batch_old_log_probs.shape:
+                        if epoch == 0 and start_idx == 0:
+                            print(f"Dimension mismatch: log_prob {log_prob.shape}, old_log_probs {batch_old_log_probs.shape}")
+                        
+                        if log_prob.dim() > batch_old_log_probs.dim():
+                            batch_old_log_probs = batch_old_log_probs.unsqueeze(-1).expand_as(log_prob)
+                        elif log_prob.dim() < batch_old_log_probs.dim():
+                            log_prob = log_prob.unsqueeze(-1).expand_as(batch_old_log_probs)
+                        else:
+                            # Same number of dimensions but different shape
+                            if log_prob.shape[0] == batch_old_log_probs.shape[0]:
+                                # Try to broadcast the tensors
+                                log_prob = log_prob.view(log_prob.shape[0], -1)
+                                batch_old_log_probs = batch_old_log_probs.view(batch_old_log_probs.shape[0], -1)
+                    
+                    # Calculate ratio
                     ratio = torch.exp(log_prob - batch_old_log_probs)
+                    
+                    # Ensure ratio and batch_advantages have matching dimensions
+                    if ratio.dim() != batch_advantages.dim() or ratio.shape != batch_advantages.shape:
+                        if epoch == 0 and start_idx == 0:
+                            print(f"Advantage shape mismatch: ratio {ratio.shape}, advantages {batch_advantages.shape}")
+                        
+                        if batch_advantages.dim() < ratio.dim():
+                            batch_advantages = batch_advantages.unsqueeze(-1).expand_as(ratio)
+                        elif ratio.dim() < batch_advantages.dim():
+                            ratio = ratio.unsqueeze(-1).expand_as(batch_advantages)
+                        else:
+                            # Same number of dimensions but different shape
+                            if ratio.shape[0] == batch_advantages.shape[0]:
+                                # Reshape tensors to ensure compatibility
+                                ratio = ratio.view(ratio.shape[0], -1)
+                                batch_advantages = batch_advantages.view(batch_advantages.shape[0], -1)
+                    
+                    # Now we can safely compute the surrogate objectives
                     surr1 = ratio * batch_advantages
                     surr2 = torch.clamp(ratio, 1.0 - self.epsilon, 1.0 + self.epsilon) * batch_advantages
                     policy_loss = -torch.min(surr1, surr2).mean()
@@ -263,7 +302,7 @@ class PPOAgent:
             else:
                 metrics[k] = 0.0
             
-        return metrics
+        return metrics    
     
     def train(self, n_episodes, n_steps_per_episode=2048, n_epochs=10, batch_size=64):
         """

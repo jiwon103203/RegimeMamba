@@ -136,7 +136,6 @@ def train_rl_agent_for_window(config, model, train_start, train_end, valid_start
         if np.isnan(valid_returns).any() or np.isinf(valid_returns).any():
             print("Warning: Validation returns contain NaN or infinity values")
             valid_returns = np.nan_to_num(valid_returns, nan=0.0, posinf=0.0, neginf=0.0)
-        
         valid_env = FinancialTradingEnv(
             returns=valid_returns,
             features=valid_features,

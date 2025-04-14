@@ -112,10 +112,10 @@ class ActorCritic(nn.Module):
         if position is not None:
             hidden = hidden.view(hidden.size(0), -1)
             # Position 정보를 원-핫 인코딩으로 변환
-            position_embedded = self.position_embedding(F.one_hot(position, self.n_positions))
+            position_embedded = self.position_embedding(position)
             
             # Mamba의 hidden state와 position embedding을 결합
-            combined_hidden = hidden + position_embedded
+            combined_hidden = hidden + position_embedded # (1,16) + ()
             
             # Actor와 Critic 네트워크도 입력 차원 변경 필요
             action = self.actor(combined_hidden)
