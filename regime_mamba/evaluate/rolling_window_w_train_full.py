@@ -156,6 +156,7 @@ def train_model_for_window(config, train_start, train_end, valid_start, valid_en
     print(f"학습 완료. 최적 검증 손실: {best_val_loss:.6f} (에폭 {best_epoch+1})")
     
     if config.rl_model:
+        print("강화 학습 모델 생성")
         rl_model=ActorCritic(config)
         rl_model.feature_extractor = model
         rl_model.to(config.device)
@@ -167,8 +168,10 @@ def train_model_for_window(config, train_start, train_end, valid_start, valid_en
         rl_train_end = (datetime.strptime(valid_end, "%Y-%m-%d") - relativedelta(days=test_days)).strftime("%Y-%m-%d")
         rl_test_start = (datetime.strptime(valid_end, "%Y-%m-%d") - relativedelta(days=test_days)).strftime("%Y-%m-%d")
         rl_test_end = valid_end
+        print(f"강화 학습 기간: {rl_train_start} ~ {rl_train_end} (학습), {rl_test_start} ~ {rl_test_end} (검증)")
         agent, model, history = train_rl_agent_for_window(config, rl_model, rl_train_start, rl_train_end, rl_test_start, rl_test_end, data)
         
+
         return agent, model, history
     
     return model, best_val_loss

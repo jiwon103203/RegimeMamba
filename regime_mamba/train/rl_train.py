@@ -35,7 +35,7 @@ def train_rl_agent_for_window(config, model, train_start, train_end, valid_start
     train_data = data[(data['Date'] >= train_start) & (data['Date'] <= train_end)].copy()
     
     # Ensure we have enough data
-    if len(train_data) < config.seq_len * 10:
+    if len(train_data) < config.seq_len * 5:
         print(f"Warning: Not enough data for training. Got {len(train_data)} samples.")
         return None, None, None
     

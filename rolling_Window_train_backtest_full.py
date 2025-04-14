@@ -150,6 +150,8 @@ def parse_args():
     parser.add_argument('--position_penalty', type=float, default=0.01, help='Reinforcement learning position penalty')
     parser.add_argument('--reward_type', type=str, default='sharpe', help='Reinforcement learning reward type')
     parser.add_argument('--window_size', type=int, default=252, help='Window size for Sharpe calculation')
+    parser.add_argument('--n_episodes', type=int, default=100, help='Number of episodes for reinforcement learning')
+    parser.add_argument('--n_steps', type=int, default=2048, help='Number of steps for reinforcement learning')
 
     # Performance-related settings
     parser.add_argument('--max_workers', type=int, help='Maximum number of worker processes')
@@ -1068,7 +1070,7 @@ def run_rolling_window_backtest(
                 )
                 
                 # 레짐 식별 실패 시 다음 윈도우로 넘어감
-                if config.rl_model==False and kmeans is None or bull_regime is None:
+                if kmeans is None or bull_regime is None:
                     logger.warning("Regime identification failed, skipping window")
                     continue
             

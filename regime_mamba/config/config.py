@@ -45,6 +45,8 @@ class RegimeMambaConfig:
         self.position_penalty = 0.01
         self.reward_type = 'sharpe'
         self.window_size = 252
+        self.n_episodes = 100
+        self.steps_per_episode = 2048
 
         # 예측 관련 설정
         self.predict = False
