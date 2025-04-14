@@ -140,9 +140,17 @@ def parse_args():
     parser.add_argument('--seed', type=int, default=42, help='Random seed')
     parser.add_argument('--use_onecycle', type=bool, default=True, help='Use one-cycle learning rate policy')
     parser.add_argument('--progressive_train', type=bool, default=False, help='Progressive training flag')
+
+    # Extra Settings (jump model and rl_model)
     parser.add_argument('--jump_model', type=bool, default=False, help='Jump model flag')
     parser.add_argument('--rl_model', type=bool, default=False, help='Reinforcement learning model flag')
-    
+    parser.add_argument('--rl_learning_rate', type=float, default=1e-4, help='Reinforcement learning learning rate')
+    parser.add_argument('--rl_gamma', type=float, default=0.99, help='Reinforcement learning discount factor')
+    parser.add_argument('--freeze_feature_extractor', type=bool, default=True, help='Freeze feature extractor during training')
+    parser.add_argument('--position_penalty', type=float, default=0.01, help='Reinforcement learning position penalty')
+    parser.add_argument('--reward_type', type=str, default='sharpe', help='Reinforcement learning reward type')
+    parser.add_argument('--window_size', type=int, default=252, help='Window size for Sharpe calculation')
+
     # Performance-related settings
     parser.add_argument('--max_workers', type=int, help='Maximum number of worker processes')
     parser.add_argument('--gpu_id', type=int, default=0, help='GPU ID to use (-1 for CPU)')
@@ -998,6 +1006,11 @@ def run_rolling_window_backtest(
             # 1. Train model
             logger.info("Training model...")
             if config.rl_model:
+                # RL 모델 학습 - ActorCritic + PPO 에이전트 학습
+                from regime_mamba.train.rl_train import train_rl_agent_for_window
+                from regime_mamba.evaluate.rl_evaluate import evaluate_rl_agent
+                
+                logger.info("Training RL agent...")
                 agent, model, history = train_model_for_window(
                     config,
                     window_info['train_period']['start'],
@@ -1005,6 +1018,23 @@ def run_rolling_window_backtest(
                     window_info['valid_period']['start'],
                     window_info['valid_period']['end'],
                     data
+                )
+                
+                # Agent training 실패 시 다음 윈도우로 넘어감
+                if agent is None or model is None:
+                    logger.warning("RL agent training failed, skipping window")
+                    continue
+                
+                # 학습 이력 저장
+                history_path = os.path.join(window_dir, 'training_history.json')
+                with open(history_path, 'w') as f:
+                    json.dump(history, f, default=json_serializer, indent=4)
+                
+                # 학습 이력 시각화
+                from regime_mamba.utils.rl_visualize import visualize_training_history
+                visualize_training_history(
+                    history, 
+                    os.path.join(window_dir, 'training_history.png')
                 )
             else:
                 model, val_loss = train_model_for_window(
@@ -1015,18 +1045,18 @@ def run_rolling_window_backtest(
                     window_info['valid_period']['end'],
                     data
                 )
-
-
-            # Skip to next window if training fails
-            if model is None:
-                logger.warning("Model training failed, skipping window")
-                continue
+                
+                # 학습 실패 시 다음 윈도우로 넘어감
+                if model is None:
+                    logger.warning("Model training failed, skipping window")
+                    continue
             
             # 2. Identify regimes
             if config.rl_model:
-                """
-                RL 모델은 클러스터링이 아니라 Agent가 판단함
-                """
+                # RL 모델은 클러스터링 대신 에이전트가 직접 결정
+                logger.info("Skipping regime identification for RL model (agent makes decisions)")
+                # RL에서는 kmeans와 bull_regime이 필요 없음
+                kmeans, bull_regime = None, None
             else:
                 logger.info("Identifying regimes...")
                 kmeans, bull_regime = identify_regimes_for_window(
@@ -1036,22 +1066,59 @@ def run_rolling_window_backtest(
                     window_info['clustering_period']['start'],
                     window_info['clustering_period']['end']
                 )
-            
-            # Skip to next window if regime identification fails
-            if kmeans is None or bull_regime is None:
-                logger.warning("Regime identification failed, skipping window")
-                continue
+                
+                # 레짐 식별 실패 시 다음 윈도우로 넘어감
+                if config.rl_model==False and kmeans is None or bull_regime is None:
+                    logger.warning("Regime identification failed, skipping window")
+                    continue
             
             # 3. Evaluate smoothing methods
             if config.rl_model:
-                """
-                RL 모델 벡테스팅 결과
-                형식 : methods_results {method_id : {results}}
-                                                    - cum_return
-                                                    - n_trades
-                                                    - sharpe
-                                                    - performance
-                """
+                # RL 모델 평가 단계
+                logger.info("Evaluating RL agent...")
+                
+                # 미래 기간에 대한 에이전트 평가
+                results_df, performance = evaluate_rl_agent(
+                    config, 
+                    agent, 
+                    data, 
+                    window_info['forward_period']['start'], 
+                    window_info['forward_period']['end'], 
+                    window_number
+                )
+                
+                if results_df is None or performance is None:
+                    logger.warning("RL evaluation failed, skipping window")
+                    continue
+                
+                # RL 결과를 smoothing methods와 동일한 형식으로 변환
+                methods_results = {
+                    'rl_agent': {
+                        'method_id': 'rl_agent',
+                        'method_name': 'rl_agent',
+                        'params': {'type': 'ppo'},
+                        'df': results_df,
+                        'performance': performance,
+                        'cum_return': performance['total_returns']['strategy'],
+                        'n_trades': performance['position_changes'],
+                        'sharpe': performance['sharpe_ratio']['strategy']
+                    }
+                }
+                
+                # 결과 저장
+                results_df.to_csv(os.path.join(window_dir, 'rl_results.csv'), index=False)
+                with open(os.path.join(window_dir, 'rl_performance.json'), 'w') as f:
+                    json.dump(performance, f, default=json_serializer, indent=4)
+                    
+                # RL 결과 시각화
+                from regime_mamba.utils.rl_visualize import visualize_rl_results
+                visualize_rl_results(
+                    results_df,
+                    performance,
+                    window_number,
+                    f"Window {window_number}: {window_info['forward_period']['start']} ~ {window_info['forward_period']['end']}",
+                    os.path.join(window_dir, 'rl_performance.png')
+                )
             else:
                 logger.info("Evaluating smoothing methods...")
                 methods_results = evaluate_smoothing_methods(
@@ -1067,17 +1134,17 @@ def run_rolling_window_backtest(
             
             # 4. Save results
             if methods_results:
-                logger.info(f"Found {len(methods_results)} valid smoothing method results")
+                logger.info(f"Found {len(methods_results)} valid results")
                 for method_id, result in methods_results.items():
                     combined_results[method_id]['window'].append(window_number)
                     combined_results[method_id]['returns'][window_number] = result['cum_return']
                     combined_results[method_id]['trades'][window_number] = result['n_trades']
                     combined_results[method_id]['sharpes'][window_number] = result['sharpe']
                     
-                    # 수정된 부분: 깊은 복사를 통해 성능 지표 저장
+                    # 성능 지표 저장 (깊은 복사)
                     combined_results[method_id]['performances'].append(copy.deepcopy(result['performance']))
             else:
-                logger.warning("No valid smoothing method results found")
+                logger.warning("No valid results found")
             
             # 5. Save checkpoint
             if config.enable_checkpointing and (i + 1) % config.checkpoint_interval == 0:
@@ -1109,6 +1176,7 @@ def run_rolling_window_backtest(
     # 6. Create final comparison
     logger.info("Creating final comparison...")
     if combined_results:
+        # RL 모델과 일반 모델을 모두 포함한 비교 시각화
         summary = visualize_final_comparison(combined_results, config.results_dir)
         
         # Save combined results
@@ -1122,16 +1190,20 @@ def run_rolling_window_backtest(
                 'sharpes': {str(k): v for k, v in result['sharpes'].items()}
             }
         
-        # 수정된 부분: 결합된 결과 저장 시 커스텀 직렬화 함수 사용
         with open(os.path.join(config.results_dir, 'combined_results.json'), 'w') as f:
             json.dump(result_data, f, default=json_serializer, indent=4)
+        
+        # RL 모델 결과만 별도로 저장
+        if config.rl_model:
+            rl_summary = {k: v for k, v in result_data.items() if k.startswith('rl_')}
+            with open(os.path.join(config.results_dir, 'rl_results.json'), 'w') as f:
+                json.dump(rl_summary, f, default=json_serializer, indent=4)
         
         logger.info(f"Backtest complete with {len(result_data)} methods across {len(window_schedule)} windows")
         return {'combined_results': combined_results, 'summary': summary}
     else:
         logger.warning("No results to compare")
         return {'combined_results': combined_results, 'summary': None}
-
 
 def main():
     """Main execution function"""

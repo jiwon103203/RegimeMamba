@@ -35,8 +35,16 @@ class RegimeMambaConfig:
         # 클러스터링 관련 설정
         self.n_clusters = 2  # Bull과 Bear 두 개의 레짐으로 클러스터링
         self.cluster_method = 'cosine_kmeans'
+
+        # Extra 설정
         self.jump_model = False
         self.rl_model = False
+        self.rl_learning_rate = 1e-4
+        self.rl_gamma = 0.99
+        self.freeze_feature_extractor = True
+        self.position_penalty = 0.01
+        self.reward_type = 'sharpe'
+        self.window_size = 252
 
         # 예측 관련 설정
         self.predict = False
@@ -69,6 +77,7 @@ class RegimeMambaConfig:
         return config
 
 class RollingWindowConfig(RegimeMambaConfig):
+
     def __init__(self):
         """Rolling Window 기반 RegimeMamba 모델 설정 클래스"""
         super().__init__()

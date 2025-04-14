@@ -100,8 +100,9 @@ def train_rl_agent_for_window(config, model, train_start, train_end, valid_start
         env=env,
         model=model,
         device=config.device,
-        lr=config.learning_rate,
-        gamma=config.gamma
+        lr=config.rl_learning_rate,
+        gamma=config.rl_gamma,
+        freeze_feature_extractor=config.freeze_feature_extractor,
     )
     
     # Train agent
