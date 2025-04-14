@@ -47,6 +47,8 @@ class RegimeMambaConfig:
         self.window_size = 252
         self.n_episodes = 100
         self.steps_per_episode = 2048
+        self.n_epochs = 20
+        self.rl_batch_size = 512
 
         # 예측 관련 설정
         self.predict = False

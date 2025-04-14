@@ -93,7 +93,7 @@ def train_rl_agent_for_window(config, model, train_start, train_end, valid_start
     # ).to(config.device)
     
     # Verify model architecture
-    print(f"Model structure: {model}")
+#    print(f"Model structure: {model}")
     
     # Create agent
     agent = PPOAgent(
@@ -111,7 +111,7 @@ def train_rl_agent_for_window(config, model, train_start, train_end, valid_start
             n_episodes=config.n_episodes,
             n_steps_per_episode=config.steps_per_episode,
             n_epochs=config.n_epochs,
-            batch_size=config.batch_size
+            batch_size=config.rl_batch_size
         )
     except Exception as e:
         print(f"Error during training: {e}")

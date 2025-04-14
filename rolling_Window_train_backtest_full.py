@@ -152,6 +152,8 @@ def parse_args():
     parser.add_argument('--window_size', type=int, default=252, help='Window size for Sharpe calculation')
     parser.add_argument('--n_episodes', type=int, default=100, help='Number of episodes for reinforcement learning')
     parser.add_argument('--n_steps', type=int, default=2048, help='Number of steps for reinforcement learning')
+    parser.add_argument('--n_epochs', type=int, default=20, help='Number of epochs for reinforcement learning')
+    parser.add_argument('--rl_batch_size', type=int, default=512, help='Batch size for reinforcement learning')
 
     # Performance-related settings
     parser.add_argument('--max_workers', type=int, help='Maximum number of worker processes')
