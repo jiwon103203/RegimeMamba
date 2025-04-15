@@ -3,6 +3,7 @@ RL agents for investment strategies.
 """
 
 import numpy as np
+import copy
 import torch
 import torch.nn.functional as F
 import torch.optim as optim
@@ -41,6 +42,13 @@ class PPOAgent:
         self.value_coef = value_coef
         self.entropy_coef = entropy_coef
         self.target_kl = target_kl
+
+        self.best_model_state = None
+        self.best_nav = float('-inf')
+        self.best_reward = float('-inf')
+        self.best_sharpe = float('-inf')
+        self.best_episode = 0
+
 
         # Freeze feature_extractor
         if freeze_feature_extractor:
@@ -312,13 +320,11 @@ class PPOAgent:
             dict: Training history
         """
         history = {
-            'value_loss': [],
-            'policy_loss': [],
-            'entropy': [],
-            'rewards': [],
-            'returns': [],
-            'kl': [],
-            'nav': []
+            'value_loss': [], 'policy_loss': [],
+            'entropy': [], 'rewards': [],
+            'returns': [], 'kl': [],
+            'nav': [], 'eval_rewards': [],
+            'trade_count': [], 'sharpe_ratio': []
         }
         
         for episode in range(n_episodes):
@@ -330,6 +336,22 @@ class PPOAgent:
             # Collect trajectories
             trajectory = self.collect_trajectories(n_steps=n_steps_per_episode)
             
+            eval_results = self.evaluate()
+            nav = eval_results['navs'][-1] if len(eval_results['navs']) > 0 else 1.0
+
+            if nav > self.best_nav:
+                self.best_model_state = copy.deepcopy(self.model.state_dict())
+                self.best_nav = nav
+                self.best_reward = eval_results['total_return']
+                self.best_sharpe = eval_results['sharpe_ratio']
+                self.best_episode = episode + 1
+                trade_count = eval_results['position_changes']
+
+            history ['eval_rewards'].append(eval_results['total_return'])
+            history['sharpe_ratio'].append(eval_results['sharpe_ratio'])
+            history['nav'].append(nav)
+            history ['trade_count'].append(trade_count)
+
             # Update model
             metrics = self.update(trajectory, n_epochs=n_epochs, batch_size=batch_size)
             
@@ -337,10 +359,10 @@ class PPOAgent:
             for k, v in metrics.items():
                 history[k].append(v)
             
-            history['rewards'].append(np.mean(trajectory['rewards']))
-            history['returns'].append(np.mean(trajectory['returns']))
-            history['nav'].append(self.env.nav)
-            
+            # history['rewards'].append(np.mean(trajectory['rewards']))
+            # history['returns'].append(np.mean(trajectory['returns']))
+            # history['nav'].append(self.env.nav)
+
             # Print progress
             print(f"Episode {episode+1}/{n_episodes} completed")
             print(f"  Reward: {history['rewards'][-1]:.4f}")
@@ -349,6 +371,13 @@ class PPOAgent:
             print(f"  Value Loss: {metrics['value_loss']:.4f}")
             print(f"  Policy Loss: {metrics['policy_loss']:.4f}")
             print(f"  Entropy: {metrics['entropy']:.4f}")
+        
+        # Save best model state
+        if self.best_model_state is not None:
+            self.model.load_state_dict(self.best_model_state)
+            print(f"Best model loaded from episode {self.best_episode} with NAV {self.best_nav:.4f}")
+        else:
+            print("No best model found")
             
         return history
     
