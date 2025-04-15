@@ -207,7 +207,7 @@ class PPOAgent:
         
         for epoch in range(n_epochs):
             # Generate random indices
-            indices = np.random.permutation(len(n_samples))
+            indices = np.random.permutation(n_samples)
             
             # Iterate over mini-batches
             for start in range(0, n_samples, batch_size):
@@ -219,8 +219,8 @@ class PPOAgent:
                 batch_states = [states[i] for i in batch_indices]
                 batch_actions = actions[batch_indices]
                 batch_old_log_probs = old_log_probs[batch_indices]
-                batch_returns = returns[batch_indices]
-                batch_advantages = advantages[batch_indices]  # Correctly indexed now
+                batch_returns = torch.FloatTensor(returns[batch_indices]).to(self.device)  # Ensure correct device
+                batch_advantages = torch.FloatTensor(advantages[batch_indices]).to(self.device)  # Ensure correct device
                 
                 try:
                     # Forward pass
@@ -239,21 +239,21 @@ class PPOAgent:
                     # Calculate ratio
                     ratio = torch.exp(log_prob - batch_old_log_probs_shaped)
                     
-                    # Ensure ratio and batch_advantages have matching dimensions
-                    if ratio.dim() != batch_advantages.dim() or ratio.shape != batch_advantages.shape:
-                        if epoch == 0 and start == 0:
-                            print(f"Advantage shape mismatch: ratio {ratio.shape}, advantages {batch_advantages.shape}")
+                    # # Ensure ratio and batch_advantages have matching dimensions
+                    # if ratio.dim() != batch_advantages.dim() or ratio.shape != batch_advantages.shape:
+                    #     if epoch == 0 and start == 0:
+                    #         print(f"Advantage shape mismatch: ratio {ratio.shape}, advantages {batch_advantages.shape}")
                         
-                        # 배치 크기(첫 번째 차원)만 유지하고 나머지는 flatten
-                        batch_size = ratio.shape[0]
+                    #     # 배치 크기(첫 번째 차원)만 유지하고 나머지는 flatten
+                    #     batch_size = ratio.shape[0]
                         
-                        # 두 텐서를 [batch_size, -1] 형태로 변환
-                        ratio = ratio.view(batch_size, -1)
-                        batch_advantages = batch_advantages.view(batch_size, -1)
+                    #     # 두 텐서를 [batch_size, -1] 형태로 변환
+                    #     ratio = ratio.view(batch_size, -1)
+                    #     batch_advantages = batch_advantages.view(batch_size, -1)
                         
-                        # 더 작은 차원에 맞춤 (안전하게 첫 번째 요소만 사용)
-                        ratio = ratio[:, :1]
-                        batch_advantages = batch_advantages[:, :1]
+                    #     # 더 작은 차원에 맞춤 (안전하게 첫 번째 요소만 사용)
+                    #     ratio = ratio[:, :1]
+                    #     batch_advantages = batch_advantages[:, :1]
                     
                     # Now we can safely compute the surrogate objectives
                     surr1 = ratio * batch_advantages
@@ -317,6 +317,7 @@ class PPOAgent:
             'entropy': [],
             'rewards': [],
             'returns': [],
+            'kl': [],
             'nav': []
         }
         
