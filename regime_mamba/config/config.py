@@ -50,6 +50,7 @@ class RegimeMambaConfig:
         self.n_epochs = 20
         self.rl_batch_size = 512
         self.n_positions = 3
+        self.optimize_action_thresholds = False
 
         # 예측 관련 설정
         self.predict = False

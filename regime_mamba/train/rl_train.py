@@ -10,7 +10,7 @@ from datetime import datetime
 from dateutil.relativedelta import relativedelta
 
 #from ..models.rl_model import ActorCritic
-from ..utils.rl_environments import FinancialTradingEnv
+from ..utils.rl_environments import FinancialTradingEnv, optimize_action_thresholds
 from ..utils.rl_agents import PPOAgent
 
 def train_rl_agent_for_window(config, model, train_start, train_end, valid_start, valid_end, data):
@@ -38,7 +38,7 @@ def train_rl_agent_for_window(config, model, train_start, train_end, valid_start
     if len(train_data) < config.seq_len * 5:
         print(f"Warning: Not enough data for training. Got {len(train_data)} samples.")
         return None, None, None
-    
+
     # Determine feature columns
     feature_cols = ["Open", "Close", "High", "Low", "treasury_rate"]
     
@@ -70,6 +70,58 @@ def train_rl_agent_for_window(config, model, train_start, train_end, valid_start
         print("Warning: Returns contain NaN or infinity values")
         returns = np.nan_to_num(returns, nan=0.0, posinf=0.0, neginf=0.0)
     
+    if config.n_positions == 3:
+        thresholds_to_try = [
+            (0.2, 0.2), (0.33, 0.33), (0.5, 0.5),
+            (0.2, 0.4), (0.4, 0.2), (0.25, 0.25)
+        ]
+    else:
+        thresholds_to_try = [
+            (0.3, 0), (0.4, 0), (0.5, 0), (0.6, 0), (0.7, 0)
+        ]
+
+    if config.optimize_thresholds:
+        print("Optimizing action thresholds...")
+
+        def create_agent(env):
+            new_agent = PPOAgent(
+                env=env,
+                model=model,
+                device=config.device,
+                lr=config.rl_learning_rate,
+                gamma=config.rl_gamma,
+                freeze_feature_extractor=config.freeze_feature_extractor,
+            )
+            return new_agent
+        
+        validation_period = {
+            'start': valid_start,
+            'end': valid_end
+        }
+
+        best_thresholds, all_results = optimize_action_thresholds(
+            config=config,
+            agent_factory=create_agent,
+            data=data,
+            eval_period=validation_period,
+            thresholds_to_try=thresholds_to_try
+        )
+
+        # save all_results
+        all_results_path = os.path.join(config.output_dir, f"window_{config.window_number}_all_results.npy")
+        np.save(all_results_path, all_results)
+        print(f"All results saved to {all_results_path}")
+        print(f"Best thresholds: Long - {best_thresholds[0]}, Short - {best_thresholds[1]}")
+
+        if config.n_positions == 3:
+            long_thresh, short_thresh = best_thresholds['long_threshold'], best_thresholds['short_threshold']
+        else:
+            long_thresh = best_thresholds['long_threshold']
+            short_thresh = None
+    else:
+        long_thresh, short_thresh = 0.33, 0.33
+            
+
     # Create environment
     env = FinancialTradingEnv(
         returns=returns,
@@ -78,7 +130,10 @@ def train_rl_agent_for_window(config, model, train_start, train_end, valid_start
         transaction_cost=config.transaction_cost,
         reward_type=config.reward_type,
         position_penalty=config.position_penalty,
-        window_size=config.window_size
+        window_size=config.window_size,
+        n_positions=config.n_positions,
+        long_threshold=long_thresh,
+        short_threshold=short_thresh
     )
     
     print(f"Creating model with input_dim={config.input_dim}, d_model={config.d_model}")

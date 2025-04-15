@@ -155,6 +155,7 @@ def parse_args():
     parser.add_argument('--rl_batch_size', type=int, default=512, help='Batch size for reinforcement learning')
     parser.add_argument('--steps_per_episode', type=int, default=2048, help='Steps per episode for reinforcement learning')
     parser.add_argument('--n_positions', type=int, default=3, help='Number of positions for reinforcement learning')
+    parser.add_argument('--optimize_thresholds', action='store_true', help='Optimize action thresholds for reinforcement learning')
 
     # Performance-related settings
     parser.add_argument('--max_workers', type=int, help='Maximum number of worker processes')

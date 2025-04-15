@@ -17,7 +17,7 @@ class FinancialTradingEnv(gym.Env):
     """
     
     def __init__(self, returns, features, dates=None, seq_len=128, transaction_cost=0.001, reward_type='sharpe', 
-                 position_penalty=0.01, window_size=252, n_positions=3):
+                 position_penalty=0.01, window_size=252, n_positions=3, long_threshold=0.33, short_threshold=0.33):
         """
         Initialize the environment.
         
@@ -42,6 +42,8 @@ class FinancialTradingEnv(gym.Env):
         self.position_penalty = position_penalty
         self.window_size = window_size
         self.n_positions = n_positions
+        self.long_threshold = long_threshold
+        self.short_threshold = short_threshold
         
         # State space: Sequence of feature vectors + current position
         self.observation_space = spaces.Dict({
@@ -158,23 +160,38 @@ class FinancialTradingEnv(gym.Env):
         
         if self.n_positions == 3:
             # Discretize the action space
-            if action_value < -0.33:
+            if action_value < -self.short_threshold:
                 return -1  # Short
-            elif action_value > 0.33:
+            elif action_value > self.long_threshold:
                 return 1   # Long
             else:
                 return 0   # Neutral
         else:
             # Map action to [0, 1] for long and neutral
-            return int(action_value > 0.5)
+            return int(action_value > self.long_threshold)
             
-    def _calculate_sharpe_ratio(self):
+    def _calculate_sharpe_ratio(self, annualize=True, risk_free_rate=0.0):
         """Calculate Sharpe ratio based on recent returns."""
         recent_returns = self.strategy_returns[-self.window_size:]
-        mean_return = np.mean(recent_returns)
-        std_return = np.std(recent_returns) + 1e-6  # Add small constant to avoid division by zero
+
+        daily_rf_rate = 0.0
+        if risk_free_rate > 0:
+            daily_rf_rate = (1 + risk_free_rate) ** (1/252) - 1
+
+        excess_returns = np.array(recent_returns) - daily_rf_rate
         
-        return mean_return / std_return
+        mean_return = np.mean(excess_returns)
+        std_return = np.std(excess_returns)
+
+        if std_return < 1e-8:
+            return 100.0 if mean_return >=0 else -100.0
+
+        sharpe = mean_return / std_return
+
+        if annualize:
+            sharpe = sharpe * np.sqrt(252)  # Assuming daily returns
+        
+        return sharpe
     
     def _calculate_differential_sharpe_ratio(self):
         """Calculate Differential Sharpe Ratio (DSR) based on recent returns."""
@@ -199,3 +216,43 @@ class FinancialTradingEnv(gym.Env):
         
         # Differential Sharpe
         return curr_sharpe - prev_sharpe
+    
+def optimize_action_thresholds(config, agent_factory, data, eval_period, thresholds_to_try):
+    """
+    """
+    results = []
+
+    for long_thresh, short_thresh in thresholds_to_try:
+        print(f"Testing thresholds: Long - {long_thresh}, Short - {short_thresh}")
+
+        env = FinancialTradingEnv(
+            returns=data['returns'].values / 100 if config.input_dim == 4 else data['returns'].values,
+            features=data[['Open', 'Close', 'High', 'Low', 'treasury_rate']].values,
+            dates=data['Date'].values,
+            seq_len=config.seq_len,
+            transaction_cost=config.transaction_cost,
+            reward_type=config.reward_type,
+            position_penalty=config.position_penalty,
+            window_size=config.window_size,
+            n_positions=config.n_positions,  # Assuming 3 positions: long, neutral, short
+            long_threshold=long_thresh,
+            short_threshold=short_thresh
+        )
+
+        agent = agent_factory(env)
+        result = agent.evaluate(env)
+
+        sharpe = result['sharpe_ratio']
+        returns = result['total_return']
+
+        results.append({
+            'long_threshold': long_thresh,
+            'short_threshold': short_thresh,
+            'sharpe_ratio': sharpe,
+            'total_return': returns,
+            'trades': result['position_changes']
+        })
+
+    best_result = max(results, key=lambda x: x['sharpe_ratio'])
+
+    return best_result, results

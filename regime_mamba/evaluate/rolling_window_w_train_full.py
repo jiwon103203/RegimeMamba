@@ -165,7 +165,7 @@ def train_model_for_window(config, train_start, train_end, valid_start, valid_en
         test_days = int(total_valid_days * 0.2)
         rl_train_start = valid_start
         rl_train_end = (datetime.strptime(valid_end, "%Y-%m-%d") - relativedelta(days=test_days)).strftime("%Y-%m-%d")
-        rl_test_start = (datetime.strptime(valid_end, "%Y-%m-%d") - relativedelta(days=test_days)).strftime("%Y-%m-%d")
+        rl_test_start = (datetime.strptime(valid_end, "%Y-%m-%d") - relativedelta(days=test_days + 1)).strftime("%Y-%m-%d")
         rl_test_end = valid_end
         agent, model, history = train_rl_agent_for_window(config, rl_model, rl_train_start, rl_train_end, rl_test_start, rl_test_end, data)
         

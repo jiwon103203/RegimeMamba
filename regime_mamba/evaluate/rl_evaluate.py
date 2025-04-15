@@ -33,10 +33,7 @@ def evaluate_rl_agent(config, agent, data, forward_start, forward_end, window_nu
     
     # Prepare features and returns
     features = forward_data[["Open", "Close", "High", "Low", "treasury_rate"]].values
-    if config.input_dim == 4:
-        returns = forward_data['returns'].values / 100
-    else:
-        returns = forward_data['returns'].values
+    returns = forward_data['returns'].values / 100 if config.input_dim == 4 else forward_data['returns'].values
     dates = forward_data['Date'].values
     
     # Create environment
@@ -55,23 +52,19 @@ def evaluate_rl_agent(config, agent, data, forward_start, forward_end, window_nu
     results = agent.evaluate(env)
     
     expected_len = len(dates) - config.seq_len
-    result_len = len(results['strategy_returns'])
+    actual_len = len(results['strategy_returns'])
 
-    print(f"Expected length: {expected_len}, Result length: {result_len}")
+    if expected_len != actual_len:
+        print(f"Warning: Expected {expected_len} results, got {actual_len}.")
+        print(f"Dates shape: {dates.shape}, Returns shape: {returns.shape}")
+        print(f"Strategy returns shape: {len(results['strategy_returns'])}")
 
-    min_length = min(
-        len(dates[config.seq_len:]),
-        len(returns[config.seq_len:]),
-        len(results['strategy_returns']),
-        len(results['positions']),
-        len(results['navs']),
-        len(results['market_nav'])
-    )
+    min_length = min(expected_len, actual_len)
 
     # Create results DataFrame
     results_df = pd.DataFrame({
-        'Date': dates[config.seq_len:][:min_length],
-        'Market_Return': returns[config.seq_len:][:min_length],
+        'Date': dates[config.seq_len:config.seq_len + min_length],
+        'Market_Return': returns[config.seq_len:config.seq_len + min_length],
         'Strategy_Return': results['strategy_returns'][:min_length],
         'Position': results['positions'][:min_length],
         'NAV': results['navs'][:min_length],

@@ -17,7 +17,7 @@ class PPOAgent:
     """
     
     def __init__(self, env, model, device, lr=3e-4, gamma=0.99, epsilon=0.2, 
-                 value_coef=0.5, entropy_coef=0.01, freeze_feature_extractor=True):
+                 value_coef=0.5, entropy_coef=0.01, target_kl=0.01 ,freeze_feature_extractor=True):
         """
         Initialize the PPO agent.
         
@@ -40,6 +40,7 @@ class PPOAgent:
         self.epsilon = epsilon
         self.value_coef = value_coef
         self.entropy_coef = entropy_coef
+        self.target_kl = target_kl
 
         # Freeze feature_extractor
         if freeze_feature_extractor:
@@ -85,7 +86,6 @@ class PPOAgent:
                 
                 # Get action and value
                 with torch.no_grad():
-                    _, _, _, _, hidden , _=self.model.feature_extractor(features, return_hidden=True)
                     action_mean, value = self.model(features, position)
                     # Add small noise for exploration
                     action_std = torch.ones_like(action_mean) * 0.1
@@ -140,6 +140,7 @@ class PPOAgent:
             'values': np.array(values),
             'rewards': np.array(rewards),
             'returns': np.array(returns),
+            'dones': np.array(dones),
             'positions': np.array(positions)
         }
         
@@ -184,32 +185,35 @@ class PPOAgent:
         states = trajectory['states']
         actions = torch.FloatTensor(trajectory['actions']).to(self.device)
         old_log_probs = torch.FloatTensor(trajectory['log_probs']).to(self.device)
-        returns = torch.FloatTensor(trajectory['returns']).to(self.device).unsqueeze(1)
+        n_samples = len(trajectory['states'])
         
         # Calculate advantage
-        values = torch.FloatTensor(trajectory['values']).to(self.device).unsqueeze(1)
-        advantages = returns - values
+        advantages, returns = self._compute_gae(
+            rewards=trajectory['rewards'],
+            values=trajectory['values'].squeeze(),
+            dones=trajectory['dones'],
+            gamma=self.gamma,
+            lambda_=0.95
+        )
         
         # PPO update
         metrics = {
             'value_loss': [],
             'policy_loss': [],
-            'entropy': []
+            'entropy': [],
+            'kl': []
         }
         
-        # Adjust batch size if needed
-        actual_batch_size = min(batch_size, len(states))
-        if actual_batch_size != batch_size:
-            print(f"Adjusting batch size from {batch_size} to {actual_batch_size}")
         
         for epoch in range(n_epochs):
             # Generate random indices
-            indices = np.random.permutation(len(states))
+            indices = np.random.permutation(len(n_samples))
             
             # Iterate over mini-batches
-            for start_idx in range(0, len(states), actual_batch_size):
+            for start in range(0, n_samples, batch_size):
                 # Get mini-batch indices
-                batch_indices = indices[start_idx:min(start_idx + actual_batch_size, len(states))]
+                end = min(start + batch_size, n_samples)
+                batch_indices = indices[start : end]
                 
                 # Get mini-batch data
                 batch_states = [states[i] for i in batch_indices]
@@ -223,39 +227,21 @@ class PPOAgent:
                     features_batch = torch.FloatTensor(np.stack([s['features'] for s in batch_states])).to(self.device)
                     position_batch = torch.LongTensor([s['position'] for s in batch_states]).to(self.device)
                     
-                    # Debug shapes before model forward pass
-                    if epoch == 0 and start_idx == 0:
-                        print(f"Batch shapes - features: {features_batch.shape}, position: {position_batch.shape}")
-                        print(f"Batch shapes - actions: {batch_actions.shape}, advantages: {batch_advantages.shape}")
-                    
                     action_mean, value = self.model(features_batch, position_batch)
                     action_std = torch.ones_like(action_mean) * 0.1
                     action_dist = Normal(action_mean, action_std)
-                    log_prob = action_dist.log_prob(batch_actions)
+
+                    batch_actions_shaped = batch_actions.view(-1, 1) if batch_actions.dim() == 1 else batch_actions
+                    log_prob = action_dist.log_prob(batch_actions_shaped)
+                    batch_old_log_probs_shaped = batch_old_log_probs.view(-1,1) if batch_old_log_probs.dim() == 1 else batch_old_log_probs
                     entropy = action_dist.entropy().mean()
                     
-                    # Ensure log_prob and batch_old_log_probs have matching dimensions
-                    if log_prob.dim() != batch_old_log_probs.dim() or log_prob.shape != batch_old_log_probs.shape:
-                        if epoch == 0 and start_idx == 0:
-                            print(f"Dimension mismatch: log_prob {log_prob.shape}, old_log_probs {batch_old_log_probs.shape}")
-                        
-                        if log_prob.dim() > batch_old_log_probs.dim():
-                            batch_old_log_probs = batch_old_log_probs.unsqueeze(-1).expand_as(log_prob)
-                        elif log_prob.dim() < batch_old_log_probs.dim():
-                            log_prob = log_prob.unsqueeze(-1).expand_as(batch_old_log_probs)
-                        else:
-                            # Same number of dimensions but different shape
-                            if log_prob.shape[0] == batch_old_log_probs.shape[0]:
-                                # Try to broadcast the tensors
-                                log_prob = log_prob.view(log_prob.shape[0], -1)
-                                batch_old_log_probs = batch_old_log_probs.view(batch_old_log_probs.shape[0], -1)
-                    
                     # Calculate ratio
-                    ratio = torch.exp(log_prob - batch_old_log_probs)
+                    ratio = torch.exp(log_prob - batch_old_log_probs_shaped)
                     
                     # Ensure ratio and batch_advantages have matching dimensions
                     if ratio.dim() != batch_advantages.dim() or ratio.shape != batch_advantages.shape:
-                        if epoch == 0 and start_idx == 0:
+                        if epoch == 0 and start == 0:
                             print(f"Advantage shape mismatch: ratio {ratio.shape}, advantages {batch_advantages.shape}")
                         
                         # 배치 크기(첫 번째 차원)만 유지하고 나머지는 flatten
@@ -283,11 +269,19 @@ class PPOAgent:
                     self.optimizer.zero_grad()
                     loss.backward()
                     self.optimizer.step()
+
+                    # Calculate KL divergence
+                    approx_kl = ((batch_old_log_probs_shaped - log_prob).mean()).item()
+                    metrics['kl'].append(approx_kl)
                     
                     # Store metrics
                     metrics['value_loss'].append(value_loss.item())
                     metrics['policy_loss'].append(policy_loss.item())
                     metrics['entropy'].append(entropy.item())
+
+                    if approx_kl > self.target_kl:
+                        print(f"Early stopping at epoch {epoch} due to KL divergence")
+                        break
                     
                 except Exception as e:
                     print(f"Error in update: {e}")
@@ -381,9 +375,14 @@ class PPOAgent:
         navs = []
         dates = []
         
+        # Get maximum steps
+        max_steps = len(env.returns) - env.seq_len
+        print(f"Environment contains {len(env.returns)} returns, max possible steps: {max_steps}")
+
+
         # Run episode
         step = 0
-        while not done:
+        while not done and step < max_steps:
             # Convert observation to tensor
             features = torch.FloatTensor(state['features']).unsqueeze(0).to(self.device)
             position = torch.LongTensor([state['position']]).to(self.device)
@@ -400,7 +399,7 @@ class PPOAgent:
             strategy_returns.append(info['return'])
             market_returns.append(env.returns[env.current_step-1])
             navs.append(info['nav'])
-            if info['date'] is not None:
+            if 'date' in info and info['date'] is not None:
                 dates.append(info['date'])
             
             # Update state
@@ -412,6 +411,12 @@ class PPOAgent:
                 print("Warning: Evaluation loop appears to be stuck, breaking")
                 break
         
+        print(f"Evaluation completed after {step} steps")
+        print(f"Results shapes - positions: {len(positions)}, strategy returns: {len(strategy_returns)}")
+
+        assert len(positions) == len(strategy_returns) == len(market_returns) == len(navs), \
+            "Mismatch in lengths of positions, strategy returns, market returns, and NAVs"
+
         # Calculate metrics
         total_return = np.sum(strategy_returns)
         sharpe_ratio = np.mean(strategy_returns) / (np.std(strategy_returns) + 1e-6)
@@ -443,3 +448,39 @@ class PPOAgent:
         }
         
         return results
+
+    def _compute_gae(self, rewards, values, dones, gamma=0.99, lambda_=0.95):
+        """
+        Generalized Advantage Estimation (GAE)
+
+        Args:
+            rewards (list): List of rewards
+            values (list): List of values
+            dones (list): List of done flags
+            gamma (float): Discount factor
+            lambda_ (float): GAE lambda parameter
+        
+        Returns:
+            advantages (list): List of advantages
+            returns (list): List of returns
+        """
+
+        if isinstance(values, np.ndarray):
+            values = np.append(values, values[-1])  # Append last value for GAE calculation
+        else:
+            values = torch.cat([values, values[-1].unsqueeze(0)])  # Append last value for GAE calculation
+        
+        advantages = np.zeros_like(rewards,dtype=np.float32)
+        last_gae = 0
+
+        for t in reversed(range(len(rewards))):
+
+            next_value = values[t + 1] * (1 - dones[t])  # Use next value for GAE calculation
+
+            delta = rewards[t] + gamma * next_value - values[t]
+
+            advantages[t] = last_gae = delta + gamma * lambda_ * last_gae * (1 - dones[t])
+        
+        returns = advantages + values[:-1]
+
+        return advantages, returns
