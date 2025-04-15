@@ -32,8 +32,11 @@ def evaluate_rl_agent(config, agent, data, forward_start, forward_end, window_nu
         return None, None
     
     # Prepare features and returns
-    features = forward_data[['returns', 'dd_10', 'sortino_20', 'sortino_60']].values
-    returns = forward_data['returns'].values / 100
+    features = forward_data[["Open", "Close", "High", "Low", "treasury_rate"]].values
+    if config.input_dim == 4:
+        returns = forward_data['returns'].values / 100
+    else:
+        returns = forward_data['returns'].values
     dates = forward_data['Date'].values
     
     # Create environment
@@ -51,14 +54,28 @@ def evaluate_rl_agent(config, agent, data, forward_start, forward_end, window_nu
     # Evaluate agent
     results = agent.evaluate(env)
     
+    expected_len = len(dates) - config.seq_len
+    result_len = len(results['strategy_returns'])
+
+    print(f"Expected length: {expected_len}, Result length: {result_len}")
+
+    min_length = min(
+        len(dates[config.seq_len:]),
+        len(returns[config.seq_len:]),
+        len(results['strategy_returns']),
+        len(results['positions']),
+        len(results['navs']),
+        len(results['market_nav'])
+    )
+
     # Create results DataFrame
     results_df = pd.DataFrame({
-        'Date': dates[config.seq_len:],
-        'Market_Return': returns[config.seq_len:],
-        'Strategy_Return': results['strategy_returns'],
-        'Position': results['positions'],
-        'NAV': results['navs'],
-        'Market_NAV': results['market_nav']
+        'Date': dates[config.seq_len:][:min_length],
+        'Market_Return': returns[config.seq_len:][:min_length],
+        'Strategy_Return': results['strategy_returns'][:min_length],
+        'Position': results['positions'][:min_length],
+        'NAV': results['navs'][:min_length],
+        'Market_NAV': results['market_nav'][:min_length]
     })
     
     # Add cumulative returns

@@ -258,16 +258,16 @@ class PPOAgent:
                         if epoch == 0 and start_idx == 0:
                             print(f"Advantage shape mismatch: ratio {ratio.shape}, advantages {batch_advantages.shape}")
                         
-                        if batch_advantages.dim() < ratio.dim():
-                            batch_advantages = batch_advantages.unsqueeze(-1).expand_as(ratio)
-                        elif ratio.dim() < batch_advantages.dim():
-                            ratio = ratio.unsqueeze(-1).expand_as(batch_advantages)
-                        else:
-                            # Same number of dimensions but different shape
-                            if ratio.shape[0] == batch_advantages.shape[0]:
-                                # Reshape tensors to ensure compatibility
-                                ratio = ratio.view(ratio.shape[0], -1)
-                                batch_advantages = batch_advantages.view(batch_advantages.shape[0], -1)
+                        # 배치 크기(첫 번째 차원)만 유지하고 나머지는 flatten
+                        batch_size = ratio.shape[0]
+                        
+                        # 두 텐서를 [batch_size, -1] 형태로 변환
+                        ratio = ratio.view(batch_size, -1)
+                        batch_advantages = batch_advantages.view(batch_size, -1)
+                        
+                        # 더 작은 차원에 맞춤 (안전하게 첫 번째 요소만 사용)
+                        ratio = ratio[:, :1]
+                        batch_advantages = batch_advantages[:, :1]
                     
                     # Now we can safely compute the surrogate objectives
                     surr1 = ratio * batch_advantages
