@@ -47,7 +47,7 @@ class ModifiedJumpModel():
         train_data['Low'] = train_data['Low'] / 100
 
         train_data = train_data[self.feature_col]
-        train_return_data = train_data['return']
+        train_return_data = train_data['return'] / 100
 
         self.feature_extractor.eval()
         dates = train_data['Date'].values
@@ -77,7 +77,7 @@ class ModifiedJumpModel():
         pred_data['Low'] = pred_data['Low'] / 100
 
         pred_data = pred_data[self.feature_col]
-        pred_return_data = pred_data['return']
+        pred_return_data = pred_data['return'] / 100
 
         self.feature_extractor.eval()
 
@@ -91,6 +91,4 @@ class ModifiedJumpModel():
         ax, ax2 = plot_regimes_and_cumret(labels_test, pred_return_data, n_c=2, start_date=start_date, end_date=end_date)
         ax.set(title=f"Out-of-Sample Predicted Regimes by the JM(lambda : {self.jump_penalty})")
         savefig_plt(f"{self.output_dir}/JM_lambd_{self.jump_penalty}_test_window_{window_number}.pdf")
-
-
         
