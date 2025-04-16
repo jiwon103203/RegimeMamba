@@ -359,15 +359,17 @@ class PPOAgent:
             for k, v in metrics.items():
                 history[k].append(v)
             
-            # history['rewards'].append(np.mean(trajectory['rewards']))
-            # history['returns'].append(np.mean(trajectory['returns']))
+            history['rewards'].append(np.mean(trajectory['rewards']))
+            history['returns'].append(np.mean(trajectory['returns']))
             # history['nav'].append(self.env.nav)
 
             # Print progress
             print(f"Episode {episode+1}/{n_episodes} completed")
             print(f"  Reward: {history['rewards'][-1]:.4f}")
+            print(f"  Eval Reward: {history['eval_rewards'][-1]:.4f}")
             print(f"  Return: {history['returns'][-1]:.4f}")
             print(f"  NAV: {history['nav'][-1]:.4f}")
+            print(f"  Trade Count: {history['trade_count'][-1]}")
             print(f"  Value Loss: {metrics['value_loss']:.4f}")
             print(f"  Policy Loss: {metrics['policy_loss']:.4f}")
             print(f"  Entropy: {metrics['entropy']:.4f}")
