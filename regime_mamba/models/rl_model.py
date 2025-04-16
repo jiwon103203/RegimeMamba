@@ -46,19 +46,15 @@ class ActorCritic(nn.Module):
         # Actor network (policy)
         if config.vae:
             # If using VAE, adjust input dimension
-            self.actor = nn.Sequential(              # 256//16 = 16 2^8=256, 2^4=16
-                nn.Linear(config.d_model//16, config.d_model//32),
-                nn.ReLU(),
-                nn.Linear(config.d_model//32, config.d_model//64),
+            self.actor = nn.Sequential(              
+                nn.Linear(config.d_model//16, config.d_model//64),# 256//16 = 16 -> 4
                 nn.ReLU(),
                 nn.Linear(config.d_model//64, 1),
                 nn.Tanh()  # Output between -1 and 1
             )
 
             self.critic = nn.Sequential(
-                nn.Linear(config.d_model//16, config.d_model//32),
-                nn.ReLU(),
-                nn.Linear(config.d_model//32, config.d_model//64),
+                nn.Linear(config.d_model//16, config.d_model//64),
                 nn.ReLU(),
                 nn.Linear(config.d_model//64, 1)
             )
@@ -69,9 +65,7 @@ class ActorCritic(nn.Module):
                 nn.ReLU(),
                 nn.Linear(64, 16),
                 nn.ReLU(),
-                nn.Linear(16, 4),
-                nn.ReLU(),
-                nn.Linear(4, 1),
+                nn.Linear(16, 1),
                 nn.Tanh()  # Output between -1 and 1
             )
             
@@ -81,9 +75,7 @@ class ActorCritic(nn.Module):
                 nn.ReLU(),
                 nn.Linear(64, 16),
                 nn.ReLU(),
-                nn.Linear(16, 4),
-                nn.ReLU(),
-                nn.Linear(4, 1)
+                nn.Linear(16, 1),
             )
         
         # Store dimensions for debugging
