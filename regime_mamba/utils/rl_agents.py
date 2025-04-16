@@ -102,7 +102,7 @@ class PPOAgent:
                     log_prob = action_dist.log_prob(action)
                 
                 if step == 0:
-                    print(f"Action mean: {action_mean}, Action: {action}, Value: {value}")
+                    print(f"Action mean: {action_mean.item()}, Action: {action.item()}, Value: {value.item()}")
                 
                 # Take step in environment
                 next_state, reward, done, info = self.env.step(action.cpu().numpy())
@@ -288,7 +288,7 @@ class PPOAgent:
                     metrics['entropy'].append(entropy.item())
 
                     if approx_kl > self.target_kl:
-                        print(f"Early stopping at epoch {epoch} due to KL divergence")
+                        #print(f"Early stopping at epoch {epoch} due to KL divergence")
                         break
                     
                 except Exception as e:

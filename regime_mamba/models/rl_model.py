@@ -75,7 +75,7 @@ class ActorCritic(nn.Module):
                 nn.ReLU(),
                 nn.Linear(64, 16),
                 nn.ReLU(),
-                nn.Linear(16, 1),
+                nn.Linear(16, 1)
             )
         
         # Store dimensions for debugging

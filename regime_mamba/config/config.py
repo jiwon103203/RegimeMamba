@@ -46,8 +46,8 @@ class RegimeMambaConfig:
         self.reward_type = 'sharpe'
         self.window_size = 252
         self.n_episodes = 50
-        self.steps_per_episode = 1024
-        self.n_epochs = 10
+        self.steps_per_episode = 2048
+        self.n_epochs = 50
         self.rl_batch_size = 512
         self.n_positions = 3
         self.optimize_thresholds = False
