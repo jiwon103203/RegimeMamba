@@ -150,7 +150,7 @@ def parse_args():
     parser.add_argument('--position_penalty', type=float, default=0.01, help='Reinforcement learning position penalty')
     parser.add_argument('--reward_type', type=str, default='sharpe', help='Reinforcement learning reward type')
     parser.add_argument('--window_size', type=int, default=252, help='Window size for Sharpe calculation')
-    parser.add_argument('--n_episodes', type=int, default=100, help='Number of episodes for reinforcement learning')
+    parser.add_argument('--n_episodes', type=int, default=50, help='Number of episodes for reinforcement learning')
     parser.add_argument('--n_epochs', type=int, default=20, help='Number of epochs for reinforcement learning')
     parser.add_argument('--rl_batch_size', type=int, default=512, help='Batch size for reinforcement learning')
     parser.add_argument('--steps_per_episode', type=int, default=2048, help='Steps per episode for reinforcement learning')
