@@ -33,6 +33,10 @@ def train_rl_agent_for_window(config, model, train_start, train_end, valid_start
     
     # Filter data for training period
     train_data = data[(data['Date'] >= train_start) & (data['Date'] <= train_end)].copy()
+    train_data['Open'] = train_data['Open'] / 100
+    train_data['Close'] = train_data['Close'] / 100
+    train_data['High'] = train_data['High'] / 100
+    train_data['Low'] = train_data['Low'] / 100
     
     # Ensure we have enough data
     if len(train_data) < config.seq_len * 5:
@@ -176,6 +180,10 @@ def train_rl_agent_for_window(config, model, train_start, train_end, valid_start
     
     # Validate on validation data
     valid_data = data[(data['Date'] >= valid_start) & (data['Date'] <= valid_end)].copy()
+    valid_data['Open'] = valid_data['Open'] / 100
+    valid_data['Close'] = valid_data['Close'] / 100
+    valid_data['High'] = valid_data['High'] / 100
+    valid_data['Low'] = valid_data['Low'] / 100
     
     if len(valid_data) < config.seq_len:
         print(f"Warning: Not enough data for validation. Got {len(valid_data)} samples.")

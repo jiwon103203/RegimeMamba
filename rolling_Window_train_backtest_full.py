@@ -1042,8 +1042,24 @@ def run_rolling_window_backtest(
                     history, 
                     os.path.join(window_dir, 'training_history.png')
                 )
+            elif config.jump_model:
+
+                logger.info("Training jump model...")
+                jumpmodel, model, _ = train_model_for_window(
+                    config,
+                    window_info['train_period']['start'],
+                    window_info['train_period']['end'],
+                    window_info['valid_period']['start'],
+                    window_info['valid_period']['end'],
+                    data
+                )
+
+                if jumpmodel is None or model is None:
+                    logger.warning("Jump model training failed, skipping window")
+                    continue
+
             else:
-                model, val_loss = train_model_for_window(
+                model = train_model_for_window(
                     config,
                     window_info['train_period']['start'],
                     window_info['train_period']['end'],
@@ -1062,6 +1078,11 @@ def run_rolling_window_backtest(
                 # RL 모델은 클러스터링 대신 에이전트가 직접 결정
                 logger.info("Skipping regime identification for RL model (agent makes decisions)")
                 # RL에서는 kmeans와 bull_regime이 필요 없음
+                kmeans, bull_regime = None, None
+            elif config.jump_model:
+                # Jump model은 클러스터링 대신 에이전트가 직접 결정
+                logger.info("Skipping regime identification for jump model (agent makes decisions)")
+                # Jump model에서는 kmeans와 bull_regime이 필요 없음
                 kmeans, bull_regime = None, None
             else:
                 logger.info("Identifying regimes...")
@@ -1125,6 +1146,15 @@ def run_rolling_window_backtest(
                     f"Window {window_number}: {window_info['forward_period']['start']} ~ {window_info['forward_period']['end']}",
                     os.path.join(window_dir, 'rl_performance.png')
                 )
+            elif config.jump_model:
+                # 미래 기간에 대한 에이전트 평가
+                model.predict(
+                    window_info['forward_period']['start'], 
+                    window_info['forward_period']['end'], 
+                    data, 
+                    window_number,
+                    sort="cumret"
+                )
             else:
                 logger.info("Evaluating smoothing methods...")
                 methods_results = evaluate_smoothing_methods(
@@ -1149,30 +1179,28 @@ def run_rolling_window_backtest(
                     
                     # 성능 지표 저장 (깊은 복사)
                     combined_results[method_id]['performances'].append(copy.deepcopy(result['performance']))
-            else:
-                logger.warning("No valid results found")
             
-            # 5. Save checkpoint
-            if config.enable_checkpointing and (i + 1) % config.checkpoint_interval == 0:
-                checkpoint_data = {
-                    'next_window': window_number + 1,
-                    'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                    'results': {}
-                }
-                
-                # Convert defaultdict to regular dict for JSON serialization
-                for method, result in combined_results.items():
-                    checkpoint_data['results'][method] = {
-                        'window': result['window'],
-                        'returns': {str(k): v for k, v in result['returns'].items()},
-                        'trades': {str(k): v for k, v in result['trades'].items()},
-                        'sharpes': {str(k): v for k, v in result['sharpes'].items()},
-                        'performances': result['performances']
+                # 5. Save checkpoint
+                if config.enable_checkpointing and (i + 1) % config.checkpoint_interval == 0:
+                    checkpoint_data = {
+                        'next_window': window_number + 1,
+                        'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                        'results': {}
                     }
-                
-                checkpoint_file = os.path.join(config.results_dir, 'checkpoint.json')
-                save_checkpoint(checkpoint_data, checkpoint_file)
-                logger.info(f"Checkpoint saved after window {window_number}")
+                    
+                    # Convert defaultdict to regular dict for JSON serialization
+                    for method, result in combined_results.items():
+                        checkpoint_data['results'][method] = {
+                            'window': result['window'],
+                            'returns': {str(k): v for k, v in result['returns'].items()},
+                            'trades': {str(k): v for k, v in result['trades'].items()},
+                            'sharpes': {str(k): v for k, v in result['sharpes'].items()},
+                            'performances': result['performances']
+                        }
+                    
+                    checkpoint_file = os.path.join(config.results_dir, 'checkpoint.json')
+                    save_checkpoint(checkpoint_data, checkpoint_file)
+                    logger.info(f"Checkpoint saved after window {window_number}")
             
         except Exception as e:
             logger.error(f"Error processing window {window_number}: {str(e)}")

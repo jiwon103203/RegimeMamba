@@ -14,6 +14,7 @@ from ..utils.utils import set_seed
 from ..data.dataset_full import RegimeMambaDataset, create_dataloaders, DateRangeRegimeMambaDataset
 from ..models.mamba_model import TimeSeriesMamba, create_model_from_config
 from ..models.rl_model import ActorCritic
+from ..models.jump_model import ModifiedJumpModel
 from ..train.train import train_with_early_stopping
 from ..train.rl_train import train_rl_agent_for_window
 from .clustering import identify_bull_bear_regimes, predict_regimes, extract_hidden_states
@@ -164,13 +165,21 @@ def train_model_for_window(config, train_start, train_end, valid_start, valid_en
         total_valid_days = (datetime.strptime(valid_end, "%Y-%m-%d") - datetime.strptime(valid_start, "%Y-%m-%d")).days
         test_days = int(total_valid_days * 0.2)
         rl_train_start = valid_start
-        rl_train_end = (datetime.strptime(valid_end, "%Y-%m-%d") - relativedelta(days=test_days)).strftime("%Y-%m-%d")
-        rl_test_start = (datetime.strptime(valid_end, "%Y-%m-%d") - relativedelta(days=test_days + 1)).strftime("%Y-%m-%d")
+        rl_train_end = (datetime.strptime(valid_end, "%Y-%m-%d") - relativedelta(days=test_days + 1)).strftime("%Y-%m-%d")
+        rl_test_start = (datetime.strptime(valid_end, "%Y-%m-%d") - relativedelta(days=test_days)).strftime("%Y-%m-%d")
         rl_test_end = valid_end
         agent, model, history = train_rl_agent_for_window(config, rl_model, rl_train_start, rl_train_end, rl_test_start, rl_test_end, data)
         
 
         return agent, model, history
+
+    elif config.jump_model:
+        jump_model = ModifiedJumpModel()
+        jump_model.feature_extractor = model
+
+        jump_model.train_for_window(valid_start, valid_end, data, sort='cumret')
+
+        return jump_model
     
     return model, best_val_loss
 
