@@ -14,7 +14,7 @@ class ModifiedJumpModel():
     """
     """
 
-    def __init__(self, config, n_components=2, jump_penalty=50):
+    def __init__(self, config, n_components=2, jump_penalty=5):
         """
         """
 
