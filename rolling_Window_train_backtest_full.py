@@ -1169,7 +1169,7 @@ def run_rolling_window_backtest(
                 )
             
             # 4. Save results
-            if methods_results:
+            if config.jump_model==False or methods_results:
                 logger.info(f"Found {len(methods_results)} valid results")
                 for method_id, result in methods_results.items():
                     combined_results[method_id]['window'].append(window_number)
