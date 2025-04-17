@@ -1045,7 +1045,7 @@ def run_rolling_window_backtest(
             elif config.jump_model:
 
                 logger.info("Training jump model...")
-                jumpmodel, model, _ = train_model_for_window(
+                model = train_model_for_window(
                     config,
                     window_info['train_period']['start'],
                     window_info['train_period']['end'],
@@ -1054,7 +1054,7 @@ def run_rolling_window_backtest(
                     data
                 )
 
-                if jumpmodel is None or model is None:
+                if model is None or model is None:
                     logger.warning("Jump model training failed, skipping window")
                     continue
 
