@@ -1,5 +1,7 @@
 import pandas as pd
 import numpy as np
+from datetime import datetime
+from dateutil.relativedelta import relativedelta
 import torch
 from jumpmodels.jump import JumpModel
 from jumpmodels.preprocess import StandardScalerPD
@@ -31,6 +33,9 @@ class ModifiedJumpModel():
 
         self.vae = config.vae
         self.freeze_feature_extractor = config.freeze_feature_extractor
+        if self.freeze_feature_extractor:
+            for param in self.feature_extractor.parameters():
+                param.requires_grad = False
         self.output_dir = config.results_dir
         self.jump_penalty = jump_penalty
         self.jm = JumpModel(n_components=n_components, jump_penalty=self.jump_penalty, cont=False)
@@ -51,18 +56,31 @@ class ModifiedJumpModel():
         train_data['Close'] = train_data['Close'] / 100
         train_data['High'] = train_data['High'] / 100
         train_data['Low'] = train_data['Low'] / 100
+        train_start = str(datetime.strptime(train_start, "%Y-%m-%d") + relativedelta(days=self.seq_len - 1))
+
 
         dates = train_data['Date'].values
-        train_return_data = train_data.iloc[self.seq_len:] / 100
+        common_index = pd.to_datetime(dates[self.seq_len:])
+        train_return_data = train_data['returns'].iloc[self.seq_len:] / 100
+        train_return_data.index = common_index
         train_data = train_data[self.feature_col]
 
         self.feature_extractor.eval()
         self.feature_extractor.to(self.device)
-        hidden = []
-        for i in range(0, len(train_data), self.seq_len):
-            hidden.append(self.feature_extractor(torch.tensor(train_data.iloc[i:i+self.seq_len, :].values).to(self.device)).cpu().numpy()) # (16,)
+        hiddens = []
+        for i in range(0, len(train_data) - self.seq_len):
+            if self.vae:
+                _, _, _, _, hidden, _ = self.feature_extractor(torch.tensor(train_data.iloc[i:i+self.seq_len, :].values, dtype=torch.float32).unsqueeze(0).to(self.device), return_hidden = True)
+            else:
+                _, hidden = self.feature_extractor(torch.tensor(train_data.iloc[i:i+self.seq_len, :].values, dtype=torch.float32).unsqueeze(0).to(self.device), return_hidden = True) # (16,)
+
+            hiddens.append(hidden.squeeze().cpu().detach().numpy())
         
-        scaled_data = self.scaler.fit(np.array(hidden))
+        hiddens = np.stack(hiddens)
+        hiddens = pd.DataFrame(hiddens, columns=[f"hidden_{i}" for i in range(hiddens.shape[1])])
+        hiddens.index = common_index
+        self.scaler.fit(hiddens)
+        scaled_data = self.scaler.transform(hiddens)
         self.jm.fit(scaled_data, train_return_data, sort_by=sort)
 
         ax, ax2 = plot_regimes_and_cumret(self.jm.labels_, train_return_data, n_c=2, start_date=train_start, end_date=train_end)
@@ -76,24 +94,36 @@ class ModifiedJumpModel():
         """
 
         print(f"\nPredicting period: {start_date} ~ {end_date}")
-
+        
         pred_data = data[(data['Date'] >= start_date) & (data['Date'] <= end_date)].copy()
         pred_data['Open'] = pred_data['Open'] / 100
         pred_data['Close'] = pred_data['Close'] / 100
         pred_data['High'] = pred_data['High'] / 100
         pred_data['Low'] = pred_data['Low'] / 100
+        start_date = str(datetime.strptime(start_date, "%Y-%m-%d") + relativedelta(days=self.seq_len - 1))
+
 
         # 초기 seq_len 개 데이터 무시
-        pred_data = pred_data.iloc[self.seq_len:] / 100
+        dates = pred_data['Date'].values
+        common_index = pd.to_datetime(dates[self.seq_len:])
+        pred_return_data = pred_data['returns'].iloc[self.seq_len:] / 100
+        pred_return_data.index = common_index
         pred_data = pred_data[self.feature_col]
 
         self.feature_extractor.eval()
         self.feature_extractor.to(self.device)
-        hidden = []
-        for i in range(0, len(pred_data), self.seq_len):
-            hidden.append(self.feature_extractor(torch.tensor(pred_data.iloc[i:i+self.seq_len, :].values).to(self.device)).cpu().numpy()) # (16,)
+        hiddens = []
+        for i in range(0, len(pred_data)-self.seq_len):
+            if self.vae:
+                _, _, _, _, hidden, _ = self.feature_extractor(torch.tensor(pred_data.iloc[i:i+self.seq_len, :].values, dtype=torch.float32).unsqueeze(0).to(self.device), return_hidden = True)
+            else:
+                _, hidden = self.feature_extractor(torch.tensor(pred_data.iloc[i:i+self.seq_len, :].values, dtype=torch.float32).unsqueeze(0).to(self.device), return_hidden = True) # (16,)
+            hiddens.append(hidden.squeeze().cpu().detach().numpy())
         
-        scaled_data = self.scaler.transform(np.array(hidden))
+        hiddens = np.stack(hiddens)
+        hiddens = pd.DataFrame(hiddens, columns=[f"hidden_{i}" for i in range(hiddens.shape[1])])
+        hiddens.index = common_index
+        scaled_data = self.scaler.transform(hiddens)
         labels_test = self.jm.predict(scaled_data)
 
         ax, ax2 = plot_regimes_and_cumret(labels_test, pred_return_data, n_c=2, start_date=start_date, end_date=end_date)
