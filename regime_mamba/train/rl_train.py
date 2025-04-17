@@ -44,8 +44,11 @@ def train_rl_agent_for_window(config, model, train_start, train_end, valid_start
         return None, None, None
 
     # Determine feature columns
-    feature_cols = ["Open", "Close", "High", "Low", "treasury_rate"]
-    
+    if config.input_dim == 5:
+        feature_cols = ["Open", "Close", "High", "Low", "treasury_rate"]
+    elif config.input_dim == 7:
+        feature_cols = ["Open", "Close", "High", "Low", "treasury_rate", "treasury_rate_5y", "dollar_index"]
+
     # Check if all columns exist in the dataset
     for col in feature_cols:
         if col not in train_data.columns:

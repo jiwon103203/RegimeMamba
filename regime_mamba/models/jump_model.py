@@ -1,5 +1,6 @@
 import pandas as pd
 import numpy as np
+import torch
 from jumpmodels.jump import JumpModel
 from jumpmodels.preprocess import StandardScalerPD
 from jumpmodels.plot import plot_regimes_and_cumret, savefig_plt
@@ -17,6 +18,8 @@ class ModifiedJumpModel():
 
         super(ModifiedJumpModel, self).__init__()
 
+        self.device = config.device
+        self.seq_len = config.seq_len
         self.feature_extractor = TimeSeriesMamba(
             input_dim=config.input_dim,
             d_model=config.d_model,
@@ -31,7 +34,10 @@ class ModifiedJumpModel():
         self.output_dir = config.results_dir
         self.jump_penalty = jump_penalty
         self.jm = JumpModel(n_components=n_components, jump_penalty=self.jump_penalty, cont=False)
-        self.feature_col = ['Open','Close','High','Low','treasury_rate']
+        if config.input_dim == 5:
+            self.feature_col = ['Open','Close','High','Low','treasury_rate']
+        elif config.input_dim == 7:
+            self.feature_col = ['Open','Close','High','Low','treasury_rate', 'treasury_rate_5y', 'dollar_index']
         self.scaler = StandardScalerPD()
     
     def train_for_window(self, train_start, train_end, data, sort = "cumret"):
@@ -46,14 +52,15 @@ class ModifiedJumpModel():
         train_data['High'] = train_data['High'] / 100
         train_data['Low'] = train_data['Low'] / 100
 
-        train_return_data = train_data['returns'] / 100
+        dates = train_data['Date'].values
+        train_return_data = train_data.iloc[self.seq_len:] / 100
         train_data = train_data[self.feature_col]
 
         self.feature_extractor.eval()
-        dates = train_data['Date'].values
+        self.feature_extractor.to(self.device)
         hidden = []
-        for i in range(len(train_data)):
-            hidden.append(self.feature_extractor(train_data.iloc[:i+1, :].values)) # (16,)
+        for i in range(0, len(train_data), self.seq_len):
+            hidden.append(self.feature_extractor(torch.tensor(train_data.iloc[i:i+self.seq_len, :].values).to(self.device)).cpu().numpy()) # (16,)
         
         scaled_data = self.scaler.fit(np.array(hidden))
         self.jm.fit(scaled_data, train_return_data, sort_by=sort)
@@ -76,14 +83,15 @@ class ModifiedJumpModel():
         pred_data['High'] = pred_data['High'] / 100
         pred_data['Low'] = pred_data['Low'] / 100
 
-        pred_return_data = pred_data['returns'] / 100
+        # 초기 seq_len 개 데이터 무시
+        pred_data = pred_data.iloc[self.seq_len:] / 100
         pred_data = pred_data[self.feature_col]
 
         self.feature_extractor.eval()
-
+        self.feature_extractor.to(self.device)
         hidden = []
-        for i in range(len(pred_data)):
-            hidden.append(self.feature_extractor(pred_data.iloc[:i+1, :].values))
+        for i in range(0, len(pred_data), self.seq_len):
+            hidden.append(self.feature_extractor(torch.tensor(pred_data.iloc[i:i+self.seq_len, :].values).to(self.device)).cpu().numpy()) # (16,)
         
         scaled_data = self.scaler.transform(np.array(hidden))
         labels_test = self.jm.predict(scaled_data)
