@@ -5,7 +5,7 @@ n_layers: 2
 dropout: 0.1
 learning_rate: 0.00005 # 1e-5
 batch_size: 512
-seq_len: 120
+seq_len: 252
 input_dim: 5
 vae: True
 

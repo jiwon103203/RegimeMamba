@@ -61,7 +61,7 @@ class ModifiedJumpModel():
 
         dates = train_data['Date'].values
         common_index = pd.to_datetime(dates[self.seq_len:])
-        train_return_data = train_data['returns'].iloc[self.seq_len:] / 100
+        train_return_data = train_data['returns'].iloc[self.seq_len:]
         train_return_data.index = common_index
         train_data = train_data[self.feature_col]
 
@@ -106,7 +106,7 @@ class ModifiedJumpModel():
         # 초기 seq_len 개 데이터 무시
         dates = pred_data['Date'].values
         common_index = pd.to_datetime(dates[self.seq_len:])
-        pred_return_data = pred_data['returns'].iloc[self.seq_len:] / 100
+        pred_return_data = pred_data['returns'].iloc[self.seq_len:]
         pred_return_data.index = common_index
         pred_data = pred_data[self.feature_col]
 
