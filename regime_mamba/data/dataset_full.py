@@ -61,7 +61,7 @@ class RegimeMambaDataset(Dataset):
                 self.dates.append(dates[i+config.seq_len-1])
 
 
-        elif config.target_type == "average" and (f"target_EMA_{config.target_horizon}" in self.data.columns or f"target_returns_{config.target_horizon}" in self.data.columns):
+        elif config.target_type == "average" and (f"target_{config.target_horizon}" in self.data.columns or f"target_returns_{config.target_horizon}" in self.data.columns):
             
             print("미리 처리된 데이터 포착")
             
@@ -69,7 +69,7 @@ class RegimeMambaDataset(Dataset):
                 self.target_col=f"target_returns_{config.target_horizon}"
                 targets = np.array(self.subset[self.target_col]/self.target_horizon)
             else:
-                self.target_col=f"target_EMA_{config.target_horizon}"
+                self.target_col=f"target_{config.target_horizon}"
                 targets = np.array(self.subset[self.target_col] / 100)
 
             for i in range(len(features) - config.seq_len+1):
@@ -158,7 +158,7 @@ class DateRangeRegimeMambaDataset(Dataset):
                 # 타겟 날짜 저장 (타겟 기간의 마지막 날짜)
                 self.dates.append(dates[i+config.seq_len-1])
 
-        elif config.target_type == "average" and (f"target_EMA_{config.target_horizon}" in self.data.columns or f"target_returns_{config.target_horizon}" in self.data.columns):
+        elif config.target_type == "average" and (f"target_{config.target_horizon}" in self.data.columns or f"target_returns_{config.target_horizon}" in self.data.columns):
             
             print("미리 처리된 데이터 포착")
             
@@ -166,7 +166,7 @@ class DateRangeRegimeMambaDataset(Dataset):
                 self.target_col=f"target_returns_{config.target_horizon}"
                 targets = np.array(self.data[self.target_col])/self.target_horizon
             else:
-                self.target_col=f"target_EMA_{config.target_horizon}"
+                self.target_col=f"target_{config.target_horizon}"
                 targets = np.array(self.data[self.target_col]/100)
 
             for i in range(len(features) - seq_len+1):

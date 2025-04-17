@@ -120,6 +120,7 @@ class FinancialTradingEnv(gym.Env):
         else:
             reward = strategy_return - position_penalty
         
+        print(f"Strategy_return: {strategy_return}, Position_penalty: {position_penalty}")
         # Update current position
         self.current_position = new_position
         

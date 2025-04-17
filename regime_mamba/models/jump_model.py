@@ -28,7 +28,7 @@ class ModifiedJumpModel():
 
         self.vae = config.vae
         self.freeze_feature_extractor = config.freeze_feature_extractor
-        self.output_dir = config.output_dir
+        self.output_dir = config.results_dir
         self.jump_penalty = jump_penalty
         self.jm = JumpModel(n_components=n_components, jump_penalty=self.jump_penalty, cont=False)
         self.feature_col = ['Open','Close','High','Low','treasury_rate']
@@ -46,8 +46,8 @@ class ModifiedJumpModel():
         train_data['High'] = train_data['High'] / 100
         train_data['Low'] = train_data['Low'] / 100
 
+        train_return_data = train_data['returns'] / 100
         train_data = train_data[self.feature_col]
-        train_return_data = train_data['return'] / 100
 
         self.feature_extractor.eval()
         dates = train_data['Date'].values
@@ -76,8 +76,8 @@ class ModifiedJumpModel():
         pred_data['High'] = pred_data['High'] / 100
         pred_data['Low'] = pred_data['Low'] / 100
 
+        pred_return_data = pred_data['returns'] / 100
         pred_data = pred_data[self.feature_col]
-        pred_return_data = pred_data['return'] / 100
 
         self.feature_extractor.eval()
 

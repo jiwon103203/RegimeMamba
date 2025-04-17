@@ -174,7 +174,7 @@ def train_model_for_window(config, train_start, train_end, valid_start, valid_en
         return agent, model, history
 
     elif config.jump_model:
-        jump_model = ModifiedJumpModel()
+        jump_model = ModifiedJumpModel(config=config)
         jump_model.feature_extractor = model
 
         jump_model.train_for_window(valid_start, valid_end, data, sort='cumret')
