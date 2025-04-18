@@ -6,7 +6,7 @@ dropout: 0.1
 learning_rate: 0.00005 # 1e-5
 batch_size: 512
 seq_len: 252
-input_dim: 5
+input_dim: 7
 vae: True
 
 # 데이터 관련 파라미터
