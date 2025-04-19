@@ -43,6 +43,8 @@ class ModifiedJumpModel():
             self.feature_col = ['Open','Close','High','Low','treasury_rate']
         elif config.input_dim == 7:
             self.feature_col = ['Open','Close','High','Low','treasury_rate', 'treasury_rate_5y', 'dollar_index']
+        elif config.input_dim == 8:
+            self.feature_col = ["Open", "Close", "High", "Low", "Volume","treasury_rate", "treasury_rate_5y", "dollar_index"]
         self.scaler = StandardScalerPD()
     
     def train_for_window(self, train_start, train_end, data, sort = "cumret"):

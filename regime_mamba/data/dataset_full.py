@@ -28,6 +28,8 @@ class RegimeMambaDataset(Dataset):
             self.feature_cols = ["Open", "Close", "High", "Low", "treasury_rate"]
         elif config.input_dim == 7:
             self.feature_cols = ["Open", "Close", "High", "Low", "treasury_rate", "treasury_rate_5y", "dollar_index"]
+        elif config.input_dim == 8:
+            self.feature_cols = ["Open", "Close", "High", "Low", "Volume","treasury_rate", "treasury_rate_5y", "dollar_index"]
 
         # 일자 기준으로 데이터 분할
         date_col = 'Date'
@@ -144,6 +146,8 @@ class DateRangeRegimeMambaDataset(Dataset):
             self.feature_cols = ["Open", "Close", "High", "Low", "treasury_rate"]
         elif config.input_dim == 7:
             self.feature_cols = ["Open", "Close", "High", "Low", "treasury_rate", "treasury_rate_5y", "dollar_index"]
+        elif config.input_dim == 8:
+            self.feature_cols = ["Open", "Close", "High", "Low", "Volume","treasury_rate", "treasury_rate_5y", "dollar_index"]
 
         # 시퀀스 및 타겟 생성
         self.sequences = []
