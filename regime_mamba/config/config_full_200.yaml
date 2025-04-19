@@ -1,16 +1,16 @@
 # 모델 관련 파라미터
 d_model: 256
 d_state: 64
-n_layers: 2
+n_layers: 4
 dropout: 0.1
-learning_rate: 0.00005 # 5e-5
+learning_rate: 0.00004 # 1e-4
 batch_size: 512
 seq_len: 252
-input_dim: 7
+input_dim: 8
 vae: True
 
 # 데이터 관련 파라미터
-data_path: regime_mamba/data/data_full_final.csv
+data_path: regime_mamba/data/data_full_close.csv
 preprocessed: False
 target_type: average
 target_horizon: 200
