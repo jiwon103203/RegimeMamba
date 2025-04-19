@@ -1,5 +1,5 @@
 # 모델 관련 파라미터
-d_model: 128
+d_model: 64
 d_state: 256
 n_layers: 4
 dropout: 0.1

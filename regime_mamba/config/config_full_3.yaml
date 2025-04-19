@@ -13,7 +13,7 @@ vae: True
 data_path: regime_mamba/data/data_full_close.csv
 preprocessed: False
 target_type: average
-target_horizon: 10
+target_horizon: 3
 
 # 학습 관련 파라미터
 max_epochs: 50
