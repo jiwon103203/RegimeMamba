@@ -85,7 +85,7 @@ class ModifiedJumpModel():
 
         ax, ax2 = plot_regimes_and_cumret(self.jm.labels_, train_return_data, n_c=2, start_date=train_start, end_date=train_end)
         ax.set(title=f"In-Sample Fitted Regimes by the JM(lambda : {self.jump_penalty})")
-        savefig_plt(f"{self.output_dir}/JM_lambd_{self.jump_penalty}_train.pdf")
+        savefig_plt(f"{self.output_dir}/JM_lambd_{self.jump_penalty}_train.png")
 
         return
     
@@ -128,5 +128,5 @@ class ModifiedJumpModel():
 
         ax, ax2 = plot_regimes_and_cumret(labels_test, pred_return_data, n_c=2, start_date=start_date, end_date=end_date)
         ax.set(title=f"Out-of-Sample Predicted Regimes by the JM(lambda : {self.jump_penalty})")
-        savefig_plt(f"{self.output_dir}/JM_lambd_{self.jump_penalty}_test_window_{window_number}.pdf")
+        savefig_plt(f"{self.output_dir}/JM_lambd_{self.jump_penalty}_test_window_{window_number}.png")
         
