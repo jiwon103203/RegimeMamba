@@ -16,8 +16,8 @@ target_type: average
 target_horizon: 200
 
 # 학습 관련 파라미터
-max_epochs: 50
-patience: 20
+max_epochs: 100
+patience: 30
 use_onecycle: True
 progressive_train: True
 
