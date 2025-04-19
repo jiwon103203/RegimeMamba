@@ -73,7 +73,7 @@ class RegimeMambaDataset(Dataset):
                 self.target_col=f"target_returns_{config.target_horizon}"
                 targets = np.array(self.subset[self.target_col]/self.target_horizon)
             else:
-                self.target_col=f"target_{config.target_horizon}"
+                self.target_col=f"target_EMA_{config.target_horizon}"
                 targets = np.array(self.subset[self.target_col] / 100)
 
             for i in range(len(features) - config.seq_len+1):
@@ -175,7 +175,7 @@ class DateRangeRegimeMambaDataset(Dataset):
                 self.target_col=f"target_returns_{config.target_horizon}"
                 targets = np.array(self.data[self.target_col])/self.target_horizon
             else:
-                self.target_col=f"target_{config.target_horizon}"
+                self.target_col=f"target_EMA_{config.target_horizon}"
                 targets = np.array(self.data[self.target_col]/100)
 
             for i in range(len(features) - seq_len+1):

@@ -17,7 +17,7 @@ target_horizon: 5
 
 # 학습 관련 파라미터
 max_epochs: 50
-patience: 10
+patience: 20
 use_onecycle: True
 progressive_train: True
 
