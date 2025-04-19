@@ -1,5 +1,5 @@
 # 모델 관련 파라미터
-d_model: 128
+d_model: 64
 d_state: 256
 n_layers: 4
 dropout: 0.1
@@ -10,7 +10,7 @@ input_dim: 8
 vae: True
 
 # 데이터 관련 파라미터
-data_path: regime_mamba/data/data_full_close.csv
+data_path: regime_mamba/data/data_full_final.csv
 preprocessed: False
 target_type: average
 target_horizon: 20
