@@ -27,8 +27,8 @@ cluster_method: kmeans
 
 results_dir: /content/drive/MyDrive/train_results
 start_date: '2012-04-20'
-total_window_years: 30
-train_years: 10
+total_window_years: 25
+train_years: 15
 valid_years: 10
 clustering_years: 10
 forward_months: 24

@@ -31,17 +31,17 @@ class ModifiedJumpModel():
         jm (JumpModel): Instance of the Jump Model.
         feature_col (list): List of feature columns to be used in the model.
     Methods:
-        __init__(config, n_components=2, jump_penalty=1.5): Initializes the ModifiedJumpModel with the given configuration.
+        __init__(config, n_components=2, jump_penalty=5): Initializes the ModifiedJumpModel with the given configuration.
         train_for_window(train_start, train_end, data, sort="cumret", window=1): Trains the model on a specified time window.
         predict(start_date, end_date, data, window_number, sort="cumret"): Predicts regimes for a specified time window.
     Example:
         config = Config()  # Assuming you have a configuration object
-        model = ModifiedJumpModel(config, n_components=2, jump_penalty=1.5)
+        model = ModifiedJumpModel(config, n_components=2, jump_penalty=5)
         model.train_for_window("2020-01-01", "2020-12-31", data)
         model.predict("2021-01-01", "2021-12-31", data, window_number=1)
     """
 
-    def __init__(self, config, n_components=2, jump_penalty=1.5):
+    def __init__(self, config, n_components=2, jump_penalty=5):
         """
         Initializes the ModifiedJumpModel with the given configuration.
         Args:
@@ -71,6 +71,10 @@ class ModifiedJumpModel():
         self.output_dir = config.results_dir
         self.jump_penalty = jump_penalty
         self.jm = JumpModel(n_components=n_components, jump_penalty=self.jump_penalty, cont=False)
+        self.original_jm = JumpModel(n_components=2, jump_penalty=50, cont=False)
+        self.original_feature = ['dd_10','sortino_20','sortino_60']
+        self.original_scaler = StandardScalerPD()
+
         if config.input_dim == 5:
             self.feature_col = ['Open','Close','High','Low','treasury_rate']
         elif config.input_dim == 7:
@@ -93,6 +97,15 @@ class ModifiedJumpModel():
         """
 
         print(f"\nTraining period: {train_start} ~ {train_end}")
+
+        # original_start_date = train_start - 10년 (10년 전)
+        original_start_date = str(datetime.strptime(train_start, "%Y-%m-%d") - relativedelta(years=10))
+        original_train_data = data[(data['Date'] >= original_start_date) & (data['Date'] <= train_end)].copy()
+        self.original_scaler.fit(original_train_data[self.original_feature].iloc[self.seq_len-1:])
+        self.original_jm.fit(self.original_scaler.transform(original_train_data[self.original_feature].iloc[self.seq_len-1:]), train_return_data, sort_by=sort)
+        ax, ax2 = plot_regimes_and_cumret(self.original_jm.labels_, train_return_data, n_c=2, start_date=original_start_date, end_date=train_end)
+        ax.set(title=f"In-Sample Fitted Regimes by the Original JM(lambda : 50)")
+        savefig_plt(f"{self.output_dir}/JM_lambd_50_train_{window}.png")
 
         train_data = data[(data['Date'] >= train_start) & (data['Date'] <= train_end)].copy()
         train_data['Open'] = train_data['Open'] / 100
@@ -154,6 +167,17 @@ class ModifiedJumpModel():
         pred_data['Low'] = pred_data['Low'] / 100
         start_date = str(datetime.strptime(start_date, "%Y-%m-%d") + relativedelta(days=self.seq_len - 1))
 
+        original_labels_test = self.original_jm.predict(self.original_scaler.transform(pred_data[self.original_feature].iloc[self.seq_len-1:]))
+        ax, ax2 = plot_regimes_and_cumret(self.original_jm.labels_, pred_data['returns'], n_c=2, start_date=start_date, end_date=end_date)
+        ax.set(title=f"Out-of-Sample Predicted Regimes by the Original JM(lambda : 50)")
+        savefig_plt(f"{self.output_dir}/JM_lambd_50_test_window_{window_number}.png")
+
+        pred_data['labels'] = np.nan
+        pred_data['labels'].iloc[self.seq_len-1:] = original_labels_test
+        pred_data['labels'] = pred_data['labels'].astype(int)
+        pred_data['Date'] = pd.to_datetime(pred_data['Date'])
+        pred_data = pred_data[['Date', 'labels']]
+        pred_data.to_csv(f"{self.output_dir}/JM_lambd_50_test_window_{window_number}.csv", index=False)
 
         # 초기 seq_len 개 데이터 무시
         dates = pred_data['Date'].values
@@ -181,4 +205,14 @@ class ModifiedJumpModel():
         ax, ax2 = plot_regimes_and_cumret(labels_test, pred_return_data, n_c=2, start_date=start_date, end_date=end_date)
         ax.set(title=f"Out-of-Sample Predicted Regimes by the JM(lambda : {self.jump_penalty})")
         savefig_plt(f"{self.output_dir}/JM_lambd_{self.jump_penalty}_test_window_{window_number}.png")
+
+        # predict 결과(labels_test) csv 파일로 저장
+        pred_data['labels'] = np.nan
+        pred_data['labels'].iloc[self.seq_len:] = labels_test
+        pred_data['labels'] = pred_data['labels'].astype(int)
+        pred_data['Date'] = pd.to_datetime(pred_data['Date'])
+        pred_data = pred_data[['Date', 'labels']]
+        pred_data.to_csv(f"{self.output_dir}/JM_lambd_{self.jump_penalty}_test_window_{window_number}.csv", index=False)
+
+
         
