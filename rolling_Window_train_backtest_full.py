@@ -1247,7 +1247,7 @@ def main():
     try:
         # Parse arguments
         args = parse_args()
-        
+        print(args)
         # Prepare output directory
         result_dir, log_file = prepare_output_directory(args.results_dir or './train_backtest_results')
         
