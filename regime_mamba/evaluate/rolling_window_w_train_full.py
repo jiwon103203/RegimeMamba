@@ -66,7 +66,7 @@ from .smoothing import apply_regime_smoothing, apply_minimum_holding_period
 #         self.results_dir = './rolling_window_train_results'
 #         os.makedirs(self.results_dir, exist_ok=True)
 
-def train_model_for_window(config, train_start, train_end, valid_start, valid_end, data):
+def train_model_for_window(config, train_start, train_end, valid_start, valid_end, data, window_number=1):
     """
     특정 기간에 대해 모델 학습
     
@@ -177,7 +177,7 @@ def train_model_for_window(config, train_start, train_end, valid_start, valid_en
         jump_model = ModifiedJumpModel(config=config)
         jump_model.feature_extractor = model
 
-        jump_model.train_for_window(valid_start, valid_end, data, sort='cumret')
+        jump_model.train_for_window(valid_start, valid_end, data, sort='cumret', window=window_number)
 
         return jump_model
     

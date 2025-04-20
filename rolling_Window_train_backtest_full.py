@@ -180,17 +180,17 @@ def load_config(args) -> RollingWindowTrainConfig:
     """
     config = RollingWindowTrainConfig()
     
-    # Set default values
+    # Set default values / 1982-04-20
     defaults = {
-        'results_dir': './train_backtest_results',
-        'start_date': '2000-01-01',
+        'results_dir': '/content/drive/MyDrive/train_backtest_results',
+        'start_date': '2012-04-20',
         'end_date': '2023-12-31',
         'preprocessed': True,
-        'total_window_years': 40,
-        'train_years': 20,
+        'total_window_years': 30,
+        'train_years': 10,
         'valid_years': 10,
         'clustering_years': 10,
-        'forward_months': 60,
+        'forward_months': 24,
         'd_model': 128,
         'd_state': 128,
         'n_layers': 4,
@@ -1023,7 +1023,8 @@ def run_rolling_window_backtest(
                     window_info['train_period']['end'],
                     window_info['valid_period']['start'],
                     window_info['valid_period']['end'],
-                    data
+                    data,
+                    window_number=window_number
                 )
                 
                 # Agent training 실패 시 다음 윈도우로 넘어감

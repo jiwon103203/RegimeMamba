@@ -47,7 +47,7 @@ class ModifiedJumpModel():
             self.feature_col = ["Open", "Close", "High", "Low", "Volume","treasury_rate", "treasury_rate_5y", "dollar_index"]
         self.scaler = StandardScalerPD()
     
-    def train_for_window(self, train_start, train_end, data, sort = "cumret"):
+    def train_for_window(self, train_start, train_end, data, sort = "cumret", window = 1):
         """
         """
 
@@ -87,7 +87,7 @@ class ModifiedJumpModel():
 
         ax, ax2 = plot_regimes_and_cumret(self.jm.labels_, train_return_data, n_c=2, start_date=train_start, end_date=train_end)
         ax.set(title=f"In-Sample Fitted Regimes by the JM(lambda : {self.jump_penalty})")
-        savefig_plt(f"{self.output_dir}/JM_lambd_{self.jump_penalty}_train.png")
+        savefig_plt(f"{self.output_dir}/JM_lambd_{self.jump_penalty}_train_{window}.png")
 
         return
     
