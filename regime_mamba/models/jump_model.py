@@ -100,13 +100,16 @@ class ModifiedJumpModel():
 
         # original_start_date = train_start - 10년 (10년 전)
         train_start = train_start.split(" ")[0]
-        original_start_date = str(datetime.strptime(train_start, "%Y-%m-%d") - relativedelta(years=10))
+        original_start_date = (datetime.strptime(train_start, "%Y-%m-%d") - relativedelta(years=10)).strftime("%Y-%m-%d")
         original_train_data = data[(data['Date'] >= original_start_date) & (data['Date'] <= train_end)].copy()
-        self.original_scaler.fit(original_train_data[self.original_feature].iloc[self.seq_len-1:])
+        original_features = original_train_data[self.original_feature].iloc[self.seq_len-1:].copy()
         original_train_return_data = original_train_data['returns'].iloc[self.seq_len-1:]
         original_common_index = pd.to_datetime(original_train_data['Date'].values[self.seq_len-1:])
         original_train_return_data.index = original_common_index
-        self.original_jm.fit(self.original_scaler.transform(original_train_data[self.original_feature].iloc[self.seq_len-1:]), original_train_return_data, sort_by=sort)
+        original_features.index = original_common_index
+        self.original_scaler.fit(original_features)
+        original_scaled_data = self.original_scaler.transform(original_features)
+        self.original_jm.fit(original_scaled_data, original_train_return_data, sort_by=sort)
 
         ax, ax2 = plot_regimes_and_cumret(self.original_jm.labels_, original_train_return_data, n_c=2, start_date=original_start_date, end_date=train_end)
         ax.set(title=f"In-Sample Fitted Regimes by the Original JM(lambda : 50)")
@@ -140,9 +143,10 @@ class ModifiedJumpModel():
         hiddens = np.stack(hiddens)
         hiddens = pd.DataFrame(hiddens, columns=[f"hidden_{i}" for i in range(hiddens.shape[1])])
         hiddens.index = common_index
-        self.scaler.fit(hiddens)
-        scaled_data = self.scaler.transform(hiddens)
-        self.jm.fit(scaled_data, train_return_data, sort_by=sort)
+        # self.scaler.fit(hiddens)
+        # scaled_data = self.scaler.transform(hiddens)
+        # self.jm.fit(scaled_data, train_return_data, sort_by=sort)
+        self.jm.fit(hiddens, train_return_data, sort_by=sort)
 
         ax, ax2 = plot_regimes_and_cumret(self.jm.labels_, train_return_data, n_c=2, start_date=train_start, end_date=train_end)
         ax.set(title=f"In-Sample Fitted Regimes by the JM(lambda : {self.jump_penalty})")
@@ -171,24 +175,24 @@ class ModifiedJumpModel():
         pred_data['High'] = pred_data['High'] / 100
         pred_data['Low'] = pred_data['Low'] / 100
         start_date = str(datetime.strptime(start_date, "%Y-%m-%d") + relativedelta(days=self.seq_len - 1))
-
-        original_labels_test = self.original_jm.predict(self.original_scaler.transform(pred_data[self.original_feature].iloc[self.seq_len-1:]))
-        ax, ax2 = plot_regimes_and_cumret(self.original_jm.labels_, pred_data['returns'], n_c=2, start_date=start_date, end_date=end_date)
-        ax.set(title=f"Out-of-Sample Predicted Regimes by the Original JM(lambda : 50)")
-        savefig_plt(f"{self.output_dir}/JM_lambd_50_test_window_{window_number}.png")
-
-        pred_data['labels'] = np.nan
-        pred_data['labels'].iloc[self.seq_len-1:] = original_labels_test
-        pred_data['labels'] = pred_data['labels'].astype(int)
-        pred_data['Date'] = pd.to_datetime(pred_data['Date'])
-        pred_data = pred_data[['Date', 'labels']]
-        pred_data.to_csv(f"{self.output_dir}/JM_lambd_50_test_window_{window_number}.csv", index=False)
-
         # 초기 seq_len 개 데이터 무시
         dates = pred_data['Date'].values
         common_index = pd.to_datetime(dates[self.seq_len:])
         pred_return_data = pred_data['returns'].iloc[self.seq_len:]
         pred_return_data.index = common_index
+
+        original_labels_test = self.original_jm.predict(self.original_scaler.transform(pred_data[self.original_feature].iloc[self.seq_len-1:]))
+        ax, ax2 = plot_regimes_and_cumret(self.original_jm.labels_, pred_return_data, n_c=2, start_date=start_date, end_date=end_date)
+        ax.set(title=f"Out-of-Sample Predicted Regimes by the Original JM(lambda : 50)")
+        savefig_plt(f"{self.output_dir}/JM_lambd_50_test_window_{window_number}.png")
+
+        df = pred_data.copy()
+        df['labels'] = pred_data['labels'].fillna(-1).astype(int)
+        df['labels'].iloc[self.seq_len-1:] = original_labels_test
+        df['Date'] = pd.to_datetime(pred_data['Date'])
+        df = df[['Date', 'labels']]
+        df.to_csv(f"{self.output_dir}/JM_lambd_50_test_window_{window_number}.csv", index=False)
+
         pred_data = pred_data[self.feature_col]
 
         self.feature_extractor.eval()
@@ -204,20 +208,21 @@ class ModifiedJumpModel():
         hiddens = np.stack(hiddens)
         hiddens = pd.DataFrame(hiddens, columns=[f"hidden_{i}" for i in range(hiddens.shape[1])])
         hiddens.index = common_index
-        scaled_data = self.scaler.transform(hiddens)
-        labels_test = self.jm.predict(scaled_data)
+        #scaled_data = self.scaler.transform(hiddens)
+        #labels_test = self.jm.predict(scaled_data)
+        labels_test = self.jm.predict(hiddens)
 
         ax, ax2 = plot_regimes_and_cumret(labels_test, pred_return_data, n_c=2, start_date=start_date, end_date=end_date)
         ax.set(title=f"Out-of-Sample Predicted Regimes by the JM(lambda : {self.jump_penalty})")
         savefig_plt(f"{self.output_dir}/JM_lambd_{self.jump_penalty}_test_window_{window_number}.png")
 
         # predict 결과(labels_test) csv 파일로 저장
-        pred_data['labels'] = np.nan
-        pred_data['labels'].iloc[self.seq_len:] = labels_test
-        pred_data['labels'] = pred_data['labels'].astype(int)
-        pred_data['Date'] = pd.to_datetime(pred_data['Date'])
-        pred_data = pred_data[['Date', 'labels']]
-        pred_data.to_csv(f"{self.output_dir}/JM_lambd_{self.jump_penalty}_test_window_{window_number}.csv", index=False)
+        df = pred_data.copy()
+        df['labels'] = pred_data['labels'].fillna(-1).astype(int)
+        df['labels'].iloc[self.seq_len-1:] = original_labels_test
+        df['Date'] = pd.to_datetime(pred_data['Date'])
+        df = df[['Date', 'labels']]
+        df.to_csv(f"{self.output_dir}/JM_lambd_50_test_window_{window_number}.csv", index=False)
 
 
         
