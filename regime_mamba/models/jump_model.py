@@ -41,7 +41,7 @@ class ModifiedJumpModel():
         model.predict("2021-01-01", "2021-12-31", data, window_number=1)
     """
 
-    def __init__(self, config, n_components=2, jump_penalty=5):
+    def __init__(self, config, n_components=2, jump_penalty=2):
         """
         Initializes the ModifiedJumpModel with the given configuration.
         Args:
@@ -98,10 +98,10 @@ class ModifiedJumpModel():
 
         print(f"\nTraining period: {train_start} ~ {train_end}")
 
-        # original_start_date = train_start - 10년 (10년 전)
         train_start = train_start.split(" ")[0]
-        original_start_date = (datetime.strptime(train_start, "%Y-%m-%d") - relativedelta(years=10)).strftime("%Y-%m-%d")
-        original_train_data = data[(data['Date'] >= original_start_date) & (data['Date'] <= train_end)].copy()
+        train_end = train_end.split(" ")[0]
+        original_end_date = (datetime.strptime(train_end, "%Y-%m-%d") + relativedelta(years=5)).strftime("%Y-%m-%d")
+        original_train_data = data[(data['Date'] >= train_start) & (data['Date'] <= original_end_date)].copy()
         original_features = original_train_data[self.original_feature].iloc[self.seq_len-1:].copy()
         original_train_return_data = original_train_data['returns'].iloc[self.seq_len-1:]
         original_common_index = pd.to_datetime(original_train_data['Date'].values[self.seq_len-1:])
@@ -111,7 +111,7 @@ class ModifiedJumpModel():
         original_scaled_data = self.original_scaler.transform(original_features)
         self.original_jm.fit(original_scaled_data, original_train_return_data, sort_by=sort)
 
-        ax, ax2 = plot_regimes_and_cumret(self.original_jm.labels_, original_train_return_data, n_c=2, start_date=original_start_date, end_date=train_end)
+        ax, ax2 = plot_regimes_and_cumret(self.original_jm.labels_, original_train_return_data, n_c=2, start_date=train_start, end_date=original_end_date)
         ax.set(title=f"In-Sample Fitted Regimes by the Original JM(lambda : 50)")
         savefig_plt(f"{self.output_dir}/JM_lambd_50_train_{window}.png")
 
@@ -187,8 +187,8 @@ class ModifiedJumpModel():
         savefig_plt(f"{self.output_dir}/JM_lambd_50_test_window_{window_number}.png")
 
         df = pred_data.copy()
+        df['labels'] = -1
         df['labels'].iloc[self.seq_len-1:] = original_labels_test
-        df['labels'] = df['labels'].fillna(-1).astype(int)
         df['Date'] = pd.to_datetime(pred_data['Date'])
         df = df[['Date', 'labels']]
         df.to_csv(f"{self.output_dir}/JM_lambd_50_test_window_{window_number}.csv", index=False)
@@ -218,8 +218,8 @@ class ModifiedJumpModel():
 
         # predict 결과(labels_test) csv 파일로 저장
         df = pred_data.copy()
+        df['labels'] = -1
         df['labels'].iloc[self.seq_len-1:] = labels_test
-        df['labels'] = df['labels'].fillna(-1).astype(int)
         df['Date'] = pd.to_datetime(pred_data['Date'])
         df = df[['Date', 'labels']]
         df.to_csv(f"{self.output_dir}/JM_lambd_50_test_window_{window_number}.csv", index=False)
