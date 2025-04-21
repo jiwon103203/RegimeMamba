@@ -187,8 +187,8 @@ class ModifiedJumpModel():
         savefig_plt(f"{self.output_dir}/JM_lambd_50_test_window_{window_number}.png")
 
         df = pred_data.copy()
-        df['labels'] = pred_data['labels'].fillna(-1).astype(int)
         df['labels'].iloc[self.seq_len-1:] = original_labels_test
+        df['labels'] = df['labels'].fillna(-1).astype(int)
         df['Date'] = pd.to_datetime(pred_data['Date'])
         df = df[['Date', 'labels']]
         df.to_csv(f"{self.output_dir}/JM_lambd_50_test_window_{window_number}.csv", index=False)
@@ -218,8 +218,8 @@ class ModifiedJumpModel():
 
         # predict 결과(labels_test) csv 파일로 저장
         df = pred_data.copy()
-        df['labels'] = pred_data['labels'].fillna(-1).astype(int)
-        df['labels'].iloc[self.seq_len-1:] = original_labels_test
+        df['labels'].iloc[self.seq_len-1:] = labels_test
+        df['labels'] = df['labels'].fillna(-1).astype(int)
         df['Date'] = pd.to_datetime(pred_data['Date'])
         df = df[['Date', 'labels']]
         df.to_csv(f"{self.output_dir}/JM_lambd_50_test_window_{window_number}.csv", index=False)

@@ -26,9 +26,9 @@ n_clusters: 2
 cluster_method: kmeans
 
 results_dir: '/content/drive/MyDrive/train_results'
-start_date: '2017-04-20'
+start_date: '2007-04-20'
 total_window_years: 35
 train_years: 15
 valid_years: 10
-clustering_years: 10
+clustering_years: 0
 forward_months: 36

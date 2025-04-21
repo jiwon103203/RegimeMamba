@@ -837,19 +837,19 @@ def create_window_schedule(
     window_schedule = []
     
     # Parse start and end dates
-    current_date = datetime.strptime(config.start_date, '%Y-%m-%d')
-    end_date = datetime.strptime(config.end_date, '%Y-%m-%d')
+    current_date = datetime.strptime(config.start_date, '%Y-%m-%d') # 2007-04-20
+    end_date = datetime.strptime(config.end_date, '%Y-%m-%d') #2023-12-31
     
     window_number = 1
     
     # Create window schedule
     while current_date <= end_date:
         # Calculate training period
-        train_start = (current_date - relativedelta(years=config.total_window_years)).strftime('%Y-%m-%d')
-        train_end = (current_date - relativedelta(years=config.valid_years + config.clustering_years)).strftime('%Y-%m-%d')
+        train_start = (current_date - relativedelta(years=config.total_window_years)).strftime('%Y-%m-%d') # 2007-04-20 - 25 years = 1982-04-20
+        train_end = (current_date - relativedelta(years=config.valid_years + config.clustering_years)).strftime('%Y-%m-%d') # 2007-04-20 - 10 years - 10 years = 1982-04-20
         
         # Calculate validation period
-        valid_start = (current_date - relativedelta(years=config.clustering_years)).strftime('%Y-%m-%d')
+        valid_start = (current_date - relativedelta(years=config.valid_years)).strftime('%Y-%m-%d')
         valid_end = current_date.strftime('%Y-%m-%d')
         
         # Calculate clustering period
