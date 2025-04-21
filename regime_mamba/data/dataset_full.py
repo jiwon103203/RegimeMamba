@@ -15,10 +15,22 @@ class RegimeMambaDataset(Dataset):
         """
         super().__init__()
         self.data = pd.read_csv(config.data_path)
-        self.data['Close'] = self.data['Close'] / 100 # 스케일 조정
-        self.data['Open'] = self.data['Open'] / 100
-        self.data['High'] = self.data['High'] / 100
-        self.data['Low'] = self.data['Low'] / 100
+        self.data['Close'] = np.log(self.data['Close']) - np.log(self.data['Close'].shift(1))
+        self.data['Open'] = np.log(self.data['Open']) - np.log(self.data['Close'].shift(1))
+        self.data['High'] = np.log(self.data['High']) - np.log(self.data['Close'].shift(1))
+        self.data['Low'] = np.log(self.data['Low']) - np.log(self.data['Close'].shift(1))
+
+        # self.data['Close'] = np.log(self.data['Close']) - np.log(self.data['Close'].shift(1))
+        # self.data['Open'] = np.log(self.data['Open']) - np.log(self.data['Open'].shift(1))
+        # self.data['High'] = np.log(self.data['High']) - np.log(self.data['High'].shift(1))
+        # self.data['Low'] = np.log(self.data['Low']) - np.log(self.data['Low'].shift(1))
+
+        # Null 값 처리
+        self.data = self.data.fillna(0)
+        # self.data['Close'] = self.data['Close'] / 100 # 스케일 조정
+        # self.data['Open'] = self.data['Open'] / 100
+        # self.data['High'] = self.data['High'] / 100
+        # self.data['Low'] = self.data['Low'] / 100
 
         self.seq_len = config.seq_len
         self.preprocessed = config.preprocessed
@@ -73,8 +85,12 @@ class RegimeMambaDataset(Dataset):
                 self.target_col=f"target_returns_{config.target_horizon}"
                 targets = np.array(self.subset[self.target_col]/self.target_horizon)
             else:
-                self.target_col=f"target_EMA_{config.target_horizon}"
-                targets = np.array(self.subset[self.target_col] / 100)
+                self.target_col=f"target_returns_{config.target_horizon}" #f"target_EMA_{config.target_horizon}"
+                # target_data = np.log(self.subset[self.target_col]) - np.log(self.subset[self.target_col].shift(1))
+                # target_data = target_data.fillna(0)
+                # targets = np.array(target_data)
+                targets = np.array(self.subset[self.target_col])
+                #targets = np.array(self.subset[self.target_col] / 100)
 
             for i in range(len(features) - config.seq_len+1):
                 self.sequences.append(features[i:i+config.seq_len])
@@ -117,10 +133,22 @@ class DateRangeRegimeMambaDataset(Dataset):
         # 데이터 로드
         if data is None and path is not None:
             data = pd.read_csv(path)
-            data['Open'] = data['Open'] / 100
-            data['Close'] = data['Close'] / 100
-            data['High'] = data['High'] / 100
-            data['Low'] = data['Low'] / 100
+            
+            data['Close'] = np.log(data['Close']) - np.log(data['Close'].shift(1))
+            data['Open'] = np.log(data['Open']) - np.log(data['Close'].shift(1))
+            data['High'] = np.log(data['High']) - np.log(data['Close'].shift(1))
+            data['Low'] = np.log(data['Low']) - np.log(data['Close'].shift(1))
+
+            # data['Close'] = np.log(data['Close']) - np.log(data['Close'].shift(1))
+            # data['Open'] = np.log(data['Open']) - np.log(data['Open'].shift(1))
+            # data['High'] = np.log(data['High']) - np.log(data['High'].shift(1))
+            # data['Low'] = np.log(data['Low']) - np.log(data['Low'].shift(1))
+            # Null 값 처리
+            data = data.fillna(0)
+            # data['Open'] = data['Open'] / 100
+            # data['Close'] = data['Close'] / 100
+            # data['High'] = data['High'] / 100
+            # data['Low'] = data['Low'] / 100
 
         # 데이터가 제공되지 않은 경우 에러
         if data is None:
@@ -175,8 +203,11 @@ class DateRangeRegimeMambaDataset(Dataset):
                 self.target_col=f"target_returns_{config.target_horizon}"
                 targets = np.array(self.data[self.target_col])/self.target_horizon
             else:
-                self.target_col=f"target_EMA_{config.target_horizon}"
-                targets = np.array(self.data[self.target_col]/100)
+                self.target_col=f"target_returns_{config.target_horizon}" #f"target_EMA_{config.target_horizon}"
+                # target_data = np.log(self.data[self.target_col]) - np.log(self.data[self.target_col].shift(1))
+                # target_data = target_data.fillna(0)
+                targets = np.array(self.data[self.target_col])
+                # targets = np.array(self.data[self.target_col]/100)
 
             for i in range(len(features) - seq_len+1):
                 self.sequences.append(features[i:i+seq_len])

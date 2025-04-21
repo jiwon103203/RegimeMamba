@@ -100,8 +100,8 @@ class ModifiedJumpModel():
 
         train_start = train_start.split(" ")[0]
         train_end = train_end.split(" ")[0]
-        original_end_date = (datetime.strptime(train_end, "%Y-%m-%d") + relativedelta(years=5)).strftime("%Y-%m-%d")
-        original_train_data = data[(data['Date'] >= train_start) & (data['Date'] <= original_end_date)].copy()
+        #original_end_date = (datetime.strptime(train_end, "%Y-%m-%d") + relativedelta(years=5)).strftime("%Y-%m-%d")
+        original_train_data = data[(data['Date'] >= train_start) & (data['Date'] <= train_end)].copy()
         original_features = original_train_data[self.original_feature].iloc[self.seq_len-1:].copy()
         original_train_return_data = original_train_data['returns'].iloc[self.seq_len-1:]
         original_common_index = pd.to_datetime(original_train_data['Date'].values[self.seq_len-1:])
@@ -111,15 +111,26 @@ class ModifiedJumpModel():
         original_scaled_data = self.original_scaler.transform(original_features)
         self.original_jm.fit(original_scaled_data, original_train_return_data, sort_by=sort)
 
-        ax, ax2 = plot_regimes_and_cumret(self.original_jm.labels_, original_train_return_data, n_c=2, start_date=train_start, end_date=original_end_date)
+        ax, ax2 = plot_regimes_and_cumret(self.original_jm.labels_, original_train_return_data, n_c=2, start_date=train_start, end_date=train_end)
         ax.set(title=f"In-Sample Fitted Regimes by the Original JM(lambda : 50)")
         savefig_plt(f"{self.output_dir}/JM_lambd_50_train_{window}.png")
 
         train_data = data[(data['Date'] >= train_start) & (data['Date'] <= train_end)].copy()
-        train_data['Open'] = train_data['Open'] / 100
-        train_data['Close'] = train_data['Close'] / 100
-        train_data['High'] = train_data['High'] / 100
-        train_data['Low'] = train_data['Low'] / 100
+        train_data['Open'] = np.log(train_data['Open']) - np.log(train_data['Close'].shift(1))
+        train_data['Close'] = np.log(train_data['Close']) - np.log(train_data['Close'].shift(1))
+        train_data['High'] = np.log(train_data['High']) - np.log(train_data['Close'].shift(1))
+        train_data['Low'] = np.log(train_data['Low']) - np.log(train_data['Close'].shift(1))
+        # train_data['Open'] = np.log(train_data['Open']) - np.log(train_data['Open'].shift(1))
+        # train_data['Close'] = np.log(train_data['Close']) - np.log(train_data['Close'].shift(1))
+        # train_data['High'] = np.log(train_data['High']) - np.log(train_data['High'].shift(1))
+        # train_data['Low'] = np.log(train_data['Low']) - np.log(train_data['Low'].shift(1))
+        # Null 값 처리
+        train_data = train_data.fillna(0)
+        
+        # train_data['Open'] = train_data['Open'] / 100
+        # train_data['Close'] = train_data['Close'] / 100
+        # train_data['High'] = train_data['High'] / 100
+        # train_data['Low'] = train_data['Low'] / 100
         train_start = str(datetime.strptime(train_start, "%Y-%m-%d") + relativedelta(days=self.seq_len - 1))
 
 
@@ -170,15 +181,28 @@ class ModifiedJumpModel():
         print(f"\nPredicting period: {start_date} ~ {end_date}")
         
         pred_data = data[(data['Date'] >= start_date) & (data['Date'] <= end_date)].copy()
-        pred_data['Open'] = pred_data['Open'] / 100
-        pred_data['Close'] = pred_data['Close'] / 100
-        pred_data['High'] = pred_data['High'] / 100
-        pred_data['Low'] = pred_data['Low'] / 100
+        pred_data['Open'] = np.log(pred_data['Open']) - np.log(pred_data['Close'].shift(1))
+        pred_data['Close'] = np.log(pred_data['Close']) - np.log(pred_data['Close'].shift(1))
+        pred_data['High'] = np.log(pred_data['High']) - np.log(pred_data['Close'].shift(1))
+        pred_data['Low'] = np.log(pred_data['Low']) - np.log(pred_data['Close'].shift(1))
+
+        # pred_data['Open'] = np.log(pred_data['Open']) - np.log(pred_data['Open'].shift(1))
+        # pred_data['Close'] = np.log(pred_data['Close']) - np.log(pred_data['Close'].shift(1))
+        # pred_data['High'] = np.log(pred_data['High']) - np.log(pred_data['High'].shift(1))
+        # pred_data['Low'] = np.log(pred_data['Low']) - np.log(pred_data['Low'].shift(1))
+
+        # Null 값 처리
+        pred_data = pred_data.fillna(0)
+
+        # pred_data['Open'] = pred_data['Open'] / 100
+        # pred_data['Close'] = pred_data['Close'] / 100
+        # pred_data['High'] = pred_data['High'] / 100
+        # pred_data['Low'] = pred_data['Low'] / 100
         start_date = str(datetime.strptime(start_date, "%Y-%m-%d") + relativedelta(days=self.seq_len - 1))
         # 초기 seq_len 개 데이터 무시
         dates = pred_data['Date'].values
-        common_index = pd.to_datetime(dates[self.seq_len:])
-        pred_return_data = pred_data['returns'].iloc[self.seq_len:]
+        common_index = pd.to_datetime(dates[self.seq_len-1:])
+        pred_return_data = pred_data['returns'].iloc[self.seq_len-1:]
         pred_return_data.index = common_index
 
         original_labels_test = self.original_jm.predict(self.original_scaler.transform(pred_data[self.original_feature].iloc[self.seq_len-1:]))
