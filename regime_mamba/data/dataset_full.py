@@ -15,10 +15,11 @@ class RegimeMambaDataset(Dataset):
         """
         super().__init__()
         self.data = pd.read_csv(config.data_path)
-        self.data['Close'] = np.log(self.data['Close']) - np.log(self.data['Close'].shift(1))
-        self.data['Open'] = np.log(self.data['Open']) - np.log(self.data['Close'].shift(1))
-        self.data['High'] = np.log(self.data['High']) - np.log(self.data['Close'].shift(1))
-        self.data['Low'] = np.log(self.data['Low']) - np.log(self.data['Close'].shift(1))
+        epsilon = 1e-10
+        self.data['Close'] = np.log(self.data['Close'] + epsilon) - np.log(self.data['Close'].shift(1) + epsilon)
+        self.data['Open'] = np.log(self.data['Open'] + epsilon) - np.log(self.data['Close'].shift(1) + epsilon)
+        self.data['High'] = np.log(self.data['High'] + epsilon) - np.log(self.data['Close'].shift(1) + epsilon)
+        self.data['Low'] = np.log(self.data['Low'] + epsilon) - np.log(self.data['Close'].shift(1) + epsilon)
 
         # self.data['Close'] = np.log(self.data['Close']) - np.log(self.data['Close'].shift(1))
         # self.data['Open'] = np.log(self.data['Open']) - np.log(self.data['Open'].shift(1))
@@ -27,6 +28,7 @@ class RegimeMambaDataset(Dataset):
 
         # Null 값 처리
         self.data = self.data.fillna(0)
+
         # self.data['Close'] = self.data['Close'] / 100 # 스케일 조정
         # self.data['Open'] = self.data['Open'] / 100
         # self.data['High'] = self.data['High'] / 100
@@ -36,7 +38,9 @@ class RegimeMambaDataset(Dataset):
         self.preprocessed = config.preprocessed
 
         # 타겟 칼럼 지정
-        if config.input_dim == 5:
+        if config.input_dim == 3:
+            self.feature_cols = ["dd_10", "sortino_20", "sortino_60"]
+        elif config.input_dim == 5:
             self.feature_cols = ["Open", "Close", "High", "Low", "treasury_rate"]
         elif config.input_dim == 7:
             self.feature_cols = ["Open", "Close", "High", "Low", "treasury_rate", "treasury_rate_5y", "dollar_index"]
@@ -134,10 +138,11 @@ class DateRangeRegimeMambaDataset(Dataset):
         if data is None and path is not None:
             data = pd.read_csv(path)
             
-            data['Close'] = np.log(data['Close']) - np.log(data['Close'].shift(1))
-            data['Open'] = np.log(data['Open']) - np.log(data['Close'].shift(1))
-            data['High'] = np.log(data['High']) - np.log(data['Close'].shift(1))
-            data['Low'] = np.log(data['Low']) - np.log(data['Close'].shift(1))
+            epsilon = 1e-10
+            data['Close'] = np.log(data['Close'] + epsilon) - np.log(data['Close'].shift(1) + epsilon)
+            data['Open'] = np.log(data['Open'] + epsilon) - np.log(data['Close'].shift(1) + epsilon)
+            data['High'] = np.log(data['High'] + epsilon) - np.log(data['Close'].shift(1) + epsilon)
+            data['Low'] = np.log(data['Low'] + epsilon) - np.log(data['Close'].shift(1) + epsilon)
 
             # data['Close'] = np.log(data['Close']) - np.log(data['Close'].shift(1))
             # data['Open'] = np.log(data['Open']) - np.log(data['Open'].shift(1))
@@ -170,7 +175,9 @@ class DateRangeRegimeMambaDataset(Dataset):
             self.data = data.copy()
 
         # 타겟 칼럼 지정
-        if config.input_dim == 5:
+        if config.input_dim == 3:
+            self.feature_cols = ["dd_10", "sortino_20", "sortino_60"]
+        elif config.input_dim == 5:
             self.feature_cols = ["Open", "Close", "High", "Low", "treasury_rate"]
         elif config.input_dim == 7:
             self.feature_cols = ["Open", "Close", "High", "Low", "treasury_rate", "treasury_rate_5y", "dollar_index"]

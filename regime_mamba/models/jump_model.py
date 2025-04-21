@@ -75,7 +75,9 @@ class ModifiedJumpModel():
         self.original_feature = ['dd_10','sortino_20','sortino_60']
         self.original_scaler = StandardScalerPD()
 
-        if config.input_dim == 5:
+        if config.input_dim == 3:
+            self.feature_col = ['dd_10','sortino_20','sortino_60']
+        elif config.input_dim == 5:
             self.feature_col = ['Open','Close','High','Low','treasury_rate']
         elif config.input_dim == 7:
             self.feature_col = ['Open','Close','High','Low','treasury_rate', 'treasury_rate_5y', 'dollar_index']
@@ -116,10 +118,11 @@ class ModifiedJumpModel():
         savefig_plt(f"{self.output_dir}/JM_lambd_50_train_{window}.png")
 
         train_data = data[(data['Date'] >= train_start) & (data['Date'] <= train_end)].copy()
-        train_data['Open'] = np.log(train_data['Open']) - np.log(train_data['Close'].shift(1))
-        train_data['Close'] = np.log(train_data['Close']) - np.log(train_data['Close'].shift(1))
-        train_data['High'] = np.log(train_data['High']) - np.log(train_data['Close'].shift(1))
-        train_data['Low'] = np.log(train_data['Low']) - np.log(train_data['Close'].shift(1))
+        epsilon = 1e-10
+        train_data['Open'] = np.log(train_data['Open'] + epsilon) - np.log(train_data['Close'].shift(1) + epsilon)
+        train_data['Close'] = np.log(train_data['Close'] + epsilon) - np.log(train_data['Close'].shift(1) + epsilon)
+        train_data['High'] = np.log(train_data['High'] + epsilon) - np.log(train_data['Close'].shift(1) + epsilon)
+        train_data['Low'] = np.log(train_data['Low'] + epsilon) - np.log(train_data['Close'].shift(1) + epsilon)
         # train_data['Open'] = np.log(train_data['Open']) - np.log(train_data['Open'].shift(1))
         # train_data['Close'] = np.log(train_data['Close']) - np.log(train_data['Close'].shift(1))
         # train_data['High'] = np.log(train_data['High']) - np.log(train_data['High'].shift(1))
@@ -179,12 +182,12 @@ class ModifiedJumpModel():
         """
 
         print(f"\nPredicting period: {start_date} ~ {end_date}")
-        
+        epsilon = 1e-10
         pred_data = data[(data['Date'] >= start_date) & (data['Date'] <= end_date)].copy()
-        pred_data['Open'] = np.log(pred_data['Open']) - np.log(pred_data['Close'].shift(1))
-        pred_data['Close'] = np.log(pred_data['Close']) - np.log(pred_data['Close'].shift(1))
-        pred_data['High'] = np.log(pred_data['High']) - np.log(pred_data['Close'].shift(1))
-        pred_data['Low'] = np.log(pred_data['Low']) - np.log(pred_data['Close'].shift(1))
+        pred_data['Open'] = np.log(pred_data['Open'] + epsilon) - np.log(pred_data['Close'].shift(1) + epsilon)
+        pred_data['Close'] = np.log(pred_data['Close'] + epsilon) - np.log(pred_data['Close'].shift(1) + epsilon)
+        pred_data['High'] = np.log(pred_data['High'] + epsilon) - np.log(pred_data['Close'].shift(1) + epsilon)
+        pred_data['Low'] = np.log(pred_data['Low'] + epsilon) - np.log(pred_data['Close'].shift(1) + epsilon)
 
         # pred_data['Open'] = np.log(pred_data['Open']) - np.log(pred_data['Open'].shift(1))
         # pred_data['Close'] = np.log(pred_data['Close']) - np.log(pred_data['Close'].shift(1))
@@ -222,7 +225,7 @@ class ModifiedJumpModel():
         self.feature_extractor.eval()
         self.feature_extractor.to(self.device)
         hiddens = []
-        for i in range(0, len(pred_data)-self.seq_len):
+        for i in range(0, len(pred_data)-self.seq_len + 1):
             if self.vae:
                 _, _, _, _, hidden, _ = self.feature_extractor(torch.tensor(pred_data.iloc[i:i+self.seq_len, :].values, dtype=torch.float32).unsqueeze(0).to(self.device), return_hidden = True)
             else:
