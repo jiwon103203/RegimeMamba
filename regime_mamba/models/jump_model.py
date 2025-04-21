@@ -99,11 +99,16 @@ class ModifiedJumpModel():
         print(f"\nTraining period: {train_start} ~ {train_end}")
 
         # original_start_date = train_start - 10년 (10년 전)
+        train_start = train_start.split(" ")[0]
         original_start_date = str(datetime.strptime(train_start, "%Y-%m-%d") - relativedelta(years=10))
         original_train_data = data[(data['Date'] >= original_start_date) & (data['Date'] <= train_end)].copy()
         self.original_scaler.fit(original_train_data[self.original_feature].iloc[self.seq_len-1:])
-        self.original_jm.fit(self.original_scaler.transform(original_train_data[self.original_feature].iloc[self.seq_len-1:]), train_return_data, sort_by=sort)
-        ax, ax2 = plot_regimes_and_cumret(self.original_jm.labels_, train_return_data, n_c=2, start_date=original_start_date, end_date=train_end)
+        original_train_return_data = original_train_data['returns'].iloc[self.seq_len-1:]
+        original_common_index = pd.to_datetime(original_train_data['Date'].values[self.seq_len-1:])
+        original_train_return_data.index = original_common_index
+        self.original_jm.fit(self.original_scaler.transform(original_train_data[self.original_feature].iloc[self.seq_len-1:]), original_train_return_data, sort_by=sort)
+
+        ax, ax2 = plot_regimes_and_cumret(self.original_jm.labels_, original_train_return_data, n_c=2, start_date=original_start_date, end_date=train_end)
         ax.set(title=f"In-Sample Fitted Regimes by the Original JM(lambda : 50)")
         savefig_plt(f"{self.output_dir}/JM_lambd_50_train_{window}.png")
 
