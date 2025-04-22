@@ -216,13 +216,13 @@ class ModifiedJumpModel():
         pred_return_data.index = common_index
 
         original_labels_test = self.original_jm.predict(self.original_scaler.transform(pred_data[self.original_feature].iloc[self.seq_len-1:]))
-        ax, ax2 = plot_regimes_and_cumret(self.original_jm.labels_, pred_return_data, n_c=2, start_date=start_date, end_date=end_date)
+        ax, ax2 = plot_regimes_and_cumret(original_labels_test, pred_return_data, n_c=2, start_date=start_date, end_date=end_date)
         ax.set(title=f"Out-of-Sample Predicted Regimes by the Original JM(lambda : 50)")
         savefig_plt(f"{self.output_dir}/JM_lambd_50_test_window_{window_number}.png")
 
         df = pred_data.copy()
         df['labels'] = -1
-        df['labels'].iloc[self.seq_len-1:] = original_labels_test
+        df['labels'].iloc[self.seq_len-1:] = original_labels_test # len(original_labels_test) = len(pred_data) - self.seq_len + 1
         df['Date'] = pd.to_datetime(dates)
         df = df[['Date', 'labels']]
         df.to_csv(f"{self.output_dir}/JM_lambd_50_test_window_{window_number}.csv", index=False)
