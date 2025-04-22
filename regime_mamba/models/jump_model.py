@@ -41,7 +41,7 @@ class ModifiedJumpModel():
         model.predict("2021-01-01", "2021-12-31", data, window_number=1)
     """
 
-    def __init__(self, config, n_components=2, jump_penalty=1.5):
+    def __init__(self, config, n_components=2, jump_penalty=1):
         """
         Initializes the ModifiedJumpModel with the given configuration.
         Args:
@@ -207,8 +207,8 @@ class ModifiedJumpModel():
         # pred_data['Close'] = pred_data['Close'] / 100
         # pred_data['High'] = pred_data['High'] / 100
         # pred_data['Low'] = pred_data['Low'] / 100
-        # start_date = str(datetime.strptime(start_date, "%Y-%m-%d") + relativedelta(days=self.seq_len - 1))
-        start_date = pred_data['Date'].iloc[self.seq_len-1]
+        start_date = pd.to_datetime(str(datetime.strptime(start_date, "%Y-%m-%d") + relativedelta(days=self.seq_len - 1)))
+        # start_date = pred_data['Date'].iloc[self.seq_len-1]
         # 초기 seq_len 개 데이터 무시
         dates = pred_data['Date'].values
         common_index = pd.to_datetime(dates[self.seq_len-1:])
@@ -216,6 +216,7 @@ class ModifiedJumpModel():
         pred_return_data.index = common_index
 
         original_labels_test = self.original_jm.predict(self.original_scaler.transform(pred_data[self.original_feature].iloc[self.seq_len-1:]))
+        original_labels_test = pd.Series(original_labels_test, index=common_index)
         ax, ax2 = plot_regimes_and_cumret(original_labels_test, pred_return_data, n_c=2, start_date=start_date, end_date=end_date)
         ax.set(title=f"Out-of-Sample Predicted Regimes by the Original JM(lambda : 50)")
         savefig_plt(f"{self.output_dir}/JM_lambd_50_test_window_{window_number}.png")
@@ -246,7 +247,7 @@ class ModifiedJumpModel():
         scaled_data = self.scaler.transform(hiddens)
         labels_test = self.jm.predict(scaled_data)
         # labels_test = self.jm.predict(hiddens)
-
+        labels_test = pd.Series(labels_test, index=common_index)
         ax, ax2 = plot_regimes_and_cumret(labels_test, pred_return_data, n_c=2, start_date=start_date, end_date=end_date)
         ax.set(title=f"Out-of-Sample Predicted Regimes by the JM(lambda : {self.jump_penalty})")
         savefig_plt(f"{self.output_dir}/JM_lambd_{self.jump_penalty}_test_window_{window_number}.png")

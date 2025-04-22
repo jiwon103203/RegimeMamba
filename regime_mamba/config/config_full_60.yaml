@@ -31,4 +31,4 @@ total_window_years: 25
 train_years: 20
 valid_years: 5
 clustering_years: 0
-forward_months: 36
+forward_months: 24
