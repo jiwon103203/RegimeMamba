@@ -1,12 +1,12 @@
 # 모델 관련 파라미터
-d_model: 64
-d_state: 256
-n_layers: 4
+d_model: 32
+d_state: 128
+n_layers: 8
 dropout: 0.1
 learning_rate: 0.0005 # 5e-4
 batch_size: 512
 seq_len: 252
-input_dim: 8
+input_dim: 3
 vae: True
 
 # 데이터 관련 파라미터
