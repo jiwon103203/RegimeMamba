@@ -162,10 +162,10 @@ class ModifiedJumpModel():
         hiddens = np.stack(hiddens)
         hiddens = pd.DataFrame(hiddens, columns=[f"hidden_{i}" for i in range(hiddens.shape[1])])
         hiddens.index = common_index
-        # self.scaler.fit(hiddens)
-        # scaled_data = self.scaler.transform(hiddens)
-        # self.jm.fit(scaled_data, train_return_data, sort_by=sort)
-        self.jm.fit(hiddens, train_return_data, sort_by=sort)
+        self.scaler.fit(hiddens)
+        scaled_data = self.scaler.transform(hiddens)
+        self.jm.fit(scaled_data, train_return_data, sort_by=sort)
+        # self.jm.fit(hiddens, train_return_data, sort_by=sort)
 
         ax, ax2 = plot_regimes_and_cumret(self.jm.labels_, train_return_data, n_c=2, start_date=train_start, end_date=train_end)
         ax.set(title=f"In-Sample Fitted Regimes by the JM(lambda : {self.jump_penalty})")
@@ -241,9 +241,9 @@ class ModifiedJumpModel():
         hiddens = np.stack(hiddens)
         hiddens = pd.DataFrame(hiddens, columns=[f"hidden_{i}" for i in range(hiddens.shape[1])])
         hiddens.index = common_index
-        #scaled_data = self.scaler.transform(hiddens)
-        #labels_test = self.jm.predict(scaled_data)
-        labels_test = self.jm.predict(hiddens)
+        scaled_data = self.scaler.transform(hiddens)
+        labels_test = self.jm.predict(scaled_data)
+        # labels_test = self.jm.predict(hiddens)
 
         ax, ax2 = plot_regimes_and_cumret(labels_test, pred_return_data, n_c=2, start_date=start_date, end_date=end_date)
         ax.set(title=f"Out-of-Sample Predicted Regimes by the JM(lambda : {self.jump_penalty})")
