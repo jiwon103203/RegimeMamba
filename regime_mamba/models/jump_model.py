@@ -41,7 +41,7 @@ class ModifiedJumpModel():
         model.predict("2021-01-01", "2021-12-31", data, window_number=1)
     """
 
-    def __init__(self, config, n_components=2, jump_penalty=2):
+    def __init__(self, config, n_components=2, jump_penalty=1.5):
         """
         Initializes the ModifiedJumpModel with the given configuration.
         Args:
@@ -79,10 +79,15 @@ class ModifiedJumpModel():
             self.feature_col = ['dd_10','sortino_20','sortino_60']
         elif config.input_dim == 5:
             self.feature_col = ['Open','Close','High','Low','treasury_rate']
+        elif config.input_dim == 6:
+            self.feature_col = ["dd_10", "dd_20", "dd_60", "sortino_10", "sortino_20", "sortino_60"]
         elif config.input_dim == 7:
             self.feature_col = ['Open','Close','High','Low','treasury_rate', 'treasury_rate_5y', 'dollar_index']
         elif config.input_dim == 8:
             self.feature_col = ["Open", "Close", "High", "Low", "Volume","treasury_rate", "treasury_rate_5y", "dollar_index"]
+        elif config.input_dim == 10:
+            self.feature_col = ["dd_10", "dd_20", "dd_60", "dd_120", "dd_200","sortino_10", "sortino_20", "sortino_60", "sortino_120", "sortino_200"]
+
         self.scaler = StandardScalerPD()
     
     def train_for_window(self, train_start, train_end, data, sort = "cumret", window = 1):
@@ -201,7 +206,8 @@ class ModifiedJumpModel():
         # pred_data['Close'] = pred_data['Close'] / 100
         # pred_data['High'] = pred_data['High'] / 100
         # pred_data['Low'] = pred_data['Low'] / 100
-        start_date = str(datetime.strptime(start_date, "%Y-%m-%d") + relativedelta(days=self.seq_len - 1))
+        # start_date = str(datetime.strptime(start_date, "%Y-%m-%d") + relativedelta(days=self.seq_len - 1))
+        start_date = pred_data['Date'].iloc[self.seq_len-1]
         # 초기 seq_len 개 데이터 무시
         dates = pred_data['Date'].values
         common_index = pd.to_datetime(dates[self.seq_len-1:])
@@ -216,7 +222,7 @@ class ModifiedJumpModel():
         df = pred_data.copy()
         df['labels'] = -1
         df['labels'].iloc[self.seq_len-1:] = original_labels_test
-        df['Date'] = pd.to_datetime(pred_data['Date'])
+        df['Date'] = pd.to_datetime(dates)
         df = df[['Date', 'labels']]
         df.to_csv(f"{self.output_dir}/JM_lambd_50_test_window_{window_number}.csv", index=False)
 
@@ -247,7 +253,7 @@ class ModifiedJumpModel():
         df = pred_data.copy()
         df['labels'] = -1
         df['labels'].iloc[self.seq_len-1:] = labels_test
-        df['Date'] = pd.to_datetime(pred_data['Date'])
+        df['Date'] = pd.to_datetime(dates)
         df = df[['Date', 'labels']]
         df.to_csv(f"{self.output_dir}/JM_lambd_50_test_window_{window_number}.csv", index=False)
 

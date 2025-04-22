@@ -1,12 +1,12 @@
 # 모델 관련 파라미터
-d_model: 32
+d_model: 64
 d_state: 128
 n_layers: 8
 dropout: 0.1
 learning_rate: 0.0005 # 5e-4
-batch_size: 512
+batch_size: 1024
 seq_len: 252
-input_dim: 3
+input_dim: 10
 vae: True
 
 # 데이터 관련 파라미터
@@ -27,8 +27,8 @@ cluster_method: kmeans
 
 results_dir: '/content/drive/MyDrive/train_results'
 start_date: '2007-04-20'
-total_window_years: 35
-train_years: 15
-valid_years: 10
+total_window_years: 25
+train_years: 20
+valid_years: 5
 clustering_years: 0
 forward_months: 36
