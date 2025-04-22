@@ -152,10 +152,11 @@ class ModifiedJumpModel():
         self.feature_extractor.to(self.device)
         hiddens = []
         for i in range(0, len(train_data) - self.seq_len):
-            if self.vae:
-                _, _, _, _, hidden, _ = self.feature_extractor(torch.tensor(train_data.iloc[i:i+self.seq_len, :].values, dtype=torch.float32).unsqueeze(0).to(self.device), return_hidden = True)
-            else:
-                _, hidden = self.feature_extractor(torch.tensor(train_data.iloc[i:i+self.seq_len, :].values, dtype=torch.float32).unsqueeze(0).to(self.device), return_hidden = True) # (16,)
+            with torch.no_grad():
+                if self.vae:
+                    _, _, _, _, hidden, _ = self.feature_extractor(torch.tensor(train_data.iloc[i:i+self.seq_len, :].values, dtype=torch.float32).unsqueeze(0).to(self.device), return_hidden = True)
+                else:
+                    _, hidden = self.feature_extractor(torch.tensor(train_data.iloc[i:i+self.seq_len, :].values, dtype=torch.float32).unsqueeze(0).to(self.device), return_hidden = True) # (16,)
 
             hiddens.append(hidden.squeeze().cpu().detach().numpy())
         
@@ -232,10 +233,11 @@ class ModifiedJumpModel():
         self.feature_extractor.to(self.device)
         hiddens = []
         for i in range(0, len(pred_data)-self.seq_len + 1):
-            if self.vae:
-                _, _, _, _, hidden, _ = self.feature_extractor(torch.tensor(pred_data.iloc[i:i+self.seq_len, :].values, dtype=torch.float32).unsqueeze(0).to(self.device), return_hidden = True)
-            else:
-                _, hidden = self.feature_extractor(torch.tensor(pred_data.iloc[i:i+self.seq_len, :].values, dtype=torch.float32).unsqueeze(0).to(self.device), return_hidden = True) # (16,)
+            with torch.no_grad():
+                if self.vae:
+                    _, _, _, _, hidden, _ = self.feature_extractor(torch.tensor(pred_data.iloc[i:i+self.seq_len, :].values, dtype=torch.float32).unsqueeze(0).to(self.device), return_hidden = True)
+                else:
+                    _, hidden = self.feature_extractor(torch.tensor(pred_data.iloc[i:i+self.seq_len, :].values, dtype=torch.float32).unsqueeze(0).to(self.device), return_hidden = True) # (16,)
             hiddens.append(hidden.squeeze().cpu().detach().numpy())
         
         hiddens = np.stack(hiddens)
