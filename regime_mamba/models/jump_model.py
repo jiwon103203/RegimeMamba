@@ -18,30 +18,9 @@ class ModifiedJumpModel():
     and then applies the Jump Model to predict regimes based on the extracted features.
     The model is designed to work with time series data, and it can be trained and evaluated
     on different time windows.
-
-    Attributes:
-        config (object): Configuration object containing model parameters.
-        n_components (int): Number of components for the Jump Model.
-        jump_penalty (float): Penalty for jumps in the model.
-        feature_extractor (TimeSeriesMamba): Feature extractor for time series data.
-        vae (bool): Flag indicating whether to use a Variational Autoencoder.
-        freeze_feature_extractor (bool): Flag indicating whether to freeze the feature extractor parameters.
-        output_dir (str): Directory to save output results.
-        scaler (StandardScalerPD): Standard scaler for preprocessing the data.
-        jm (JumpModel): Instance of the Jump Model.
-        feature_col (list): List of feature columns to be used in the model.
-    Methods:
-        __init__(config, n_components=2, jump_penalty=5): Initializes the ModifiedJumpModel with the given configuration.
-        train_for_window(train_start, train_end, data, sort="cumret", window=1): Trains the model on a specified time window.
-        predict(start_date, end_date, data, window_number, sort="cumret"): Predicts regimes for a specified time window.
-    Example:
-        config = Config()  # Assuming you have a configuration object
-        model = ModifiedJumpModel(config, n_components=2, jump_penalty=5)
-        model.train_for_window("2020-01-01", "2020-12-31", data)
-        model.predict("2021-01-01", "2021-12-31", data, window_number=1)
     """
 
-    def __init__(self, config, n_components=2, jump_penalty=1):
+    def __init__(self, config, n_components=2, jump_penalty=1.5):
         """
         Initializes the ModifiedJumpModel with the given configuration.
         Args:
@@ -49,7 +28,6 @@ class ModifiedJumpModel():
             n_components (int): Number of components for the Jump Model.
             jump_penalty (float): Penalty for jumps in the model.
         """
-
         super(ModifiedJumpModel, self).__init__()
 
         self.device = config.device
@@ -68,29 +46,83 @@ class ModifiedJumpModel():
         if self.freeze_feature_extractor:
             for param in self.feature_extractor.parameters():
                 param.requires_grad = False
+                
         self.output_dir = config.results_dir
         self.jump_penalty = jump_penalty
         self.jm = JumpModel(n_components=n_components, jump_penalty=self.jump_penalty, cont=False)
         self.original_jm = JumpModel(n_components=2, jump_penalty=50, cont=False)
-        self.original_feature = ['dd_10','sortino_20','sortino_60']
+        self.original_feature = ['dd_10', 'sortino_20', 'sortino_60']
         self.original_scaler = StandardScalerPD()
 
-        if config.input_dim == 3:
-            self.feature_col = ['dd_10','sortino_20','sortino_60']
-        elif config.input_dim == 5:
-            self.feature_col = ['Open','Close','High','Low','treasury_rate']
-        elif config.input_dim == 6:
-            self.feature_col = ["dd_10", "dd_20", "dd_60", "sortino_10", "sortino_20", "sortino_60"]
-        elif config.input_dim == 7:
-            self.feature_col = ['Open','Close','High','Low','treasury_rate', 'treasury_rate_5y', 'dollar_index']
-        elif config.input_dim == 8:
-            self.feature_col = ["Open", "Close", "High", "Low", "Volume","treasury_rate", "treasury_rate_5y", "dollar_index"]
-        elif config.input_dim == 10:
-            self.feature_col = ["dd_10", "dd_20", "dd_60", "dd_120", "dd_200","sortino_10", "sortino_20", "sortino_60", "sortino_120", "sortino_200"]
-
+        # 차원에 따른 feature 컬럼 설정 간소화
+        self.feature_col = self._get_feature_columns(config.input_dim)
         self.scaler = StandardScalerPD()
     
-    def train_for_window(self, train_start, train_end, data, sort = "cumret", window = 1):
+    def _get_feature_columns(self, input_dim):
+        """차원에 따른 feature 컬럼 매핑"""
+        feature_cols = {
+            3: ['dd_10', 'sortino_20', 'sortino_60'],
+            5: ['Open', 'Close', 'High', 'Low', 'treasury_rate'],
+            6: ["dd_10", "dd_20", "dd_60", "sortino_10", "sortino_20", "sortino_60"],
+            7: ['Open', 'Close', 'High', 'Low', 'treasury_rate', 'treasury_rate_5y', 'dollar_index'],
+            8: ["Open", "Close", "High", "Low", "Volume", "treasury_rate", "treasury_rate_5y", "dollar_index"],
+            9: ["dd_10", "dd_20", "dd_60", "sortino_10", "sortino_20", "sortino_60", "bb_pct_10","bb_pct_20", "bb_pct_60"],
+            10: ["dd_10", "dd_20", "dd_60", "dd_120", "dd_200", "sortino_10", "sortino_20", "sortino_60", "sortino_120", "sortino_200"],
+            11: ["dd_10", "dd_20", "dd_60", "dd_120", "dd_200", "sortino_10", "sortino_20", "sortino_60", "sortino_120", "sortino_200", "dollar_index"]
+        }
+        return feature_cols.get(input_dim, [])
+    
+    def _preprocess_data(self, data):
+        """데이터 전처리 통합 메소드"""
+        processed_data = data.copy()
+        epsilon = 1e-10
+        
+        # OHLC 데이터 로그 변환
+        for col in ['Open', 'Close', 'High', 'Low']:
+            if col in processed_data.columns:
+                processed_data[col] = np.log(processed_data[col] + epsilon) - np.log(processed_data['Close'].shift(1) + epsilon)
+        
+        # NaN 값 처리
+        processed_data = processed_data.fillna(0)
+        
+        return processed_data
+    
+    def _extract_features(self, data):
+        """특성 추출 통합 메소드"""
+        self.feature_extractor.eval()
+        self.feature_extractor.to(self.device)
+        hiddens = []
+        
+        # 원본 코드와 일치하도록 범위 수정 (+ 1 제거)
+        for i in range(len(data) - self.seq_len):
+            with torch.no_grad():
+                input_tensor = torch.tensor(
+                    data.iloc[i:i+self.seq_len, :].values, 
+                    dtype=torch.float32
+                ).unsqueeze(0).to(self.device)
+                
+                if self.vae:
+                    _, _, _, _, hidden, _ = self.feature_extractor(input_tensor, return_hidden=True)
+                else:
+                    _, hidden = self.feature_extractor(input_tensor, return_hidden=True)
+            
+            hiddens.append(hidden.squeeze().cpu().detach().numpy())
+        
+        return np.stack(hiddens)
+    
+    def _parse_date(self, date_str):
+        """날짜 문자열 파싱 통합 메소드"""
+        if ' ' in date_str:
+            date_str = date_str.split(' ')[0]
+        return datetime.strptime(date_str, "%Y-%m-%d")
+    
+    def _adjust_date(self, date_str, days=None):
+        """시작 날짜 조정 통합 메소드"""
+        days = days if days is not None else self.seq_len - 1
+        date = self._parse_date(date_str)
+        return (date + relativedelta(days=days)).strftime("%Y-%m-%d")
+    
+    def train_for_window(self, train_start, train_end, data, sort="cumret", window=1):
         """
         Trains the model on a specified time window.
         Args:
@@ -102,79 +134,98 @@ class ModifiedJumpModel():
         Returns:
             None
         """
-
         print(f"\nTraining period: {train_start} ~ {train_end}")
-
-        train_start = train_start.split(" ")[0]
-        train_end = train_end.split(" ")[0]
-        #original_end_date = (datetime.strptime(train_end, "%Y-%m-%d") + relativedelta(years=5)).strftime("%Y-%m-%d")
-        original_train_data = data[(data['Date'] >= train_start) & (data['Date'] <= train_end)].copy()
+        
+        # 날짜 문자열 정리 및 확장된 훈련용 종료 날짜 계산
+        train_start_clean = train_start.split(" ")[0]
+        train_end_clean = train_end.split(" ")[0]
+        original_end_date = (self._parse_date(train_end_clean) + relativedelta(years=5)).strftime("%Y-%m-%d")
+        
+        # 원본 JumpModel 훈련
+        original_train_data = data[(data['Date'] >= train_start_clean) & (data['Date'] <= original_end_date)].copy()
         original_features = original_train_data[self.original_feature].iloc[self.seq_len-1:].copy()
         original_train_return_data = original_train_data['returns'].iloc[self.seq_len-1:]
-        original_common_index = pd.to_datetime(original_train_data['Date'].values[self.seq_len-1:])
-        original_train_return_data.index = original_common_index
-        original_features.index = original_common_index
+        
+        # 일관된 인덱스 설정
+        common_dates = pd.to_datetime(original_train_data['Date'].values[self.seq_len-1:])
+        original_train_return_data.index = common_dates
+        original_features.index = common_dates
+        
+        # 원본 JumpModel 피팅
         self.original_scaler.fit(original_features)
         original_scaled_data = self.original_scaler.transform(original_features)
         self.original_jm.fit(original_scaled_data, original_train_return_data, sort_by=sort)
-
-        ax, ax2 = plot_regimes_and_cumret(self.original_jm.labels_, original_train_return_data, n_c=2, start_date=train_start, end_date=train_end)
-        ax.set(title=f"In-Sample Fitted Regimes by the Original JM(lambda : 50)")
-        savefig_plt(f"{self.output_dir}/JM_lambd_50_train_{window}.png")
-
-        train_data = data[(data['Date'] >= train_start) & (data['Date'] <= train_end)].copy()
-        epsilon = 1e-10
-        train_data['Open'] = np.log(train_data['Open'] + epsilon) - np.log(train_data['Close'].shift(1) + epsilon)
-        train_data['Close'] = np.log(train_data['Close'] + epsilon) - np.log(train_data['Close'].shift(1) + epsilon)
-        train_data['High'] = np.log(train_data['High'] + epsilon) - np.log(train_data['Close'].shift(1) + epsilon)
-        train_data['Low'] = np.log(train_data['Low'] + epsilon) - np.log(train_data['Close'].shift(1) + epsilon)
-        # train_data['Open'] = np.log(train_data['Open']) - np.log(train_data['Open'].shift(1))
-        # train_data['Close'] = np.log(train_data['Close']) - np.log(train_data['Close'].shift(1))
-        # train_data['High'] = np.log(train_data['High']) - np.log(train_data['High'].shift(1))
-        # train_data['Low'] = np.log(train_data['Low']) - np.log(train_data['Low'].shift(1))
-        # Null 값 처리
-        train_data = train_data.fillna(0)
         
-        # train_data['Open'] = train_data['Open'] / 100
-        # train_data['Close'] = train_data['Close'] / 100
-        # train_data['High'] = train_data['High'] / 100
-        # train_data['Low'] = train_data['Low'] / 100
-        train_start = str(datetime.strptime(train_start, "%Y-%m-%d") + relativedelta(days=self.seq_len - 1))
-
-
-        dates = train_data['Date'].values
-        common_index = pd.to_datetime(dates[self.seq_len:])
+        # 원본 JumpModel 결과 시각화
+        ax, ax2 = plot_regimes_and_cumret(
+            self.original_jm.labels_, 
+            original_train_return_data, 
+            n_c=2, 
+            start_date=train_start_clean, 
+            end_date=train_end_clean
+        )
+        ax.set(title=f"In-Sample Fitted Regimes by the Original JM(lambda : 50)")
+        savefig_plt(f"{self.output_dir}/window_{window}/JM_lambd_50_train.png")
+        
+        # 수정된 JumpModel을 위한 데이터 전처리
+        train_data = self._preprocess_data(
+            data[(data['Date'] >= train_start_clean) & (data['Date'] <= original_end_date)]
+        )
+        
+        # 시퀀스 길이를 고려한 시작 날짜 조정
+        adjusted_start_date = self._adjust_date(train_start_clean)
+        
+        # 수정된 JumpModel을 위한 데이터 준비
+        common_index = pd.to_datetime(train_data['Date'].values[self.seq_len:])
+        
+        # 일관된 인덱스로 리턴 데이터 준비
         train_return_data = train_data['returns'].iloc[self.seq_len:]
         train_return_data.index = common_index
-        train_data = train_data[self.feature_col]
-
-        self.feature_extractor.eval()
-        self.feature_extractor.to(self.device)
+        
+        # 특성 추출
+        feature_data = train_data[self.feature_col]
         hiddens = []
-        for i in range(0, len(train_data) - self.seq_len):
+        # 원본 코드와 정확히 동일한 범위 사용
+        for i in range(0, len(feature_data) - self.seq_len):
             with torch.no_grad():
+                input_tensor = torch.tensor(
+                    feature_data.iloc[i:i+self.seq_len, :].values, 
+                    dtype=torch.float32
+                ).unsqueeze(0).to(self.device)
+                
                 if self.vae:
-                    _, _, _, _, hidden, _ = self.feature_extractor(torch.tensor(train_data.iloc[i:i+self.seq_len, :].values, dtype=torch.float32).unsqueeze(0).to(self.device), return_hidden = True)
+                    _, _, _, _, hidden, _ = self.feature_extractor(input_tensor, return_hidden=True)
                 else:
-                    _, hidden = self.feature_extractor(torch.tensor(train_data.iloc[i:i+self.seq_len, :].values, dtype=torch.float32).unsqueeze(0).to(self.device), return_hidden = True) # (16,)
-
+                    _, hidden = self.feature_extractor(input_tensor, return_hidden=True)
+            
             hiddens.append(hidden.squeeze().cpu().detach().numpy())
         
         hiddens = np.stack(hiddens)
-        hiddens = pd.DataFrame(hiddens, columns=[f"hidden_{i}" for i in range(hiddens.shape[1])])
-        hiddens.index = common_index
-        self.scaler.fit(hiddens)
-        scaled_data = self.scaler.transform(hiddens)
+        
+        # 적절한 인덱스와 함께 DataFrame으로 변환
+        hiddens_df = pd.DataFrame(
+            hiddens, 
+            columns=[f"hidden_{i}" for i in range(hiddens.shape[1])],
+            index=common_index
+        )
+        
+        # 수정된 JumpModel 피팅
+        self.scaler.fit(hiddens_df)
+        scaled_data = self.scaler.transform(hiddens_df)
         self.jm.fit(scaled_data, train_return_data, sort_by=sort)
-        # self.jm.fit(hiddens, train_return_data, sort_by=sort)
-
-        ax, ax2 = plot_regimes_and_cumret(self.jm.labels_, train_return_data, n_c=2, start_date=train_start, end_date=train_end)
+        
+        # 수정된 JumpModel 결과 시각화
+        ax, ax2 = plot_regimes_and_cumret(
+            self.jm.labels_, 
+            train_return_data, 
+            n_c=2, 
+            start_date=adjusted_start_date, 
+            end_date=train_end_clean
+        )
         ax.set(title=f"In-Sample Fitted Regimes by the JM(lambda : {self.jump_penalty})")
-        savefig_plt(f"{self.output_dir}/JM_lambd_{self.jump_penalty}_train_{window}.png")
-
-        return
+        savefig_plt(f"{self.output_dir}/window_{window}/JM_lambd_{self.jump_penalty}_train.png")
     
-    def predict(self, start_date, end_date, data, window_number, sort = "cumret"):
+    def predict(self, start_date, end_date, data, window_number, sort="cumret"):
         """
         Predicts regimes for a specified time window.
         Args:
@@ -186,79 +237,100 @@ class ModifiedJumpModel():
         Returns:
             None
         """
-
         print(f"\nPredicting period: {start_date} ~ {end_date}")
-        epsilon = 1e-10
-        pred_data = data[(data['Date'] >= start_date) & (data['Date'] <= end_date)].copy()
-        pred_data['Open'] = np.log(pred_data['Open'] + epsilon) - np.log(pred_data['Close'].shift(1) + epsilon)
-        pred_data['Close'] = np.log(pred_data['Close'] + epsilon) - np.log(pred_data['Close'].shift(1) + epsilon)
-        pred_data['High'] = np.log(pred_data['High'] + epsilon) - np.log(pred_data['Close'].shift(1) + epsilon)
-        pred_data['Low'] = np.log(pred_data['Low'] + epsilon) - np.log(pred_data['Close'].shift(1) + epsilon)
-
-        # pred_data['Open'] = np.log(pred_data['Open']) - np.log(pred_data['Open'].shift(1))
-        # pred_data['Close'] = np.log(pred_data['Close']) - np.log(pred_data['Close'].shift(1))
-        # pred_data['High'] = np.log(pred_data['High']) - np.log(pred_data['High'].shift(1))
-        # pred_data['Low'] = np.log(pred_data['Low']) - np.log(pred_data['Low'].shift(1))
-
-        # Null 값 처리
-        pred_data = pred_data.fillna(0)
-
-        # pred_data['Open'] = pred_data['Open'] / 100
-        # pred_data['Close'] = pred_data['Close'] / 100
-        # pred_data['High'] = pred_data['High'] / 100
-        # pred_data['Low'] = pred_data['Low'] / 100
-        start_date = pd.to_datetime(str(datetime.strptime(start_date, "%Y-%m-%d") + relativedelta(days=self.seq_len - 1)))
-        # start_date = pred_data['Date'].iloc[self.seq_len-1]
-        # 초기 seq_len 개 데이터 무시
-        dates = pred_data['Date'].values
-        common_index = pd.to_datetime(dates[self.seq_len-1:])
+        
+        # 데이터 전처리
+        pred_data = self._preprocess_data(
+            data[(data['Date'] >= start_date) & (data['Date'] <= end_date)].copy()
+        )
+        
+        # 시퀀스 길이를 고려한 날짜 조정
+        adjusted_start_date = pd.to_datetime(self._adjust_date(start_date))
+        dates = pred_data['Date'].iloc[self.seq_len-1:]
+        common_index = pd.to_datetime(dates)
+        
+        # 리턴 데이터 준비
         pred_return_data = pred_data['returns'].iloc[self.seq_len-1:]
         pred_return_data.index = common_index
-
-        original_labels_test = self.original_jm.predict(self.original_scaler.transform(pred_data[self.original_feature].iloc[self.seq_len-1:]))
-        original_labels_test = pd.Series(original_labels_test, index=common_index)
-        ax, ax2 = plot_regimes_and_cumret(original_labels_test, pred_return_data, n_c=2, start_date=start_date, end_date=end_date)
+        
+        # 원본 모델 예측
+        original_features = pred_data[self.original_feature].iloc[self.seq_len-1:]
+        original_labels_test = self.original_jm.predict(
+            self.original_scaler.transform(original_features)
+        )
+        
+        
+        # 적절한 인덱스로 라벨 변환 및 NaN 처리
+        original_labels_test = pd.Series(original_labels_test, index=common_index).fillna(0).astype(int)
+        
+        # 원본 모델 결과 시각화
+        ax, ax2 = plot_regimes_and_cumret(
+            original_labels_test, 
+            pred_return_data, 
+            n_c=2, 
+            start_date=adjusted_start_date, 
+            end_date=end_date
+        )
         ax.set(title=f"Out-of-Sample Predicted Regimes by the Original JM(lambda : 50)")
-        savefig_plt(f"{self.output_dir}/JM_lambd_50_test_window_{window_number}.png")
-
-        df = pred_data.copy()
-        df['labels'] = -1
-        df['labels'].iloc[self.seq_len-1:] = original_labels_test # len(original_labels_test) = len(pred_data) - self.seq_len + 1
-        df['Date'] = pd.to_datetime(dates)
-        df = df[['Date', 'labels']]
-        df.to_csv(f"{self.output_dir}/JM_lambd_50_test_window_{window_number}.csv", index=False)
-
-        pred_data = pred_data[self.feature_col]
-
-        self.feature_extractor.eval()
-        self.feature_extractor.to(self.device)
+        savefig_plt(f"{self.output_dir}/window_{window_number}/JM_lambd_50_test_window.png")
+        
+        # 원본 모델 결과 저장
+        df_original = pred_data.copy()
+        df_original['labels'] = -1
+        df_original['labels'].iloc[self.seq_len-1:] = original_labels_test
+        df_original['Date'] = pd.to_datetime(dates)
+        df_original = df_original[['Date', 'labels']]
+        df_original.to_csv(f"{self.output_dir}/window_{window_number}/JM_lambd_50_test_window.csv", index=False)
+        
+        # 수정된 모델용 특성 추출
+        feature_data = pred_data[self.feature_col]
         hiddens = []
-        for i in range(0, len(pred_data)-self.seq_len + 1):
+         # 원본 코드와 정확히 동일한 범위 사용
+        for i in range(0, len(feature_data) - self.seq_len + 1):
             with torch.no_grad():
+                input_tensor = torch.tensor(
+                    feature_data.iloc[i:i+self.seq_len, :].values, 
+                    dtype=torch.float32
+                ).unsqueeze(0).to(self.device)
+                
                 if self.vae:
-                    _, _, _, _, hidden, _ = self.feature_extractor(torch.tensor(pred_data.iloc[i:i+self.seq_len, :].values, dtype=torch.float32).unsqueeze(0).to(self.device), return_hidden = True)
+                    _, _, _, _, hidden, _ = self.feature_extractor(input_tensor, return_hidden=True)
                 else:
-                    _, hidden = self.feature_extractor(torch.tensor(pred_data.iloc[i:i+self.seq_len, :].values, dtype=torch.float32).unsqueeze(0).to(self.device), return_hidden = True) # (16,)
+                    _, hidden = self.feature_extractor(input_tensor, return_hidden=True)
+            
             hiddens.append(hidden.squeeze().cpu().detach().numpy())
         
         hiddens = np.stack(hiddens)
-        hiddens = pd.DataFrame(hiddens, columns=[f"hidden_{i}" for i in range(hiddens.shape[1])])
-        hiddens.index = common_index
-        scaled_data = self.scaler.transform(hiddens)
-        labels_test = self.jm.predict(scaled_data)
-        # labels_test = self.jm.predict(hiddens)
-        labels_test = pd.Series(labels_test, index=common_index)
-        ax, ax2 = plot_regimes_and_cumret(labels_test, pred_return_data, n_c=2, start_date=start_date, end_date=end_date)
-        ax.set(title=f"Out-of-Sample Predicted Regimes by the JM(lambda : {self.jump_penalty})")
-        savefig_plt(f"{self.output_dir}/JM_lambd_{self.jump_penalty}_test_window_{window_number}.png")
-
-        # predict 결과(labels_test) csv 파일로 저장
-        df = pred_data.copy()
-        df['labels'] = -1
-        df['labels'].iloc[self.seq_len-1:] = labels_test
-        df['Date'] = pd.to_datetime(dates)
-        df = df[['Date', 'labels']]
-        df.to_csv(f"{self.output_dir}/JM_lambd_50_test_window_{window_number}.csv", index=False)
-
-
         
+        # DataFrame으로 변환
+        hiddens_df = pd.DataFrame(
+            hiddens, 
+            columns=[f"hidden_{i}" for i in range(hiddens.shape[1])],
+            index=common_index
+        )
+        
+        # 수정된 모델 예측
+        scaled_data = self.scaler.transform(hiddens_df)
+        labels_test = self.jm.predict(scaled_data)
+        
+        # 적절한 인덱스로 라벨 변환 및 NaN 처리
+        labels_test = pd.Series(labels_test, index=common_index).fillna(0).astype(int)
+        
+        # 수정된 모델 결과 시각화
+        ax, ax2 = plot_regimes_and_cumret(
+            labels_test, 
+            pred_return_data, 
+            n_c=2, 
+            start_date=adjusted_start_date, 
+            end_date=end_date
+        )
+        ax.set(title=f"Out-of-Sample Predicted Regimes by the JM(lambda : {self.jump_penalty})")
+        savefig_plt(f"{self.output_dir}/window_{window_number}/JM_lambd_{self.jump_penalty}_test_window.png")
+        
+        # 수정된 모델 결과 저장 (파일명 수정 - 이전 코드에서 잘못된 파일명 사용)
+        df_modified = pred_data.copy()
+        df_modified['labels'] = -1
+        df_modified['labels'].iloc[self.seq_len-1:] = labels_test
+        df_modified['Date'] = pd.to_datetime(dates)
+        df_modified = df_modified[['Date', 'labels']]
+        df_modified.to_csv(f"{self.output_dir}/window_{window_number}/JM_lambd_{self.jump_penalty}_test_window.csv", index=False)

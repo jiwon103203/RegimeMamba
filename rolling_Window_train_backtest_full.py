@@ -1052,7 +1052,8 @@ def run_rolling_window_backtest(
                     window_info['train_period']['end'],
                     window_info['valid_period']['start'],
                     window_info['valid_period']['end'],
-                    data
+                    data,
+                    window_number=window_number
                 )
 
                 if model is None or model is None:
@@ -1066,7 +1067,8 @@ def run_rolling_window_backtest(
                     window_info['train_period']['end'],
                     window_info['valid_period']['start'],
                     window_info['valid_period']['end'],
-                    data
+                    data,
+                    window_number=window_number
                 )
                 
                 # 학습 실패 시 다음 윈도우로 넘어감
@@ -1245,6 +1247,9 @@ def run_rolling_window_backtest(
 def main():
     """Main execution function"""
     try:
+        import matplotlib as mpl
+        # usetex를 사용할 때 올바른 font.family 설정
+        mpl.rcParams['font.family'] = 'serif'  # 또는 'sans-serif', 'monospace', 'cursive' 중 하나
         # Parse arguments
         args = parse_args()
         print(args)

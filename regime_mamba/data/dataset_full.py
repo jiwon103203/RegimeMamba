@@ -48,8 +48,14 @@ class RegimeMambaDataset(Dataset):
             self.feature_cols = ["Open", "Close", "High", "Low", "treasury_rate", "treasury_rate_5y", "dollar_index"]
         elif config.input_dim == 8:
             self.feature_cols = ["Open", "Close", "High", "Low", "Volume","treasury_rate", "treasury_rate_5y", "dollar_index"]
+        elif config.input_dim == 9:
+            self.feature_cols = ["dd_10", "dd_20", "dd_60", "sortino_10", "sortino_20", "sortino_60", "bb_pct_10","bb_pct_20", "bb_pct_60"]
         elif config.input_dim == 10:
             self.feature_cols = ["dd_10", "dd_20", "dd_60", "dd_120", "dd_200","sortino_10", "sortino_20", "sortino_60", "sortino_120", "sortino_200"]
+        elif config.input_dim == 11:
+            self.feature_cols = ["dd_10", "dd_20", "dd_60", "dd_120", "dd_200","sortino_10", "sortino_20", "sortino_60", "sortino_120", "sortino_200", "dollar_index"]
+        elif config.input_dim == 12:
+            self.feature_cols = ["dd_10", "dd_20", "dd_60", "dd_120", "dd_200","sortino_10", "sortino_20", "sortino_60", "sortino_120", "sortino_200", "bb_pct_20", "bb_pct_60"]
 
 
         # 일자 기준으로 데이터 분할
@@ -190,8 +196,14 @@ class DateRangeRegimeMambaDataset(Dataset):
             self.feature_cols = ["Open", "Close", "High", "Low", "treasury_rate", "treasury_rate_5y", "dollar_index"]
         elif config.input_dim == 8:
             self.feature_cols = ["Open", "Close", "High", "Low", "Volume","treasury_rate", "treasury_rate_5y", "dollar_index"]
+        elif config.input_dim == 9:
+            self.feature_cols = ["dd_10", "dd_20", "dd_60", "sortino_10", "sortino_20", "sortino_60", "bb_pct_10","bb_pct_20", "bb_pct_60"]
         elif config.input_dim == 10:
             self.feature_cols = ["dd_10", "dd_20", "dd_60", "dd_120", "dd_200","sortino_10", "sortino_20", "sortino_60", "sortino_120", "sortino_200"]
+        elif config.input_dim == 11:
+            self.feature_cols = ["dd_10", "dd_20", "dd_60", "dd_120", "dd_200","sortino_10", "sortino_20", "sortino_60", "sortino_120", "sortino_200", "dollar_index"]            
+        elif config.input_dim == 12:
+            self.feature_cols = ["dd_10", "dd_20", "dd_60", "dd_120", "dd_200","sortino_10", "sortino_20", "sortino_60", "sortino_120", "sortino_200", "bb_pct_20", "bb_pct_60"]            
 
         # 시퀀스 및 타겟 생성
         self.sequences = []
