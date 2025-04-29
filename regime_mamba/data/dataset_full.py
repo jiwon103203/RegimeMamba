@@ -54,8 +54,8 @@ class RegimeMambaDataset(Dataset):
             self.feature_cols = ["dd_10", "dd_20", "dd_60", "dd_120", "dd_200","sortino_10", "sortino_20", "sortino_60", "sortino_120", "sortino_200"]
         elif config.input_dim == 11:
             self.feature_cols = ["dd_10", "dd_20", "dd_60", "dd_120", "dd_200","sortino_10", "sortino_20", "sortino_60", "sortino_120", "sortino_200", "dollar_index"]
-        elif config.input_dim == 12:
-            self.feature_cols = ["dd_10", "dd_20", "dd_60", "dd_120", "dd_200","sortino_10", "sortino_20", "sortino_60", "sortino_120", "sortino_200", "bb_pct_20", "bb_pct_60"]
+        elif config.input_dim == 15:
+            self.feature_cols = ["dd_10", "dd_20", "dd_60", "dd_120", "dd_200","sortino_10", "sortino_20", "sortino_60", "sortino_120", "sortino_200", "bb_pct_10","bb_pct_20", "bb_pct_60", "bb_pct_120", "bb_pct_200"] 
 
 
         # 일자 기준으로 데이터 분할
@@ -201,9 +201,9 @@ class DateRangeRegimeMambaDataset(Dataset):
         elif config.input_dim == 10:
             self.feature_cols = ["dd_10", "dd_20", "dd_60", "dd_120", "dd_200","sortino_10", "sortino_20", "sortino_60", "sortino_120", "sortino_200"]
         elif config.input_dim == 11:
-            self.feature_cols = ["dd_10", "dd_20", "dd_60", "dd_120", "dd_200","sortino_10", "sortino_20", "sortino_60", "sortino_120", "sortino_200", "dollar_index"]            
-        elif config.input_dim == 12:
-            self.feature_cols = ["dd_10", "dd_20", "dd_60", "dd_120", "dd_200","sortino_10", "sortino_20", "sortino_60", "sortino_120", "sortino_200", "bb_pct_20", "bb_pct_60"]            
+            self.feature_cols = ["dd_10", "dd_20", "dd_60", "dd_120", "dd_200","sortino_10", "sortino_20", "sortino_60", "sortino_120", "sortino_200", "dollar_index"]
+        elif config.input_dim == 15:
+            self.feature_cols = ["dd_10", "dd_20", "dd_60", "dd_120", "dd_200","sortino_10", "sortino_20", "sortino_60", "sortino_120", "sortino_200", "bb_pct_10","bb_pct_20", "bb_pct_60", "bb_pct_120", "bb_pct_200"] 
 
         # 시퀀스 및 타겟 생성
         self.sequences = []
@@ -232,15 +232,15 @@ class DateRangeRegimeMambaDataset(Dataset):
                 targets = np.array(self.data[self.target_col])/self.target_horizon
             else:
                 self.target_col=f"target_returns_{config.target_horizon}" #f"target_EMA_{config.target_horizon}"
-                # target_data = np.log(self.data[self.target_col]) - np.log(self.data[self.target_col].shift(1))
-                # target_data = target_data.fillna(0)
+                # target_data = np.larget_data.fillna(0)
                 targets = np.array(self.data[self.target_col])
                 # targets = np.array(self.data[self.target_col]/100)
 
             for i in range(len(features) - seq_len+1):
                 self.sequences.append(features[i:i+seq_len])
                 self.targets.append(targets[i+seq_len-1])
-                # 타겟 날짜 저장 (타겟 기간의 마지막 날짜)
+                # 타겟 날짜 저og(self.data[self.target_col]) - np.log(self.data[self.target_col].shift(1))
+                # target_data = t장 (타겟 기간의 마지막 날짜)
                 self.dates.append(dates[i+seq_len-1])
 
     def __len__(self):

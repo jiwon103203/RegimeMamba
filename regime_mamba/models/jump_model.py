@@ -20,7 +20,7 @@ class ModifiedJumpModel():
     on different time windows.
     """
 
-    def __init__(self, config, n_components=2, jump_penalty=1.5):
+    def __init__(self, config, n_components=2, jump_penalty=5):
         """
         Initializes the ModifiedJumpModel with the given configuration.
         Args:
@@ -63,12 +63,14 @@ class ModifiedJumpModel():
         feature_cols = {
             3: ['dd_10', 'sortino_20', 'sortino_60'],
             5: ['Open', 'Close', 'High', 'Low', 'treasury_rate'],
-            6: ["dd_10", "dd_20", "dd_60", "sortino_10", "sortino_20", "sortino_60"],
+            6: ["dd_10", "dd_20", "sortino_10", "sortino_20", "bb_pct_10","bb_pct_20"],
+            #6: ["dd_10", "dd_20", "dd_60", "sortino_10", "sortino_20", "sortino_60"],
             7: ['Open', 'Close', 'High', 'Low', 'treasury_rate', 'treasury_rate_5y', 'dollar_index'],
             8: ["Open", "Close", "High", "Low", "Volume", "treasury_rate", "treasury_rate_5y", "dollar_index"],
             9: ["dd_10", "dd_20", "dd_60", "sortino_10", "sortino_20", "sortino_60", "bb_pct_10","bb_pct_20", "bb_pct_60"],
             10: ["dd_10", "dd_20", "dd_60", "dd_120", "dd_200", "sortino_10", "sortino_20", "sortino_60", "sortino_120", "sortino_200"],
-            11: ["dd_10", "dd_20", "dd_60", "dd_120", "dd_200", "sortino_10", "sortino_20", "sortino_60", "sortino_120", "sortino_200", "dollar_index"]
+            11: ["dd_10", "dd_20", "dd_60", "dd_120", "dd_200", "sortino_10", "sortino_20", "sortino_60", "sortino_120", "sortino_200", "dollar_index"],
+            15: ["dd_10", "dd_20", "dd_60", "dd_120", "dd_200","sortino_10", "sortino_20", "sortino_60", "sortino_120", "sortino_200", "bb_pct_10","bb_pct_20", "bb_pct_60", "bb_pct_120", "bb_pct_200"]
         }
         return feature_cols.get(input_dim, [])
     
@@ -94,12 +96,18 @@ class ModifiedJumpModel():
         hiddens = []
         
         # 원본 코드와 일치하도록 범위 수정 (+ 1 제거)
-        for i in range(len(data) - self.seq_len):
+        for i in range(1, len(data)+1):# - self.seq_len):
             with torch.no_grad():
-                input_tensor = torch.tensor(
-                    data.iloc[i:i+self.seq_len, :].values, 
-                    dtype=torch.float32
-                ).unsqueeze(0).to(self.device)
+                if i < self.seq_len:
+                    input_tensor = torch.tensor(
+                        data.iloc[:i, :].values, 
+                        dtype=torch.float32
+                    ).unsqueeze(0).to(self.device)
+                else:
+                    input_tensor = torch.tensor(
+                        data.iloc[i-self.seq_len:i, :].values, 
+                        dtype=torch.float32
+                    ).unsqueeze(0).to(self.device)
                 
                 if self.vae:
                     _, _, _, _, hidden, _ = self.feature_extractor(input_tensor, return_hidden=True)
@@ -122,7 +130,7 @@ class ModifiedJumpModel():
         date = self._parse_date(date_str)
         return (date + relativedelta(days=days)).strftime("%Y-%m-%d")
     
-    def train_for_window(self, train_start, train_end, data, sort="cumret", window=1):
+    def train_for_window(self, train_start, train_end, data, valid_window, sort="cumret", window=1):
         """
         Trains the model on a specified time window.
         Args:
@@ -139,15 +147,15 @@ class ModifiedJumpModel():
         # 날짜 문자열 정리 및 확장된 훈련용 종료 날짜 계산
         train_start_clean = train_start.split(" ")[0]
         train_end_clean = train_end.split(" ")[0]
-        original_end_date = (self._parse_date(train_end_clean) + relativedelta(years=5)).strftime("%Y-%m-%d")
+        original_end_date = (self._parse_date(train_end_clean) + relativedelta(years=valid_window)).strftime("%Y-%m-%d")
         
         # 원본 JumpModel 훈련
         original_train_data = data[(data['Date'] >= train_start_clean) & (data['Date'] <= original_end_date)].copy()
-        original_features = original_train_data[self.original_feature].iloc[self.seq_len-1:].copy()
-        original_train_return_data = original_train_data['returns'].iloc[self.seq_len-1:]
+        original_features = original_train_data[self.original_feature].copy()#.iloc[self.seq_len-1:].copy()
+        original_train_return_data = original_train_data['returns']#.iloc[self.seq_len-1:]
         
         # 일관된 인덱스 설정
-        common_dates = pd.to_datetime(original_train_data['Date'].values[self.seq_len-1:])
+        common_dates = pd.to_datetime(original_train_data['Date'].values)#[self.seq_len-1:])
         original_train_return_data.index = common_dates
         original_features.index = common_dates
         
@@ -169,29 +177,35 @@ class ModifiedJumpModel():
         
         # 수정된 JumpModel을 위한 데이터 전처리
         train_data = self._preprocess_data(
-            data[(data['Date'] >= train_start_clean) & (data['Date'] <= original_end_date)]
+            data[(data['Date'] >= train_start_clean) & (data['Date'] <= train_end)]
         )
         
         # 시퀀스 길이를 고려한 시작 날짜 조정
-        adjusted_start_date = self._adjust_date(train_start_clean)
+        adjusted_start_date = train_start_clean #self._adjust_date(train_start_clean)
         
         # 수정된 JumpModel을 위한 데이터 준비
-        common_index = pd.to_datetime(train_data['Date'].values[self.seq_len:])
+        common_index = pd.to_datetime(train_data['Date']).iloc[1:]#.values[self.seq_len:])
         
         # 일관된 인덱스로 리턴 데이터 준비
-        train_return_data = train_data['returns'].iloc[self.seq_len:]
+        train_return_data = train_data['returns'].iloc[1:]#.iloc[self.seq_len:]
         train_return_data.index = common_index
         
         # 특성 추출
         feature_data = train_data[self.feature_col]
         hiddens = []
         # 원본 코드와 정확히 동일한 범위 사용
-        for i in range(0, len(feature_data) - self.seq_len):
+        for i in range(1, len(feature_data)):# - self.seq_len):
             with torch.no_grad():
-                input_tensor = torch.tensor(
-                    feature_data.iloc[i:i+self.seq_len, :].values, 
-                    dtype=torch.float32
-                ).unsqueeze(0).to(self.device)
+                if i < self.seq_len:
+                    input_tensor = torch.tensor(
+                        feature_data.iloc[:i, :].values,
+                        dtype=torch.float32
+                    ).unsqueeze(0).to(self.device)
+                else:
+                    input_tensor = torch.tensor(
+                        feature_data.iloc[i-self.seq_len:i, :].values, 
+                        dtype=torch.float32
+                    ).unsqueeze(0).to(self.device)
                 
                 if self.vae:
                     _, _, _, _, hidden, _ = self.feature_extractor(input_tensor, return_hidden=True)
@@ -245,19 +259,24 @@ class ModifiedJumpModel():
         )
         
         # 시퀀스 길이를 고려한 날짜 조정
-        adjusted_start_date = pd.to_datetime(self._adjust_date(start_date))
-        dates = pred_data['Date'].iloc[self.seq_len-1:]
+        adjusted_start_date = pd.to_datetime(start_date)#pd.to_datetime(self._adjust_date(start_date))
+        dates = pred_data['Date'].iloc[1:]#.iloc[self.seq_len-1:]
         common_index = pd.to_datetime(dates)
         
         # 리턴 데이터 준비
-        pred_return_data = pred_data['returns'].iloc[self.seq_len-1:]
+        pred_return_data = pred_data['returns'].iloc[1:]#.iloc[self.seq_len-1:]
         pred_return_data.index = common_index
         
         # 원본 모델 예측
-        original_features = pred_data[self.original_feature].iloc[self.seq_len-1:]
-        original_labels_test = self.original_jm.predict(
+        original_features = pred_data[self.original_feature]#.iloc[self.seq_len-1:]
+        original_labels_test = self.original_jm.predict_online(
             self.original_scaler.transform(original_features)
         )
+
+        pd.DataFrame({
+            'Date': dates.values,
+            'Label': original_labels_test.values[1:]
+        }).to_csv(f"{self.output_dir}/window_{window_number}/original_labels.csv", index=False)
         
         
         # 적절한 인덱스로 라벨 변환 및 NaN 처리
@@ -277,7 +296,7 @@ class ModifiedJumpModel():
         # 원본 모델 결과 저장
         df_original = pred_data.copy()
         df_original['labels'] = -1
-        df_original['labels'].iloc[self.seq_len-1:] = original_labels_test
+        df_original['labels'] = original_labels_test #.iloc[self.seq_len-1:] = original_labels_test
         df_original['Date'] = pd.to_datetime(dates)
         df_original = df_original[['Date', 'labels']]
         df_original.to_csv(f"{self.output_dir}/window_{window_number}/JM_lambd_50_test_window.csv", index=False)
@@ -286,12 +305,18 @@ class ModifiedJumpModel():
         feature_data = pred_data[self.feature_col]
         hiddens = []
          # 원본 코드와 정확히 동일한 범위 사용
-        for i in range(0, len(feature_data) - self.seq_len + 1):
+        for i in range(1, len(feature_data)):# - self.seq_len + 1):
             with torch.no_grad():
-                input_tensor = torch.tensor(
-                    feature_data.iloc[i:i+self.seq_len, :].values, 
-                    dtype=torch.float32
-                ).unsqueeze(0).to(self.device)
+                if i < self.seq_len:
+                    input_tensor = torch.tensor(
+                        feature_data.iloc[:i, :].values, 
+                        dtype=torch.float32
+                    ).unsqueeze(0).to(self.device)
+                else:
+                    input_tensor = torch.tensor(
+                        feature_data.iloc[i-self.seq_len:i, :].values, 
+                        dtype=torch.float32
+                    ).unsqueeze(0).to(self.device)
                 
                 if self.vae:
                     _, _, _, _, hidden, _ = self.feature_extractor(input_tensor, return_hidden=True)
@@ -311,7 +336,11 @@ class ModifiedJumpModel():
         
         # 수정된 모델 예측
         scaled_data = self.scaler.transform(hiddens_df)
-        labels_test = self.jm.predict(scaled_data)
+        labels_test = self.jm.predict_online(scaled_data)
+        pd.DataFrame({
+            'Date': dates.values,
+            'Label': labels_test
+        }).to_csv(f"{self.output_dir}/window_{window_number}/labels.csv", index=False)
         
         # 적절한 인덱스로 라벨 변환 및 NaN 처리
         labels_test = pd.Series(labels_test, index=common_index).fillna(0).astype(int)
@@ -327,10 +356,9 @@ class ModifiedJumpModel():
         ax.set(title=f"Out-of-Sample Predicted Regimes by the JM(lambda : {self.jump_penalty})")
         savefig_plt(f"{self.output_dir}/window_{window_number}/JM_lambd_{self.jump_penalty}_test_window.png")
         
-        # 수정된 모델 결과 저장 (파일명 수정 - 이전 코드에서 잘못된 파일명 사용)
         df_modified = pred_data.copy()
         df_modified['labels'] = -1
-        df_modified['labels'].iloc[self.seq_len-1:] = labels_test
+        df_modified['labels'] = labels_test #.iloc[self.seq_len-1:] = labels_test
         df_modified['Date'] = pd.to_datetime(dates)
         df_modified = df_modified[['Date', 'labels']]
         df_modified.to_csv(f"{self.output_dir}/window_{window_number}/JM_lambd_{self.jump_penalty}_test_window.csv", index=False)
