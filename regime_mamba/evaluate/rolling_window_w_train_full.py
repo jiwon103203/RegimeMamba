@@ -13,6 +13,7 @@ import copy
 from ..utils.utils import set_seed
 from ..data.dataset_full import RegimeMambaDataset, create_dataloaders, DateRangeRegimeMambaDataset
 from ..models.mamba_model import TimeSeriesMamba, create_model_from_config
+from ..models.lstm import StackedLSTM
 from ..models.rl_model import ActorCritic
 from ..models.jump_model import ModifiedJumpModel
 from ..train.train import train_with_early_stopping
@@ -21,50 +22,6 @@ from .clustering import identify_bull_bear_regimes, predict_regimes, extract_hid
 from .strategy import evaluate_regime_strategy, visualize_all_periods_performance
 from .smoothing import apply_regime_smoothing, apply_minimum_holding_period
 
-# class RollingWindowTrainConfig:
-#     def __init__(self):
-#         """롤링 윈도우 재학습 설정 클래스"""
-#         # 데이터 관련 설정
-#         self.data_path = None
-#         self.total_window_years = 40        # 총 사용할 데이터 기간(년)
-#         self.train_years = 20              # 학습에 사용할 기간(년)
-#         self.valid_years = 10              # 검증에 사용할 기간(년)
-#         self.clustering_years = 10         # 클러스터링에 사용할 기간(년)
-#         self.forward_months = 60           # 다음 윈도우까지의 간격(개월)
-#         self.start_date = '1990-01-01'     # 첫 번째 윈도우 시작일
-#         self.end_date = '2023-12-31'       # 마지막 윈도우 종료일
-#         self.target_type = 'average'
-#         self.target_horizon = 5
-#         self.preprocessed = False
-        
-#         # 모델 관련 설정
-#         self.d_model = 128
-#         self.d_state = 128
-#         self.n_layers = 4
-#         self.dropout = 0.1
-#         self.d_conv = 4
-#         self.expand = 2
-#         self.seq_len = 128
-#         self.batch_size = 64
-#         self.learning_rate = 1e-6
-#         self.n_clusters = 2
-#         self.cluster_method = 'cosine_kmeans'
-#         self.transaction_cost = 0.001
-#         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        
-#         # 학습 관련 설정
-#         self.max_epochs = 100
-#         self.patience = 10
-#         self.use_onecycle = True
-        
-#         # 필터링 관련 설정
-#         self.apply_filtering = True
-#         self.filter_method = 'minimum_holding'
-#         self.min_holding_days = 20
-        
-#         # 저장 관련 설정
-#         self.results_dir = './rolling_window_train_results'
-#         os.makedirs(self.results_dir, exist_ok=True)
 
 def train_model_for_window(config, train_start, train_end, valid_start, valid_end, data, window_number=1):
     """
@@ -123,36 +80,44 @@ def train_model_for_window(config, train_start, train_end, valid_start, valid_en
         return None, float('inf')
     
     # 모델 생성
-    model = TimeSeriesMamba(
-        input_dim=config.input_dim,
-        d_model=config.d_model,
-        d_state=config.d_state,
-        d_conv=config.d_conv,
-        expand=config.expand,
-        n_layers=config.n_layers,
-        dropout=config.dropout,
-        config=config
-    )
+    if config.lstm:
+        model = StackedLSTM(
+            input_dim = config.input_dim
+        )
+        model.train_for_window(train_start, train_end, data, valid_window=config.valid_years, outputdir=config.results_dir)
+        # 저장된 모델 불러오기
+        model.load_state_dict(torch.load(f"./{config.results_dir}/best_model.pth")['model_state_dict'])
+    else:
+        model = TimeSeriesMamba(
+                input_dim=config.input_dim,
+                d_model=config.d_model,
+                d_state=config.d_state,
+                d_conv=config.d_conv,
+                expand=config.expand,
+                n_layers=config.n_layers,
+                dropout=config.dropout,
+                config=config
+        )
     
-    if config.progressive_train:
-        for i in range(1,3):
+        if config.progressive_train:
+            for i in range(1,3):
+                best_val_loss, best_epoch, model = train_with_early_stopping(
+                    model, 
+                    train_loader, 
+                    valid_loader, 
+                    config, 
+                    use_onecycle=config.use_onecycle,
+                    progressive_train=i
+                )
+        else:
+            # 조기 종료를 적용한 모델 학습
             best_val_loss, best_epoch, model = train_with_early_stopping(
                 model, 
                 train_loader, 
                 valid_loader, 
                 config, 
-                use_onecycle=config.use_onecycle,
-                progressive_train=i
+                use_onecycle=config.use_onecycle
             )
-    else:
-        # 조기 종료를 적용한 모델 학습
-        best_val_loss, best_epoch, model = train_with_early_stopping(
-            model, 
-            train_loader, 
-            valid_loader, 
-            config, 
-            use_onecycle=config.use_onecycle
-        )
     
     print(f"학습 완료. 최적 검증 손실: {best_val_loss:.6f} (에폭 {best_epoch+1})")
     

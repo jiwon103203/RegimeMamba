@@ -40,6 +40,8 @@ class RegimeMambaDataset(Dataset):
         # 타겟 칼럼 지정
         if config.input_dim == 3:
             self.feature_cols = ["dd_10", "sortino_20", "sortino_60"]
+        elif config.input_dim == 4:
+            self.feature_cols = ["dd_10", "sortino_20", "sortino_60", "dollar_index"]
         elif config.input_dim == 5:
             self.feature_cols = ["Open", "Close", "High", "Low", "treasury_rate"]
         elif config.input_dim == 6:
@@ -188,6 +190,8 @@ class DateRangeRegimeMambaDataset(Dataset):
         # 타겟 칼럼 지정
         if config.input_dim == 3:
             self.feature_cols = ["dd_10", "sortino_20", "sortino_60"]
+        elif config.input_dim == 4:
+            self.feature_cols = ["dd_10", "sortino_20", "sortino_60", "dollar_index"]
         elif config.input_dim == 5:
             self.feature_cols = ["Open", "Close", "High", "Low", "treasury_rate"]
         elif config.input_dim == 6:

@@ -3,6 +3,7 @@ import numpy as np
 from datetime import datetime
 from dateutil.relativedelta import relativedelta
 import torch
+from lstm import StackedLSTM
 from jumpmodels.jump import JumpModel
 from jumpmodels.preprocess import StandardScalerPD
 from jumpmodels.plot import plot_regimes_and_cumret, savefig_plt
@@ -32,14 +33,19 @@ class ModifiedJumpModel():
 
         self.device = config.device
         self.seq_len = config.seq_len
-        self.feature_extractor = TimeSeriesMamba(
-            input_dim=config.input_dim,
-            d_model=config.d_model,
-            d_state=config.d_state,
-            n_layers=config.n_layers,
-            dropout=config.dropout,
-            config=config
-        )
+        if config.lstm:
+            self.model = StackedLSTM(
+                input_size=config.input_dim,
+            )
+        else:
+            self.feature_extractor = TimeSeriesMamba(
+                input_dim=config.input_dim,
+                d_model=config.d_model,
+                d_state=config.d_state,
+                n_layers=config.n_layers,
+                dropout=config.dropout,
+                config=config
+            )
 
         self.vae = config.vae
         self.freeze_feature_extractor = config.freeze_feature_extractor
@@ -62,6 +68,7 @@ class ModifiedJumpModel():
         """차원에 따른 feature 컬럼 매핑"""
         feature_cols = {
             3: ['dd_10', 'sortino_20', 'sortino_60'],
+            4: ['dd_10', 'sortino_20', 'sortino_60', 'dollar_index'],
             5: ['Open', 'Close', 'High', 'Low', 'treasury_rate'],
             6: ["dd_10", "dd_20", "sortino_10", "sortino_20", "bb_pct_10","bb_pct_20"],
             #6: ["dd_10", "dd_20", "dd_60", "sortino_10", "sortino_20", "sortino_60"],

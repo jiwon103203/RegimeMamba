@@ -141,7 +141,7 @@ def parse_args():
     parser.add_argument('--use_onecycle', type=bool, default=True, help='Use one-cycle learning rate policy')
     parser.add_argument('--progressive_train', type=bool, default=False, help='Progressive training flag')
 
-    # Extra Settings (jump model and rl_model)
+    # Extra Settings (jump model, rl_model and lstm)
     parser.add_argument('--jump_model', type=bool, default=False, help='Jump model flag')
     parser.add_argument('--rl_model', type=bool, default=False, help='Reinforcement learning model flag')
     parser.add_argument('--rl_learning_rate', type=float, default=1e-4, help='Reinforcement learning learning rate')
@@ -156,6 +156,7 @@ def parse_args():
     parser.add_argument('--steps_per_episode', type=int, default=2048, help='Steps per episode for reinforcement learning')
     parser.add_argument('--n_positions', type=int, default=3, help='Number of positions for reinforcement learning')
     parser.add_argument('--optimize_thresholds', action='store_true', help='Optimize action thresholds for reinforcement learning')
+    parser.add_argument('--lstm', action='store_true', help='Use LSTM model')
 
     # Performance-related settings
     parser.add_argument('--max_workers', type=int, help='Maximum number of worker processes')
@@ -1077,15 +1078,10 @@ def run_rolling_window_backtest(
                     continue
             
             # 2. Identify regimes
-            if config.rl_model:
+            if config.rl_model or config.jump_model or config.lstm:
                 # RL 모델은 클러스터링 대신 에이전트가 직접 결정
                 logger.info("Skipping regime identification for RL model (agent makes decisions)")
                 # RL에서는 kmeans와 bull_regime이 필요 없음
-                kmeans, bull_regime = None, None
-            elif config.jump_model:
-                # Jump model은 클러스터링 대신 에이전트가 직접 결정
-                logger.info("Skipping regime identification for jump model (agent makes decisions)")
-                # Jump model에서는 kmeans와 bull_regime이 필요 없음
                 kmeans, bull_regime = None, None
             else:
                 logger.info("Identifying regimes...")
