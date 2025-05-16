@@ -4,7 +4,7 @@ from torch.utils.data import DataLoader
 from bayes_opt import BayesianOptimization
 import torch
 
-from ..data.dataset_full import RegimeMambaDataset
+from ..data.dataset import RegimeMambaDataset
 from ..models.mamba_model import TimeSeriesMamba
 from ..config.config import RegimeMambaConfig
 from .train import train_with_early_stopping

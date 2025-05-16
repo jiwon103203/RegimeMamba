@@ -38,6 +38,7 @@ class RegimeMambaConfig:
 
         # Extra 설정
         self.jump_model = False
+        self.jump_penalty = 0
         self.rl_model = False
         self.rl_learning_rate = 1e-4
         self.rl_gamma = 0.99
@@ -52,6 +53,8 @@ class RegimeMambaConfig:
         self.n_positions = 3
         self.optimize_thresholds = False
         self.lstm = False
+        self.seed = 42
+        self.scale = 1
 
         # 예측 관련 설정
         self.predict = False
