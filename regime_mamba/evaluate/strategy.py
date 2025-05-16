@@ -6,21 +6,21 @@ import json
 
 def evaluate_regime_strategy(predictions, returns, dates=None, transaction_cost=0.001, save_path=None, config=None):
     """
-    레짐 기반 전략의 성과를 평가하며 거래 비용을 고려
+    Evaluate performance of regime-based strategy considering transaction costs
 
     Args:
-        predictions: 예측된 레짐 (1=Bull, 0=Bear)
-        returns: 실제 수익률
-        dates: 날짜 정보
-        transaction_cost: 거래 비용 (백분율, 예: 0.001 = 0.1%)
-        save_path: 결과 그래프 저장 경로 (None이면 저장하지 않음)
+        predictions: Predicted regimes (1=Bull, 0=Bear)
+        returns: Actual returns
+        dates: Date information
+        transaction_cost: Transaction cost (percentage, e.g., 0.001 = 0.1%)
+        save_path: Path to save results graph (None if not saving)
 
     Returns:
-        df: 상세 결과 데이터프레임
-        performance: 성과 지표 딕셔너리
+        df: Detailed results dataframe
+        performance: Performance metrics dictionary
     """
     if len(predictions) == 0 or len(returns)==0:
-      raise ValueError("빈 predictions 또는 returns 배열이 전달되었습니다.")
+      raise ValueError("Empty predictions or returns array was passed.")
     
     df = pd.DataFrame({
         'Date': dates,
@@ -28,11 +28,11 @@ def evaluate_regime_strategy(predictions, returns, dates=None, transaction_cost=
         'Return': returns.flatten() if isinstance(predictions, np.ndarray) else returns,
     })
 
-    # Date 순서로 정렬
+    # Sort by Date
     df.sort_values('Date').reset_index(drop=True, inplace=True)
 
-    if config is not None and config.direct_train and config.vae==False: # j 0 (bear), 1(No Move) ,2 (bull)
-        current = 0  # 0: 매도 상태, 1: 매수 상태
+    if config is not None and config.direct_train: # j 0 (bear), 1(No Move) ,2 (bull)
+        current = 0  # 0: Sell state, 1: Buy state
         for i, j in enumerate(df['Regime']):
             if j == 0:
                 df.loc[i, 'Regime_Change'] = 1 if current == 1 else 0
@@ -47,29 +47,29 @@ def evaluate_regime_strategy(predictions, returns, dates=None, transaction_cost=
                     df.loc[i, 'Regime_Change'] = 0
 
     elif config.n_clusters == 3:
-        # 3개의 레짐인 경우, Bull, Neutral이면 매수 포지션 유지 Bear는 매도
+        # For 3 regimes, maintain buy position for Bull and Neutral, sell for Bear
         df['Regime_Change'] = (df['Regime'] == 0) & (df['Regime'].shift(1) == 1) | (df['Regime'] == 1) & (df['Regime'].shift(1) == 0) | (df['Regime'] == 2) & (df['Regime'].shift(1) == 0) | (df['Regime'] == 0) & (df['Regime'].shift(1) == 2)
-        # 첫 번째 진입도 거래로 간주
+        # First entry also counts as a trade
         df.loc[0, 'Regime_Change'] = df.loc[0, 'Regime'] == 1 or df.loc[0, 'Regime'] == 2
     
     else:
-        # 레짐 변화 감지 (거래 발생)
+        # Detect regime changes (when trades occur)
         df['Regime_Change'] = df['Regime'].diff().fillna(0) != 0
-        # 첫 번째 진입도 거래로 간주
+        # First entry also counts as a trade
         df.loc[0, 'Regime_Change'] = df.loc[0, 'Regime'] == 1
 
 
-    # 거래 비용 계산 (레짐이 변할 때마다 적용)
+    # Calculate transaction costs (applied whenever regime changes)
     if config is not None and config.input_dim == 4:
         df['Transaction_Cost'] = np.where(df['Regime_Change'], transaction_cost * 100, 0)
     else:
         df['Transaction_Cost'] = np.where(df['Regime_Change'], transaction_cost, 0)
 
-    # 다음날 반영 방식으로 수정
-    df['Strategy_Regime'] = df['Regime'].shift(1).fillna(0)  # 첫날은 포지션 없음
+    # Modified to apply next day
+    df['Strategy_Regime'] = df['Regime'].shift(1).fillna(0)  # No position on first day
     df['Strategy_Return'] = df['Strategy_Regime'] * df['Return'] - df['Transaction_Cost']
 
-    # 누적 수익률 계산
+    # Calculate cumulative returns
     if config is not None and config.input_dim == 4:
         df['Cum_Market'] = (1 + df['Return']/100).cumprod() - 1
         df['Cum_Strategy'] = (1 + df['Strategy_Return']/100).cumprod() - 1
@@ -77,26 +77,26 @@ def evaluate_regime_strategy(predictions, returns, dates=None, transaction_cost=
         df['Cum_Market'] = (1 + df['Return']).cumprod() - 1
         df['Cum_Strategy'] = (1 + df['Strategy_Return']).cumprod() - 1
 
-    # 기본 통계량
+    # Basic statistics
     market_return = df['Cum_Market'].iloc[-1] * 100
     strategy_return = df['Cum_Strategy'].iloc[-1] * 100
 
-    # 매수 비율
+    # Long ratio
     long_ratio = df['Regime'].mean() * 100
 
-    # 거래 횟수
+    # Number of trades
     n_trades = df['Regime_Change'].sum()
 
-    # 총 거래 비용
+    # Total transaction cost
     total_cost = df['Transaction_Cost'].sum()
 
-    print(f"시장 누적 수익률: {market_return:.2f}%")
-    print(f"전략 누적 수익률 (거래 비용 포함): {strategy_return:.2f}%")
-    print(f"롱 포지션 비율: {long_ratio:.2f}%")
-    print(f"총 거래 횟수: {n_trades}")
-    print(f"총 거래 비용: {total_cost:.2f}%")
+    print(f"Market cumulative return: {market_return:.2f}%")
+    print(f"Strategy cumulative return (including transaction costs): {strategy_return:.2f}%")
+    print(f"Long position ratio: {long_ratio:.2f}%")
+    print(f"Total number of trades: {n_trades}")
+    print(f"Total transaction cost: {total_cost:.2f}%")
 
-    # 차트 그리기
+    # Create chart
     plt.figure(figsize=(12, 12))
 
     plt.subplot(3, 1, 1)
@@ -130,15 +130,15 @@ def evaluate_regime_strategy(predictions, returns, dates=None, transaction_cost=
     
     plt.show()
 
-    # 추가 성과 지표 계산
-    # 연율화된 수익률 (연간 거래일 252일 가정)
+    # Calculate additional performance metrics
+    # Annualized returns (assuming 252 trading days per year)
     days = len(df)
     years = days / 252
 
     market_annual_return = ((1 + market_return/100) ** (1/years) - 1) * 100
     strategy_annual_return = ((1 + strategy_return/100) ** (1/years) - 1) * 100
 
-    # 최대 낙폭 (Maximum Drawdown)
+    # Maximum Drawdown
     df['Market_Peak'] = df['Cum_Market'].cummax()
     df['Strategy_Peak'] = df['Cum_Strategy'].cummax()
 
@@ -148,7 +148,7 @@ def evaluate_regime_strategy(predictions, returns, dates=None, transaction_cost=
     market_max_drawdown = df['Market_Drawdown'].min()
     strategy_max_drawdown = df['Strategy_Drawdown'].min()
 
-    # 샤프 비율 계산 (무위험 수익률 2% 가정)
+    # Sharpe ratio calculation (assuming 2% risk-free rate)
     risk_free_rate = 0.02
     if config is not None and config.input_dim == 4:
         market_daily_returns = df['Return'] / 100
@@ -163,17 +163,17 @@ def evaluate_regime_strategy(predictions, returns, dates=None, transaction_cost=
     market_sharpe = (market_annual_return/100 - risk_free_rate) / market_volatility
     strategy_sharpe = (strategy_annual_return/100 - risk_free_rate) / strategy_volatility
 
-    print("\n추가 성과 지표:")
-    print(f"연율화 시장 수익률: {market_annual_return:.2f}%")
-    print(f"연율화 전략 수익률: {strategy_annual_return:.2f}%")
-    print(f"시장 최대 낙폭: {market_max_drawdown:.2f}%")
-    print(f"전략 최대 낙폭: {strategy_max_drawdown:.2f}%")
-    print(f"시장 연율화 변동성: {market_volatility*100:.2f}%")
-    print(f"전략 연율화 변동성: {strategy_volatility*100:.2f}%")
-    print(f"시장 샤프 비율: {market_sharpe:.2f}")
-    print(f"전략 샤프 비율: {strategy_sharpe:.2f}")
+    print("\nAdditional performance metrics:")
+    print(f"Annualized market return: {market_annual_return:.2f}%")
+    print(f"Annualized strategy return: {strategy_annual_return:.2f}%")
+    print(f"Market maximum drawdown: {market_max_drawdown:.2f}%")
+    print(f"Strategy maximum drawdown: {strategy_max_drawdown:.2f}%")
+    print(f"Market annualized volatility: {market_volatility*100:.2f}%")
+    print(f"Strategy annualized volatility: {strategy_volatility*100:.2f}%")
+    print(f"Market Sharpe ratio: {market_sharpe:.2f}")
+    print(f"Strategy Sharpe ratio: {strategy_sharpe:.2f}")
 
-    # 성과 평가 결과 저장
+    # Save performance evaluation results
     performance = {
         'cumulative_returns': {
             'market': market_return,
@@ -206,40 +206,40 @@ def evaluate_regime_strategy(predictions, returns, dates=None, transaction_cost=
 
 def analyze_transaction_cost_impact(model, valid_loader, test_loader, config, kmeans, bull_regime, bear_regime=None, save_path=None):
     """
-    다양한 거래 비용 수준에서 전략 성과를 비교 분석
+    Analyze strategy performance under various transaction cost levels
 
     Args:
-        model: 평가할 모델
-        valid_loader: 검증 데이터 로더
-        test_loader: 테스트 데이터 로더
-        config: 설정 객체
-        kmeans: 훈련된 KMeans 모델
-        bull_regime: Bull 레짐 클러스터 ID
-        save_path: 결과 그래프 저장 경로 (None이면 저장하지 않음)
+        model: Model to evaluate
+        valid_loader: Validation data loader
+        test_loader: Test data loader
+        config: Configuration object
+        kmeans: Trained KMeans model
+        bull_regime: Bull regime cluster ID
+        save_path: Path to save results (None if not saving)
 
     Returns:
-        cost_df: 비용 분석 결과 데이터프레임
+        cost_df: Transaction cost analysis results dataframe
     """
     from .clustering import predict_regimes
     
-    # 테스트 데이터에 대한 레짐 예측
+    # Predict regimes for test data
     test_predictions, test_returns, test_dates = predict_regimes(
         model, test_loader, kmeans, bull_regime, config, bear_regime=bear_regime
     )
 
-    # 다양한 거래 비용 수준
+    # Various transaction cost levels
     cost_levels = [0, 0.0005, 0.001, 0.002, 0.003, 0.005, 0.01]
     results = []
 
-    # 비용 레벨별 성과 평가
+    # Evaluate performance at each cost level
     for cost in cost_levels:
-        print(f"\n거래 비용 {cost*100:.2f}% 분석 중...")
+        print(f"\nAnalyzing transaction cost {cost*100:.2f}%...")
         _, performance = evaluate_regime_strategy(
             test_predictions, test_returns, test_dates, transaction_cost=cost
         )
 
         results.append({
-            'cost': cost * 100,  # 백분율로 변환
+            'cost': cost * 100,  # Convert to percentage
             'return': performance['cumulative_returns']['strategy'],
             'annual_return': performance['annual_returns']['strategy'],
             'max_drawdown': performance['max_drawdown']['strategy'],
@@ -248,10 +248,10 @@ def analyze_transaction_cost_impact(model, valid_loader, test_loader, config, km
             'total_cost': performance['trading_metrics']['total_transaction_cost']
         })
 
-    # 결과를 데이터프레임으로 변환
+    # Convert results to dataframe
     cost_df = pd.DataFrame(results)
 
-    # 차트 그리기
+    # Create chart
     plt.figure(figsize=(18, 12))
 
     plt.subplot(2, 2, 1)
@@ -289,34 +289,34 @@ def analyze_transaction_cost_impact(model, valid_loader, test_loader, config, km
     
     plt.show()
 
-    # 손익분기점 거래 비용 분석 (시장 대비 초과 수익이 0이 되는 지점)
+    # Breakeven transaction cost analysis (point where excess return over market becomes zero)
     market_return = test_returns.mean() * len(test_returns)
 
-    # 손익분기점 계산을 위한 함수
-    # 수익률과 비용의 관계를 보간
-    if len(cost_df) > 2:  # 보간을 위해 최소 3개 이상의 데이터 포인트 필요
+    # Function for calculating breakeven point
+    # Interpolate relationship between return and cost
+    if len(cost_df) > 2:  # Need at least 3 data points for interpolation
         f = interp1d(cost_df['return'], cost_df['cost'], kind='linear', fill_value='extrapolate')
         breakeven_cost = float(f(market_return))
-        print(f"\n손익분기점 거래 비용 (시장 대비): {breakeven_cost:.4f}%")
+        print(f"\nBreakeven transaction cost (vs market): {breakeven_cost:.4f}%")
 
     return cost_df
 
 def visualize_all_periods_performance(period_performances, save_dir):
     """
-    모든 기간에 대한 성과 시각화
+    Visualize performance across all periods
 
     Args:
-        period_performances: 모든 기간의 성과 정보 리스트
-        save_dir: 저장 디렉토리
+        period_performances: List of performance metrics for all periods
+        save_dir: Directory to save visualizations
     """
-    # 성과 데이터 추출
+    # Extract performance data
     periods = [p['period'] for p in period_performances]
     market_returns = [p['cumulative_returns']['market'] for p in period_performances]
     strategy_returns = [p['cumulative_returns']['strategy'] for p in period_performances]
     market_sharpes = [p['sharpe_ratio']['market'] for p in period_performances]
     strategy_sharpes = [p['sharpe_ratio']['strategy'] for p in period_performances]
 
-    # 기간별 수익률 비교
+    # Compare returns by period
     plt.figure(figsize=(15, 10))
 
     plt.subplot(2, 1, 1)
@@ -344,7 +344,7 @@ def visualize_all_periods_performance(period_performances, save_dir):
     plt.tight_layout()
     plt.savefig(f"{save_dir}/all_periods_comparison.png")
 
-    # 누적 성과 계산
+    # Calculate cumulative performance
     cumulative_df = pd.DataFrame({
         'period': periods,
         'market_return': market_returns,
@@ -354,7 +354,7 @@ def visualize_all_periods_performance(period_performances, save_dir):
     cumulative_df['cum_market'] = (1 + cumulative_df['market_return']/100).cumprod() - 1
     cumulative_df['cum_strategy'] = (1 + cumulative_df['strategy_return']/100).cumprod() - 1
 
-    # 누적 성과 시각화
+    # Visualize cumulative performance
     plt.figure(figsize=(12, 6))
     plt.plot(cumulative_df['period'], cumulative_df['cum_market'] * 100, 'o-', label='Market', color='gray')
     plt.plot(cumulative_df['period'], cumulative_df['cum_strategy'] * 100, 'o-', label='Regime Strategy', color='blue')
@@ -366,7 +366,7 @@ def visualize_all_periods_performance(period_performances, save_dir):
     plt.tight_layout()
     plt.savefig(f"{save_dir}/total_cumulative_performance.png")
 
-    # 전체 성과 요약 저장
+    # Save performance summary
     total_market_return = (1 + np.array(market_returns)/100).prod() - 1
     total_strategy_return = (1 + np.array(strategy_returns)/100).prod() - 1
 

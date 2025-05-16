@@ -14,50 +14,19 @@ from .clustering import identify_bull_bear_regimes, predict_regimes, extract_hid
 from .strategy import evaluate_regime_strategy, visualize_all_periods_performance
 from ..data.dataset import RegimeMambaDataset, create_dataloaders, create_date_range_dataloader
 
-# class RollingWindowConfig:
-#     def __init__(self):
-#         """롤링 윈도우 백테스트 설정 클래스"""
-#         self.lookback_years = 10      # 클러스터링에 사용할 과거 데이터 기간(년)
-#         self.forward_months = 12      # 적용할 미래 기간(개월)
-#         self.start_date = '2010-01-01'  # 백테스트 시작일
-#         self.end_date = '2023-12-31'    # 백테스트 종료일
-#         self.n_clusters = 2           # 클러스터 수 (Bull/Bear)
-#         self.cluster_method = 'cosine_kmeans'  # 클러스터링 방법
-#         self.transaction_cost = 0.001 # 거래 비용 (0.1%)
-#         self.model_path = None        # 사전 훈련된 모델 경로
-#         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-#         self.target_type = 'average'
-#         self.target_horizon = 5
-#         self.preprocessed = False
-
-#         # 모델 파라미터 (기본값)
-#         self.d_model = 128
-#         self.d_state = 128
-#         self.n_layers = 4
-#         self.dropout = 0.1
-#         self.d_conv = 4
-#         self.expand = 2
-#         self.input_dim = 4
-#         self.seq_len = 128
-#         self.batch_size = 64
-
-#         # 저장 경로
-#         self.results_dir = './rolling_window_results'
-#         os.makedirs(self.results_dir, exist_ok=True)
-
 def load_pretrained_model(config):
     """
-    사전 학습된 RegimeMamba 모델 로드
+    Load a pretrained RegimeMamba model
 
     Args:
-        config: 설정 객체
+        config: Configuration object
 
     Returns:
-        로드된 모델
+        Loaded model
     """
     from ..models.mamba_model import TimeSeriesMamba
     
-    # 모델 초기화
+    # Initialize model
     model = TimeSeriesMamba(
         input_dim=config.input_dim,
         d_model=config.d_model,
@@ -68,35 +37,35 @@ def load_pretrained_model(config):
         dropout=config.dropout
     )
 
-    # 체크포인트 로드
+    # Load checkpoint
     checkpoint = torch.load(config.model_path, map_location=config.device)
     model.load_state_dict(checkpoint['model_state_dict'])
 
-    # 평가 모드로 설정
+    # Set to evaluation mode
     model.eval()
     model.to(config.device)
 
-    print(f"모델 로드 완료: {config.model_path}")
+    print(f"Model loaded: {config.model_path}")
     return model
 
 def identify_regimes_for_period(model, data, config, period_start, period_end):
     """
-    특정 기간에 대한 레짐 식별
+    Identify regimes for a specific period
 
     Args:
-        model: 사전 학습된 모델
-        data: 전체 데이터프레임
-        config: 설정 객체
-        period_start: 기간 시작일 (문자열)
-        period_end: 기간 종료일 (문자열)
+        model: Pretrained model
+        data: Full dataframe
+        config: Configuration object
+        period_start: Period start date (string)
+        period_end: Period end date (string)
 
     Returns:
-        kmeans: 훈련된 KMeans 모델
-        bull_regime: Bull 레짐 클러스터 ID
+        kmeans: Trained KMeans model
+        bull_regime: Bull regime cluster ID
     """
-    print(f"기간 {period_start} ~ {period_end}에 대한 레짐 식별 중...")
+    print(f"Identifying regimes for period {period_start} ~ {period_end}...")
 
-    # 데이터셋 및 데이터로더 생성
+    # Create dataset and dataloader
     dataset = create_date_range_dataloader(
         data=data,
         seq_len=config.seq_len,
@@ -106,9 +75,9 @@ def identify_regimes_for_period(model, data, config, period_start, period_end):
         target_horizon = config.target_horizon
     )
 
-    # 데이터가 충분한지 확인
+    # Check if enough data
     if len(dataset) < 100:
-        print(f"경고: 기간 {period_start} ~ {period_end}에 데이터가 부족합니다 ({len(dataset)} 샘플).")
+        print(f"Warning: Insufficient data for period {period_start} ~ {period_end} ({len(dataset)} samples).")
         return None, None
 
     dataloader = DataLoader(
@@ -118,7 +87,7 @@ def identify_regimes_for_period(model, data, config, period_start, period_end):
         num_workers=4
     )
 
-    # Hidden states 추출
+    # Extract hidden states
     hidden_states, returns, dates = extract_hidden_states(model, dataloader, config)
 
     kmeans, bull_regime = identify_bull_bear_regimes(hidden_states, returns, config)
@@ -127,24 +96,24 @@ def identify_regimes_for_period(model, data, config, period_start, period_end):
 
 def apply_regimes_to_future_period(model, data, config, kmeans, bull_regime, future_start, future_end):
     """
-    식별된 레짐을 미래 기간에 적용
+    Apply identified regimes to future period
 
     Args:
-        model: 사전 학습된 모델
-        data: 전체 데이터프레임
-        config: 설정 객체
-        kmeans: 훈련된 KMeans 모델
-        bull_regime: Bull 레짐 클러스터 ID
-        future_start: 미래 기간 시작일 (문자열)
-        future_end: 미래 기간 종료일 (문자열)
+        model: Pretrained model
+        data: Full dataframe
+        config: Configuration object
+        kmeans: Trained KMeans model
+        bull_regime: Bull regime cluster ID
+        future_start: Future period start date (string)
+        future_end: Future period end date (string)
 
     Returns:
-        results_df: 결과 데이터프레임
-        performance: 성과 지표 딕셔너리
+        results_df: Results dataframe
+        performance: Performance metrics dictionary
     """
-    print(f"기간 {future_start} ~ {future_end}에 레짐 적용 중...")
+    print(f"Applying regimes to period {future_start} ~ {future_end}...")
 
-    # 데이터셋 및 데이터로더 생성
+    # Create dataset and dataloader
     dataset = create_date_range_dataloader(
         data=data,
         seq_len=config.seq_len,
@@ -154,9 +123,9 @@ def apply_regimes_to_future_period(model, data, config, kmeans, bull_regime, fut
         target_horizon=config.target_horizon
     )
 
-    # 데이터가 충분한지 확인
+    # Check if enough data
     if len(dataset) < 10:
-        print(f"경고: 기간 {future_start} ~ {future_end}에 데이터가 부족합니다 ({len(dataset)} 샘플).")
+        print(f"Warning: Insufficient data for period {future_start} ~ {future_end} ({len(dataset)} samples).")
         return None, None
 
     dataloader = DataLoader(
@@ -166,10 +135,10 @@ def apply_regimes_to_future_period(model, data, config, kmeans, bull_regime, fut
         num_workers=4
     )
 
-    # 레짐 예측
+    # Predict regimes
     predictions, true_returns, dates = predict_regimes(model, dataloader, kmeans, bull_regime, config)
 
-    # 거래 비용을 고려한 성과 평가
+    # Evaluate strategy with transaction costs
     results_df, performance = evaluate_regime_strategy(
         predictions,
         true_returns,
@@ -181,12 +150,12 @@ def apply_regimes_to_future_period(model, data, config, kmeans, bull_regime, fut
 
 def visualize_period_performance(results_df, title, save_path):
     """
-    단일 기간에 대한 성과 시각화
+    Visualize performance for a single period
 
     Args:
-        results_df: 결과 데이터프레임
-        title: 차트 제목
-        save_path: 저장 경로
+        results_df: Results dataframe
+        title: Chart title
+        save_path: Save path
     """
     plt.figure(figsize=(12, 10))
 
@@ -210,69 +179,69 @@ def visualize_period_performance(results_df, title, save_path):
 
 def run_rolling_window_backtest(config, data_path):
     """
-    롤링 윈도우 방식의 백테스트 실행
+    Run rolling window backtest
 
     Args:
-        config: 설정 객체
-        data_path: 데이터 파일 경로
+        config: Configuration object
+        data_path: Data file path
         
     Returns:
-        combined_results: 결합된 결과 데이터프레임
-        period_performances: 기간별 성과 지표 리스트
+        combined_results: Combined results dataframe
+        period_performances: List of period performance metrics
     """
-    # 데이터 로드
+    # Load data
     data = pd.read_csv(data_path)
 
-    # 사전 학습된 모델 로드
+    # Load pretrained model
     model = load_pretrained_model(config)
 
-    # 백테스트 결과 저장 객체
+    # Storage for backtest results
     all_results = []
     period_performances = []
     all_predictions = []
 
-    # 시작 및 종료 날짜 파싱
+    # Parse start and end dates
     current_date = datetime.strptime(config.start_date, '%Y-%m-%d')
     end_date = datetime.strptime(config.end_date, '%Y-%m-%d')
 
     period_counter = 1
 
-    # 롤링 윈도우 백테스팅 메인 루프
+    # Main loop for rolling window backtesting
     while current_date < end_date:
-        print(f"\n=== 기간 {period_counter} 처리 중 ===")
+        print(f"\n=== Processing Period {period_counter} ===")
 
-        # 룩백 기간 계산 (현재 날짜에서 lookback_years년 전)
+        # Calculate lookback period (from current date to lookback_years years ago)
         lookback_start = (current_date - relativedelta(years=config.lookback_years)).strftime('%Y-%m-%d')
         lookback_end = current_date.strftime('%Y-%m-%d')
 
-        # 미래 기간 계산 (현재 날짜에서 forward_months월 후)
+        # Calculate future period (from current date to forward_months months later)
         future_start = current_date.strftime('%Y-%m-%d')
         future_end = (current_date + relativedelta(months=config.forward_months)).strftime('%Y-%m-%d')
 
-        print(f"룩백 기간: {lookback_start} ~ {lookback_end}")
-        print(f"미래 기간: {future_start} ~ {future_end}")
+        print(f"Lookback period: {lookback_start} ~ {lookback_end}")
+        print(f"Future period: {future_start} ~ {future_end}")
 
-        # 레짐 식별 (과거 데이터 기반)
+        # Identify regimes (based on past data)
         kmeans, bull_regime = identify_regimes_for_period(model, data, config, lookback_start, lookback_end)
 
         if kmeans is not None and bull_regime is not None:
-            # 식별된 레짐을 미래 기간에 적용
+            # Apply identified regimes to future period
             results_df, performance = apply_regimes_to_future_period(
                 model, data, config, kmeans, bull_regime, future_start, future_end
             )
 
             if results_df is not None:
-                # 기간 정보 추가
+                # Add period information
                 results_df['lookback_start'] = lookback_start
                 results_df['lookback_end'] = lookback_end
                 results_df['future_start'] = future_start
                 results_df['future_end'] = future_end
                 results_df['period'] = period_counter
 
-                # 결과 저장
+                # Save results
                 all_results.append(results_df)
 
-                # 성과 정보에 기간 정보 추가
+                # Add period information to performance metrics
                 performance['period'] = period_counter
                 performance['lookback_start'] = lookback_start
                 performance['lookback_end'] = lookback_end
@@ -280,37 +249,37 @@ def run_rolling_window_backtest(config, data_path):
                 performance['future_end'] = future_end
                 period_performances.append(performance)
 
-                # 결과 파일 저장
+                # Save results file
                 results_df.to_csv(
                     f"{config.results_dir}/period_{period_counter}_results.csv",
                     index=False
                 )
 
-                # 성과 시각화
+                # Visualize performance
                 visualize_period_performance(
                     results_df,
-                    f"기간 {period_counter}: {future_start} ~ {future_end}",
+                    f"Period {period_counter}: {future_start} ~ {future_end}",
                     f"{config.results_dir}/period_{period_counter}_performance.png"
                 )
 
-        # 다음 기간으로 이동
+        # Move to next period
         current_date += relativedelta(months=config.forward_months)
         period_counter += 1
 
-    # 결과 병합 및 저장
+    # Merge and save results
     if all_results:
         combined_results = pd.concat(all_results, ignore_index=True)
         combined_results.to_csv(f"{config.results_dir}/all_periods_results.csv", index=False)
 
-        # 전체 성과 저장
+        # Save overall performance
         with open(f"{config.results_dir}/all_periods_performance.json", 'w') as f:
             json.dump(period_performances, f, indent=4)
 
-        # 전체 성과 시각화
+        # Visualize overall performance
         visualize_all_periods_performance(period_performances, config.results_dir)
 
-        print(f"\n백테스트 완료! 총 {period_counter-1}개 기간 처리됨.")
+        print(f"\nBacktest completed! Processed {period_counter-1} periods.")
         return combined_results, period_performances
     else:
-        print("백테스트 실패: 유효한 결과가 없습니다.")
+        print("Backtest failed: No valid results.")
         return None, None

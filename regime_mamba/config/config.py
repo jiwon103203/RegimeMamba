@@ -3,11 +3,11 @@ import os
 
 class RegimeMambaConfig:
     def __init__(self):
-        """RegimeMamba 모델 설정 클래스"""
-        # 데이터 관련 설정
+        """RegimeMamba model configuration class"""
+        # Data-related settings
         self.data_path = None
         
-        # 모델 구조 관련 설정
+        # Model structure settings
         self.d_model = 8
         self.d_state = 32
         self.d_conv = 4
@@ -17,7 +17,7 @@ class RegimeMambaConfig:
         self.input_dim = 4
         self.seq_len = 60
         
-        # 훈련 관련 설정
+        # Training settings
         self.batch_size = 1024
         self.learning_rate = 5e-4
         self.max_epochs = 300
@@ -27,37 +27,37 @@ class RegimeMambaConfig:
         self.direct_train = False
         self.use_onecycle = True
 
-        # 클러스터링 관련 설정
-        self.n_clusters = 2  # Bull과 Bear 두 개의 레짐으로 클러스터링
+        # Clustering settings
+        self.n_clusters = 2  # Clustering into two regimes: Bull and Bear
         self.cluster_method = 'cosine_kmeans'
 
-        # Extra 설정
+        # Extra settings
         self.jump_model = False
         self.jump_penalty = 0
         self.n_positions = 3
         self.lstm = False
-        self.seed = 42
-        self.scale = 1
+        self.seed = 10
+        self.scale = 10
 
-        # 예측 관련 설정
+        # Prediction settings
         self.predict = False
 
     def __str__(self):
-        """설정 정보를 문자열로 반환"""
-        config_str = "RegimeMamba 설정:\n"
+        """Return configuration information as a string"""
+        config_str = "RegimeMamba Configuration:\n"
         for key, value in self.__dict__.items():
             config_str += f"  {key}: {value}\n"
         return config_str
         
     def save(self, filepath):
-        """설정을 JSON 파일로 저장"""
+        """Save configuration to a JSON file"""
         import json
         with open(filepath, 'w') as f:
             json.dump(self.__dict__, f, indent=4, default=str)
         
     @classmethod
     def load(cls, filepath):
-        """JSON 파일에서 설정 로드"""
+        """Load configuration from a JSON file"""
         import json
         config = cls()
         with open(filepath, 'r') as f:
@@ -65,36 +65,36 @@ class RegimeMambaConfig:
             for key, value in config_dict.items():
                 setattr(config, key, value)
         
-        # device 객체 복원
+        # Restore device object
         config.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         return config
 
 class RollingWindowConfig(RegimeMambaConfig):
 
     def __init__(self):
-        """Rolling Window 기반 RegimeMamba 모델 설정 클래스"""
+        """Rolling Window based RegimeMamba model configuration class"""
         super().__init__()
-        self.lookback_years = 10      # 클러스터링에 사용할 과거 데이터 기간(년)
-        self.forward_months = 12      # 적용할 미래 기간(개월)
-        self.start_date = '2010-01-01'  # 백테스트 시작일
-        self.end_date = '2023-12-31'    # 백테스트 종료일
-        self.transaction_cost = 0.001 # 거래 비용 (0.1%)
-        self.model_path = None        # 사전 훈련된 모델 경로
+        self.lookback_years = 10      # Past data period (years) for clustering
+        self.forward_months = 12      # Future application period (months)
+        self.start_date = '2010-01-01'  # Backtest start date
+        self.end_date = '2023-12-31'    # Backtest end date
+        self.transaction_cost = 0.001 # Transaction cost (0.1%)
+        self.model_path = None        # Path to pretrained model
 
-        # 저장 경로
+        # Save path
         self.results_dir = './rolling_window_results'
         os.makedirs(self.results_dir, exist_ok=True)
 
     def __str__(self):
-        """설정 정보를 문자열로 반환"""
-        config_str = "RollingWindowConfig 설정:\n"
+        """Return configuration information as a string"""
+        config_str = "RollingWindowConfig Configuration:\n"
         for key, value in self.__dict__.items():
             config_str += f"  {key}: {value}\n"
         return config_str
     
     @classmethod
     def load(cls, filepath):
-        """JSON 파일에서 설정 로드"""
+        """Load configuration from a JSON file"""
         import json
         config = cls()
         with open(filepath, 'r') as f:
@@ -102,13 +102,13 @@ class RollingWindowConfig(RegimeMambaConfig):
             for key, value in config_dict.items():
                 setattr(config, key, value)
         
-        # device 객체 복원
+        # Restore device object
         config.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         return config
     
 class RollingWindowTrainConfig(RollingWindowConfig):
     def __init__(self):
-        """Rolling Window 기반 RegimeMamba 훈련 설정 클래스"""
+        """Rolling Window based RegimeMamba training configuration class"""
         super().__init__()
         self.total_window_years = 40
         self.train_years = 20
@@ -116,7 +116,7 @@ class RollingWindowTrainConfig(RollingWindowConfig):
         self.clustering_years = 10
         self.forward_months = 60
 
-        # 훈련 관련 설정
+        # Training settings
         self.max_epochs = 100
 
         self.apply_filtering = True
@@ -127,15 +127,15 @@ class RollingWindowTrainConfig(RollingWindowConfig):
         os.makedirs(self.results_dir, exist_ok=True)
 
     def __str__(self):
-        """설정 정보를 문자열로 반환"""
-        config_str = "RollingWindowTrainconfig 설정:\n"
+        """Return configuration information as a string"""
+        config_str = "RollingWindowTrainconfig Configuration:\n"
         for key, value in self.__dict__.items():
             config_str += f"  {key}: {value}\n"
         return config_str
     
     @classmethod
     def load(cls, filepath):
-        """JSON 파일에서 설정 로드"""
+        """Load configuration from a JSON file"""
         import json
         config = cls()
         with open(filepath, 'r') as f:
@@ -143,6 +143,6 @@ class RollingWindowTrainConfig(RollingWindowConfig):
             for key, value in config_dict.items():
                 setattr(config, key, value)
         
-        # device 객체 복원
+        # Restore device object
         config.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         return config

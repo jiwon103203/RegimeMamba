@@ -8,31 +8,31 @@ from mamba_ssm.modules.mlp import GatedMLP
 class TimeSeriesMamba(nn.Module):
     def __init__(
         self,
-        input_dim=4,        # 시계열 변수의 수
-        pred_len=1,         # 예측할 미래 시점 수
-        d_model=128,        # 모델 차원
-        d_state=128,        # 상태 차원
-        d_conv=4,           # 컨볼루션 커널 크기
-        expand=2,           # 확장 계수
-        n_layers=4,         # Mamba 레이어 수
-        dropout=0.1,         # 드롭아웃 비율
-        output_dim=1,        # 출력 차원
-        config=None         # 설정 객체
+        input_dim=4,        # Number of time series variables
+        pred_len=1,         # Number of future points to predict
+        d_model=128,        # Model dimension
+        d_state=128,        # State dimension
+        d_conv=4,           # Convolution kernel size
+        expand=2,           # Expansion coefficient
+        n_layers=4,         # Number of Mamba layers
+        dropout=0.1,         # Dropout rate
+        output_dim=1,        # Output dimension
+        config=None         # Configuration object
     ):
         """
-        Mamba 기반 시계열 모델 구현
+        Mamba-based time series model implementation
 
         Args:
-            input_dim: 입력 변수의 수
-            pred_len: 예측할 미래 시점 수
-            d_model: 모델 차원
-            d_state: 상태 차원
-            d_conv: 컨볼루션 커널 크기
-            expand: 확장 계수
-            n_layers: Mamba 레이어 수
-            dropout: 드롭아웃 비율
-            output_dim: 출력 차원
-            config: 설정 객체
+            input_dim: Number of input variables
+            pred_len: Number of future points to predict
+            d_model: Model dimension
+            d_state: State dimension
+            d_conv: Convolution kernel size
+            expand: Expansion coefficient
+            n_layers: Number of Mamba layers
+            dropout: Dropout rate
+            output_dim: Output dimension
+            config: Configuration object
         """
         super().__init__()
 
@@ -47,11 +47,11 @@ class TimeSeriesMamba(nn.Module):
             self.output_dim = 3 if config.direct_train else 1
                 
 
-        # 입력 임베딩
+        # Input embedding
         self.input_embedding = nn.Linear(input_dim, d_model)
 
-        # Mamba 블록
-        # 개선된 구현
+        # Mamba blocks
+        # Improved implementation
         self.blocks = nn.ModuleList([
             Block(
                 dim=d_model,
@@ -62,8 +62,8 @@ class TimeSeriesMamba(nn.Module):
                     expand=expand
                 ),
                 mlp_cls=lambda dim: GatedMLP(dim),
-                fused_add_norm=True,  # Add와 LayerNorm 융합으로 성능 향상
-                residual_in_fp32=True  # 정밀도 유지를 위한 fp32 형식의 잔차
+                fused_add_norm=True,  # Enhanced performance with fused Add and LayerNorm
+                residual_in_fp32=True  # Maintain precision with fp32 format residuals
             )
             for _ in range(n_layers)
         ])
@@ -71,35 +71,35 @@ class TimeSeriesMamba(nn.Module):
         self.norm = nn.LayerNorm(d_model)
         self.dropout = nn.Dropout(dropout)
 
-        # 예측 헤드 (1개 값만 예측)
+        # Prediction head (predicts single value)
         self.pred_head = nn.Linear(d_model, self.output_dim)
 
     def forward(self, x, return_hidden=False):
         """
-        순방향 전파
+        Forward pass
 
         Args:
-            x: 입력 텐서 [batch_size, seq_len, input_dim]
-            return_hidden: hidden state를 반환할지 여부
+            x: Input tensor [batch_size, seq_len, input_dim]
+            return_hidden: Whether to return hidden state
 
         Returns:
-            예측값 및 선택적으로 hidden state
+            Predictions and optionally hidden state
         """
-        # 임베딩
+        # Embedding
         x = self.input_embedding(x)
         x = self.dropout(x)
 
-        # Mamba 처리
+        # Mamba processing
         residual = None
         for i,block in enumerate(self.blocks):
             x, residual = block(x, residual)
             if i < len(self.blocks) - 1:
                 x = self.dropout(x)
 
-        # 마지막 시퀀스 포지션의 hidden state 추출
+        # Extract hidden state from last sequence position
         hidden = x[:, -1, :]  # [batch_size, d_model]
 
-        # 예측 헤드 (수익률만 예측)
+        # Prediction head (predicts return only)
         prediction = self.pred_head(hidden)  # [batch_size, 1]
 
         if return_hidden:
@@ -108,16 +108,16 @@ class TimeSeriesMamba(nn.Module):
 
 def create_model_from_config(config):
     """
-    설정으로부터 모델 생성
+    Create model from configuration
     
     Args:
-        config: 설정 객체
+        config: Configuration object
         
     Returns:
-        model: 생성된 모델
+        model: Created model
     """
     model = TimeSeriesMamba(
-        input_dim=config.input_dim,  # 기본적인 입력 차원은 4차원 (returns, dd_10, sortino_20, sortino_60)
+        input_dim=config.input_dim,  # Basic input dimension is 4 (returns, dd_10, sortino_20, sortino_60)
         d_model=config.d_model,
         d_state=config.d_state,
         d_conv=config.d_conv,

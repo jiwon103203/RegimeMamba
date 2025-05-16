@@ -6,12 +6,12 @@ from torch.utils.data import Dataset, DataLoader
 class RegimeMambaDataset(Dataset):
     def __init__(self, config, mode="train"):
         """
-        RegimeMamba 모델을 위한 데이터셋 클래스
+        Dataset class for RegimeMamba model
 
         Args:
-            path: 데이터 파일 경로
-            config: 설정 객체
-            mode: 'train', 'valid', 'test' 중 하나
+            path: Data file path
+            config: Configuration object
+            mode: One of 'train', 'valid', 'test'
         """
         super().__init__()
         self.data = pd.read_csv(config.data_path)
@@ -21,18 +21,18 @@ class RegimeMambaDataset(Dataset):
         # self.data['High'] = np.log(self.data['High'] + epsilon) - np.log(self.data['Close'].shift(1) + epsilon)
         # self.data['Low'] = np.log(self.data['Low'] + epsilon) - np.log(self.data['Close'].shift(1) + epsilon)
 
-        # Null 값 처리
+        # Handle null values
         self.data = self.data.fillna(0)
         self.seq_len = config.seq_len
 
-        # 타겟 칼럼 지정
+        # Define feature columns
         if config.input_dim == 3:
             self.feature_cols = ["dd_10", "sortino_20", "sortino_60"]
         elif config.input_dim == 4:
             self.feature_cols = ["dd_10", "sortino_20", "sortino_60", "dollar_index"]
 
 
-        # 일자 기준으로 데이터 분할
+        # Split data based on date
         date_col = 'Date'
 
         if mode == "train":
@@ -42,10 +42,10 @@ class RegimeMambaDataset(Dataset):
         elif mode == "test":
             self.subset = self.data[self.data[date_col] >= '2010-01-01']
 
-        # 시퀀스 및 타겟 생성
+        # Create sequences and targets
         self.sequences = []
         self.targets = []
-        self.dates = []  # 날짜 정보도 저장
+        self.dates = []  # Store date information
         self.seq_len = config.seq_len
 
         features = np.array(self.subset[self.feature_cols])
@@ -87,20 +87,20 @@ class DateRangeRegimeMambaDataset(Dataset):
     def __init__(self, data=None, path=None, seq_len=128, start_date=None, end_date=None, 
                  config=None):
         """
-        날짜 범위를 기반으로 데이터를 필터링하는 데이터셋 클래스
+        Dataset class that filters data based on date range
 
         Args:
-            data: 전체 데이터프레임 (None인 경우 path에서 로드)
-            path: 데이터 파일 경로 (data가 None인 경우 사용)
-            seq_len: 시퀀스 길이
-            start_date: 시작 날짜 (문자열, 'YYYY-MM-DD' 형식)
-            end_date: 종료 날짜 (문자열, 'YYYY-MM-DD' 형식)
-            config: 설정 객체 (필요한 속성: direct_train)
+            data: Full dataframe (load from path if None)
+            path: Data file path (used if data is None)
+            seq_len: Sequence length
+            start_date: Start date (string, 'YYYY-MM-DD' format)
+            end_date: End date (string, 'YYYY-MM-DD' format)
+            config: Configuration object (required attributes: direct_train)
         """
         super().__init__()
         self.seq_len = seq_len
         self.direct_train = config.direct_train
-        # 데이터 로드
+        # Load data
         if data is None and path is not None:
             data = pd.read_csv(path)
             
@@ -110,19 +110,19 @@ class DateRangeRegimeMambaDataset(Dataset):
             # data['High'] = np.log(data['High'] + epsilon) - np.log(data['Close'].shift(1) + epsilon)
             # data['Low'] = np.log(data['Low'] + epsilon) - np.log(data['Close'].shift(1) + epsilon)
 
-            # Null 값 처리
+            # Handle null values
             data = data.fillna(0)
 
-        # 데이터가 제공되지 않은 경우 에러
+        # Error if no data provided
         if data is None:
             raise ValueError("Either data or path must be provided")
         if config is None:
             raise ValueError("Config must be provided")
 
-        # 날짜 칼럼 식별
+        # Identify date column
         date_col = 'Date'
 
-        # 날짜 필터링
+        # Filter by date
         if start_date and end_date:
             self.data = data[(data[date_col] >= start_date) & (data[date_col] <= end_date)].copy()
         elif start_date:
@@ -132,13 +132,13 @@ class DateRangeRegimeMambaDataset(Dataset):
         else:
             self.data = data.copy()
 
-        # 타겟 칼럼 지정
+        # Define feature columns
         if config.input_dim == 3:
             self.feature_cols = ["dd_10", "sortino_20", "sortino_60"]
         elif config.input_dim == 4:
             self.feature_cols = ["dd_10", "sortino_20", "sortino_60", "dollar_index"]
 
-        # 시퀀스 및 타겟 생성
+        # Create sequences and targets
         self.sequences = []
         self.targets = []
         self.dates = []
@@ -178,13 +178,13 @@ class DateRangeRegimeMambaDataset(Dataset):
 
 def create_dataloaders(config):
     """
-    데이터셋 및 데이터로더 생성 함수
+    Function to create datasets and dataloaders
     
     Args:
-        config: 설정 객체 (필요한 속성: data_path, seq_len, batch_size)
+        config: Configuration object (required attributes: data_path, seq_len, batch_size)
         
     Returns:
-        train_loader, valid_loader, test_loader: 데이터로더 튜플
+        train_loader, valid_loader, test_loader: Tuple of dataloaders
     """
 
     train_dataset = RegimeMambaDataset(
@@ -228,20 +228,20 @@ def create_dataloaders(config):
 def create_date_range_dataloader(data=None, path=None, seq_len=128, batch_size=64, 
                                 start_date=None, end_date=None, shuffle=False, num_workers=2):
     """
-    날짜 범위 기반 데이터로더 생성 유틸리티 함수
+    Utility function to create dataloader based on date range
     
     Args:
-        data: 데이터프레임 (None인 경우 path에서 로드)
-        path: 데이터 파일 경로 (data가 None인 경우)
-        seq_len: 시퀀스 길이
-        batch_size: 배치 크기
-        start_date: 시작 날짜
-        end_date: 종료 날짜
-        shuffle: 데이터 셔플 여부
-        num_workers: 데이터 로딩 워커 수
+        data: Dataframe (load from path if None)
+        path: Data file path (used if data is None)
+        seq_len: Sequence length
+        batch_size: Batch size
+        start_date: Start date
+        end_date: End date
+        shuffle: Whether to shuffle data
+        num_workers: Number of data loading workers
         
     Returns:
-        dataloader: 생성된 데이터로더
+        dataloader: Created dataloader
     """
     dataset = DateRangeRegimeMambaDataset(
         data=data,

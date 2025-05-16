@@ -23,24 +23,24 @@ from .smoothing import apply_regime_smoothing, apply_minimum_holding_period
 
 def train_model_for_window(config, train_start, train_end, valid_start, valid_end, data, window_number=1):
     """
-    특정 기간에 대해 모델 학습
+    Train model for a specific time window
     
     Args:
-        config: 설정 객체
-        train_start: 학습 시작일
-        train_end: 학습 종료일
-        valid_start: 검증 시작일
-        valid_end: 검증 종료일
-        data: 전체 데이터프레임
+        config: Configuration object
+        train_start: Training start date
+        train_end: Training end date
+        valid_start: Validation start date
+        valid_end: Validation end date
+        data: Full dataframe
         
     Returns:
-        trained_model: 학습된 모델
-        best_val_loss: 최적 검증 손실
+        trained_model: Trained model
+        best_val_loss: Best validation loss
     """
-    print(f"\n학습 기간: {train_start} ~ {train_end}")
-    print(f"검증 기간: {valid_start} ~ {valid_end}")
+    print(f"\nTraining period: {train_start} ~ {train_end}")
+    print(f"Validation period: {valid_start} ~ {valid_end}")
     
-    # 데이터셋 생성
+    # Create datasets
     train_dataset = DateRangeRegimeMambaDataset(
         data=data, 
         seq_len=config.seq_len,
@@ -57,7 +57,7 @@ def train_model_for_window(config, train_start, train_end, valid_start, valid_en
         config=config
     )
     
-    # 데이터 로더 생성
+    # Create data loaders
     train_loader = DataLoader(
         train_dataset,
         batch_size=config.batch_size,
@@ -72,18 +72,18 @@ def train_model_for_window(config, train_start, train_end, valid_start, valid_en
         num_workers=2
     )
     
-    # 데이터가 충분한지 확인
+    # Check if there's enough data
     if len(train_dataset) < 100 or len(valid_dataset) < 50:
-        print(f"경고: 데이터가 부족합니다. 학습: {len(train_dataset)}, 검증: {len(valid_dataset)}")
+        print(f"Warning: Insufficient data. Training: {len(train_dataset)}, Validation: {len(valid_dataset)}")
         return None, float('inf')
     
-    # 모델 생성
+    # Create model
     if config.lstm:
         model = StackedLSTM(
             input_dim = config.input_dim
         )
         model.train_for_window(train_start, train_end, data, valid_window=config.valid_years, outputdir=config.results_dir)
-        # 저장된 모델 불러오기
+        # Load saved model
         model.load_state_dict(torch.load(f"./{config.results_dir}/best_model.pth"))
     else:
         model = TimeSeriesMamba(
@@ -97,19 +97,8 @@ def train_model_for_window(config, train_start, train_end, valid_start, valid_en
                 config=config
         )
     
-        if config.progressive_train:
-            for i in range(1,3):
-                best_val_loss, best_epoch, model = train_with_early_stopping(
-                    model, 
-                    train_loader, 
-                    valid_loader, 
-                    config, 
-                    use_onecycle=config.use_onecycle,
-                    progressive_train=i
-                )
-        else:
-            # 조기 종료를 적용한 모델 학습
-            best_val_loss, best_epoch, model = train_with_early_stopping(
+        # Train model with early stopping
+        best_val_loss, best_epoch, model = train_with_early_stopping(
                 model, 
                 train_loader, 
                 valid_loader, 
@@ -117,7 +106,7 @@ def train_model_for_window(config, train_start, train_end, valid_start, valid_en
                 use_onecycle=config.use_onecycle
             )
     
-        print(f"학습 완료. 최적 검증 손실: {best_val_loss:.6f} (에폭 {best_epoch+1})")
+        print(f"Training complete. Best validation loss: {best_val_loss:.6f} (Epoch {best_epoch+1})")
 
     if config.jump_model:
         jump_model = ModifiedJumpModel(config=config, jump_penalty=config.jump_penalty)
@@ -130,22 +119,22 @@ def train_model_for_window(config, train_start, train_end, valid_start, valid_en
 
 def identify_regimes_for_window(config, model, data, clustering_start, clustering_end):
     """
-    특정 윈도우에서 레짐 식별
+    Identify regimes for a specific window
     
     Args:
-        config: 설정 객체
-        model: 학습된 모델
-        data: 전체 데이터프레임
-        clustering_start: 클러스터링 시작일
-        clustering_end: 클러스터링 종료일
+        config: Configuration object
+        model: Trained model
+        data: Full dataframe
+        clustering_start: Clustering start date
+        clustering_end: Clustering end date
         
     Returns:
-        kmeans: K-Means 모델
-        bull_regime: Bull 레짐 클러스터 ID
+        kmeans: K-Means model
+        bull_regime: Bull regime cluster ID
     """
-    print(f"\n레짐 식별 기간: {clustering_start} ~ {clustering_end}")
+    print(f"\nRegime identification period: {clustering_start} ~ {clustering_end}")
     
-    # 클러스터링용 데이터셋 생성
+    # Create clustering dataset
     clustering_dataset = DateRangeRegimeMambaDataset(
         data=data, 
         seq_len=config.seq_len,
@@ -154,7 +143,7 @@ def identify_regimes_for_window(config, model, data, clustering_start, clusterin
         config=config
     )
     
-    # 데이터 로더 생성
+    # Create data loader
     clustering_loader = DataLoader(
         clustering_dataset,
         batch_size=config.batch_size,
@@ -162,40 +151,40 @@ def identify_regimes_for_window(config, model, data, clustering_start, clusterin
         num_workers=4
     )
     
-    # 데이터가 충분한지 확인
+    # Check if there's enough data
     if len(clustering_dataset) < 100:
-        print(f"경고: 클러스터링을 위한 데이터가 부족합니다. ({len(clustering_dataset)} 샘플)")
+        print(f"Warning: Insufficient data for clustering ({len(clustering_dataset)} samples)")
         return None, None
     
-    # Hidden states 추출
+    # Extract hidden states
     hidden_states, returns, _ = extract_hidden_states(model, clustering_loader, config)
     
-    # 클러스터링
+    # Clustering
     kmeans, bull_regime = identify_bull_bear_regimes(hidden_states, returns, config)
     
     return kmeans, bull_regime
 
 def apply_and_evaluate_regimes(config, model, data, kmeans, bull_regime, forward_start, forward_end, window_number):
     """
-    미래 기간에 레짐 적용 및 평가
+    Apply and evaluate regimes in future period
     
     Args:
-        config: 설정 객체
-        model: 학습된 모델
-        data: 전체 데이터프레임
-        kmeans: K-Means 모델
-        bull_regime: Bull 레짐 클러스터 ID
-        forward_start: 미래 기간 시작일
-        forward_end: 미래 기간 종료일
-        window_number: 윈도우 번호
+        config: Configuration object
+        model: Trained model
+        data: Full dataframe
+        kmeans: K-Means model
+        bull_regime: Bull regime cluster ID
+        forward_start: Future period start date
+        forward_end: Future period end date
+        window_number: Window number
         
     Returns:
-        results_df: 결과 데이터프레임
-        performance: 성과 지표 딕셔너리
+        results_df: Results dataframe
+        performance: Performance metrics dictionary
     """
-    print(f"\n적용 기간: {forward_start} ~ {forward_end}")
+    print(f"\nApplication period: {forward_start} ~ {forward_end}")
     
-    # 미래 데이터셋 생성
+    # Create future dataset
     forward_dataset = DateRangeRegimeMambaDataset(
         data=data, 
         seq_len=config.seq_len,
@@ -204,7 +193,7 @@ def apply_and_evaluate_regimes(config, model, data, kmeans, bull_regime, forward
         config=config
     )
     
-    # 데이터 로더 생성
+    # Create data loader
     forward_loader = DataLoader(
         forward_dataset,
         batch_size=config.batch_size,
@@ -212,25 +201,25 @@ def apply_and_evaluate_regimes(config, model, data, kmeans, bull_regime, forward
         num_workers=4
     )
     
-    # 데이터가 충분한지 확인
+    # Check if there's enough data
     if len(forward_dataset) < 10:
-        print(f"경고: 평가를 위한 데이터가 부족합니다. ({len(forward_dataset)} 샘플)")
+        print(f"Warning: Insufficient data for evaluation ({len(forward_dataset)} samples)")
         return None, None
     
-    # 레짐 예측
+    # Predict regimes
     predictions, true_returns, dates = predict_regimes(model, forward_loader, kmeans, bull_regime, config)
     
-    # 원본 예측 저장
+    # Save original predictions
     raw_predictions = copy.deepcopy(predictions)
     
-    # 필터링 적용 (옵션)
+    # Apply filtering (optional)
     if config.apply_filtering:
         if config.filter_method == 'minimum_holding':
             predictions = apply_minimum_holding_period(predictions, min_holding_days=config.min_holding_days).reshape(-1, 1)
         elif config.filter_method == 'smoothing':
             predictions = apply_regime_smoothing(predictions, method='ma', window=10).reshape(-1, 1)
     
-    # 거래 비용을 고려한 전략 평가
+    # Evaluate strategy considering transaction costs
     results_df, performance = evaluate_regime_strategy(
         predictions,
         true_returns,
@@ -239,7 +228,7 @@ def apply_and_evaluate_regimes(config, model, data, kmeans, bull_regime, forward
         config=config
     )
     
-    # 결과에 기간 정보 추가
+    # Add period information to results
     if results_df is not None:
         results_df['window'] = window_number
         forward_start = datetime.strptime(forward_start, "%Y-%m-%d")
@@ -247,18 +236,18 @@ def apply_and_evaluate_regimes(config, model, data, kmeans, bull_regime, forward
         results_df['forward_start'] = forward_start
         results_df['forward_end'] = forward_end
         
-        # 원본 레짐 정보 추가
+        # Add original regime information
         results_df['raw_regime'] = raw_predictions.flatten()
         
-        # 필터링 정보 추가
+        # Add filtering information
         if config.apply_filtering:
             results_df['filter_method'] = config.filter_method
             
-            # 원본과 필터링 후 거래 횟수 계산
+            # Calculate original and filtered trade counts
             raw_trades = (np.diff(raw_predictions.flatten()) != 0).sum() + (raw_predictions[0] == 1)
             filtered_trades = (np.diff(predictions.flatten()) != 0).sum() + (predictions[0][0] == 1)
             
-            # 성과 정보에 거래 감소 정보 추가
+            # Add trade reduction information to performance
             performance['raw_trades'] = int(raw_trades)
             performance['filtered_trades'] = int(filtered_trades)
             performance['trade_reduction'] = int(raw_trades - filtered_trades)
@@ -267,7 +256,7 @@ def apply_and_evaluate_regimes(config, model, data, kmeans, bull_regime, forward
             else:
                 performance['trade_reduction_pct'] = 0
             
-        # 성과 정보에 윈도우 정보 추가
+        # Add window information to performance
         performance['window'] = window_number
         performance['forward_start'] = forward_start
         performance['forward_end'] = forward_end
@@ -276,36 +265,36 @@ def apply_and_evaluate_regimes(config, model, data, kmeans, bull_regime, forward
 
 def visualize_window_performance(results_df, model_loss, window_number, title, save_path):
     """
-    윈도우 성과 시각화
+    Visualize window performance
     
     Args:
-        results_df: 결과 데이터프레임
-        model_loss: 모델 검증 손실
-        window_number: 윈도우 번호
-        title: 차트 제목
-        save_path: 저장 경로
+        results_df: Results dataframe
+        model_loss: Model validation loss
+        window_number: Window number
+        title: Chart title
+        save_path: Save path
     """
     plt.figure(figsize=(15, 10))
     
-    # 누적 수익률 및 레짐 표시
+    # Plot cumulative returns and regime
     plt.subplot(2, 1, 1)
-    plt.plot(results_df['Cum_Market'] * 100, label='시장', color='gray')
-    plt.plot(results_df['Cum_Strategy'] * 100, label='레짐 전략', color='blue')
-    plt.title(f'{title} (검증 손실: {model_loss:.6f})')
+    plt.plot(results_df['Cum_Market'] * 100, label='Market', color='gray')
+    plt.plot(results_df['Cum_Strategy'] * 100, label='Regime Strategy', color='blue')
+    plt.title(f'{title} (Validation Loss: {model_loss:.6f})')
     plt.legend()
-    plt.ylabel('수익률 (%)')
+    plt.ylabel('Return (%)')
     plt.grid(True)
     
-    # 레짐 신호 표시
+    # Plot regime signal
     plt.subplot(2, 1, 2)
-    plt.plot(results_df['Regime'], label='레짐 (1=Bull, 0=Bear)', color='red')
-    plt.title('레짐 신호')
-    plt.ylabel('레짐')
+    plt.plot(results_df['Regime'], label='Regime (1=Bull, 0=Bear)', color='red')
+    plt.title('Regime Signal')
+    plt.ylabel('Regime')
     plt.grid(True)
     
-    # 필터링 사용 시 원본 레짐도 표시
+    # Show original regime if filtering is used
     if 'raw_regime' in results_df.columns:
-        plt.plot(results_df['raw_regime'], label='원본 레짐', color='green', alpha=0.5, linestyle='--')
+        plt.plot(results_df['raw_regime'], label='Original Regime', color='green', alpha=0.5, linestyle='--')
         plt.legend()
     
     plt.tight_layout()
@@ -314,92 +303,92 @@ def visualize_window_performance(results_df, model_loss, window_number, title, s
 
 def run_rolling_window_train(config):
     """
-    롤링 윈도우 재학습 실행 함수
+    Execute rolling window retraining
     
     Args:
-        config: 설정 객체
+        config: Configuration object
         
     Returns:
-        combined_results: 전체 결과 데이터프레임
-        all_performances: 전체 성과 리스트
-        model_histories: 모델 학습 이력 리스트
+        combined_results: Combined results dataframe
+        all_performances: List of all performance metrics
+        model_histories: List of model training histories
     """
-    # 데이터 로드
-    print("데이터 로드 중...")
+    # Load data
+    print("Loading data...")
     data = pd.read_csv(config.data_path)
     
     
-    # 결과 저장 객체
+    # Storage for results
     all_results = []
     all_performances = []
     model_histories = []
     
-    # 시작 및 종료 날짜 파싱
+    # Parse start and end dates
     current_date = datetime.strptime(config.start_date, '%Y-%m-%d')
     end_date = datetime.strptime(config.end_date, '%Y-%m-%d')
     
     window_number = 1
     
-    # 롤링 윈도우 메인 루프
+    # Rolling window main loop
     while current_date <= end_date:
-        print(f"\n=== 윈도우 {window_number} 처리 중 ===")
+        print(f"\n=== Processing Window {window_number} ===")
         
-        # 학습 기간 계산
+        # Calculate training period
         train_start = (current_date - relativedelta(years=config.total_window_years)).strftime('%Y-%m-%d')
         train_end = (current_date - relativedelta(years=config.valid_years + config.clustering_years)).strftime('%Y-%m-%d')
         
-        # 검증 기간 계산
+        # Calculate validation period
         valid_start = (current_date - relativedelta(years=config.clustering_years)).strftime('%Y-%m-%d')
         valid_end = current_date.strftime('%Y-%m-%d')
         
-        # 클러스터링 기간 계산
+        # Calculate clustering period
         clustering_start = (current_date - relativedelta(years=config.clustering_years)).strftime('%Y-%m-%d')
         clustering_end = current_date.strftime('%Y-%m-%d')
         
-        # 미래 적용 기간 계산
+        # Calculate future application period
         forward_start = current_date.strftime('%Y-%m-%d')
         forward_end = (current_date + relativedelta(months=config.forward_months)).strftime('%Y-%m-%d')
         
-        print(f"학습 기간: {train_start} ~ {train_end} ({config.train_years}년)")
-        print(f"검증 기간: {train_end} ~ {valid_end} ({config.valid_years}년)")
-        print(f"클러스터링 기간: {clustering_start} ~ {clustering_end} ({config.clustering_years}년)")
-        print(f"미래 적용 기간: {forward_start} ~ {forward_end} ({config.forward_months/12:.1f}년)")
+        print(f"Training period: {train_start} ~ {train_end} ({config.train_years} years)")
+        print(f"Validation period: {train_end} ~ {valid_end} ({config.valid_years} years)")
+        print(f"Clustering period: {clustering_start} ~ {clustering_end} ({config.clustering_years} years)")
+        print(f"Future application period: {forward_start} ~ {forward_end} ({config.forward_months/12:.1f} years)")
         
-        # 1. 모델 학습
+        # 1. Train model
         model, val_loss = train_model_for_window(
             config, train_start, train_end, valid_start, valid_end, data
         )
         
-        # 학습 실패 시 다음 윈도우로
+        # Skip to next window if training failed
         if model is None:
-            print("모델 학습 실패, 다음 윈도우로 넘어갑니다.")
+            print("Model training failed, moving to next window")
             current_date += relativedelta(months=config.forward_months)
             window_number += 1
             continue
         
-        # 2. 레짐 식별
+        # 2. Identify regimes
         kmeans, bull_regime = identify_regimes_for_window(
             config, model, data, clustering_start, clustering_end
         )
         
-        # 레짐 식별 실패 시 다음 윈도우로
+        # Skip to next window if regime identification failed
         if kmeans is None or bull_regime is None:
-            print("레짐 식별 실패, 다음 윈도우로 넘어갑니다.")
+            print("Regime identification failed, moving to next window")
             current_date += relativedelta(months=config.forward_months)
             window_number += 1
             continue
         
-        # 3. 미래 기간에 레짐 적용 및 평가
+        # 3. Apply regimes to future period and evaluate
         results_df, performance = apply_and_evaluate_regimes(
             config, model, data, kmeans, bull_regime, forward_start, forward_end, window_number
         )
         
-        # 결과 저장
+        # Save results
         if results_df is not None and performance is not None:
             all_results.append(results_df)
             all_performances.append(performance)
             
-            # 모델 정보 저장
+            # Save model information
             model_history = {
                 'window': window_number,
                 'train_start': train_start,
@@ -411,22 +400,22 @@ def run_rolling_window_train(config):
             }
             model_histories.append(model_history)
             
-            # 결과 파일 저장
+            # Save results file
             results_df.to_csv(
                 f"{config.results_dir}/window_{window_number}_results.csv",
                 index=False
             )
             
-            # 결과 시각화
+            # Visualize results
             visualize_window_performance(
                 results_df,
                 val_loss,
                 window_number,
-                f"윈도우 {window_number}: {forward_start} ~ {forward_end}",
+                f"Window {window_number}: {forward_start} ~ {forward_end}",
                 f"{config.results_dir}/window_{window_number}_performance.png"
             )
             
-            # 모델 저장 (선택적)
+            # Save model (optional)
             model_save_path = f"{config.results_dir}/window_{window_number}_model.pth"
             torch.save({
                 'window': window_number,
@@ -435,30 +424,30 @@ def run_rolling_window_train(config):
                 'bull_regime': bull_regime
             }, model_save_path)
             
-        # 다음 윈도우로 이동
+        # Move to next window
         current_date += relativedelta(months=config.forward_months)
         window_number += 1
     
-    # 전체 결과 병합 및 저장
+    # Merge and save all results
     if all_results:
         combined_results = pd.concat(all_results, ignore_index=True)
         combined_results.to_csv(f"{config.results_dir}/all_windows_results.csv", index=False)
         
-        # 모델 학습 이력 저장
+        # Save model training history
         with open(f"{config.results_dir}/model_histories.json", 'w') as f:
             json.dump(model_histories, f, indent=4)
         
-        # 전체 성과 저장
+        # Save overall performance
         with open(f"{config.results_dir}/all_performances.json", 'w') as f:
             json.dump(all_performances, f, default=default_converter, indent=4)
         
-        # 전체 성과 시각화
+        # Visualize overall performance
         visualize_all_windows_performance(all_performances, config.results_dir)
         
-        print(f"\n롤링 윈도우 재학습 완료! 총 {len(all_performances)}개 윈도우 처리됨.")
+        print(f"\nRolling window retraining complete! Processed {len(all_performances)} windows.")
         return combined_results, all_performances, model_histories
     else:
-        print("롤링 윈도우 재학습 실패: 유효한 결과가 없습니다.")
+        print("Rolling window retraining failed: No valid results.")
         return None, None, None
 
 def default_converter(o):
@@ -468,83 +457,83 @@ def default_converter(o):
 
 def visualize_all_windows_performance(all_performances, save_dir):
     """
-    모든 윈도우의 성과 시각화
+    Visualize performance across all windows
     
     Args:
-        all_performances: 모든 윈도우의 성과 리스트
-        save_dir: 저장 디렉토리
+        all_performances: List of performance metrics for all windows
+        save_dir: Directory to save visualizations
     """
-    # 성과 데이터 추출
+    # Extract performance data
     windows = [p['window'] for p in all_performances]
     market_returns = [p['cumulative_returns']['market'] for p in all_performances]
     strategy_returns = [p['cumulative_returns']['strategy'] for p in all_performances]
     market_sharpes = [p['sharpe_ratio']['market'] for p in all_performances]
     strategy_sharpes = [p['sharpe_ratio']['strategy'] for p in all_performances]
     
-    # 필터링 통계가 있는 경우
+    # For filtering statistics if available
     if 'raw_trades' in all_performances[0]:
         raw_trades = [p['raw_trades'] for p in all_performances]
         filtered_trades = [p['filtered_trades'] for p in all_performances]
         trade_reductions_pct = [p['trade_reduction_pct'] for p in all_performances]
         
-    # 시각화 (여러 서브플롯)
+    # Visualization (multiple subplots)
     plt.figure(figsize=(15, 12))
     
-    # 1. 윈도우별 수익률 비교
+    # 1. Compare returns by window
     plt.subplot(2, 2, 1)
     width = 0.35
     x = np.arange(len(windows))
-    plt.bar(x - width/2, market_returns, width, label='시장', color='gray')
-    plt.bar(x + width/2, strategy_returns, width, label='레짐 전략', color='blue')
-    plt.xlabel('윈도우')
-    plt.ylabel('누적 수익률 (%)')
-    plt.title('윈도우별 누적 수익률 비교')
+    plt.bar(x - width/2, market_returns, width, label='Market', color='gray')
+    plt.bar(x + width/2, strategy_returns, width, label='Regime Strategy', color='blue')
+    plt.xlabel('Window')
+    plt.ylabel('Cumulative Return (%)')
+    plt.title('Comparison of Cumulative Returns by Window')
     plt.xticks(x, windows)
     plt.legend()
     plt.grid(True, alpha=0.3)
     
-    # 2. 윈도우별 샤프 비율 비교
+    # 2. Compare Sharpe ratios by window
     plt.subplot(2, 2, 2)
-    plt.bar(x - width/2, market_sharpes, width, label='시장', color='gray')
-    plt.bar(x + width/2, strategy_sharpes, width, label='레짐 전략', color='blue')
-    plt.xlabel('윈도우')
-    plt.ylabel('샤프 비율')
-    plt.title('윈도우별 샤프 비율 비교')
+    plt.bar(x - width/2, market_sharpes, width, label='Market', color='gray')
+    plt.bar(x + width/2, strategy_sharpes, width, label='Regime Strategy', color='blue')
+    plt.xlabel('Window')
+    plt.ylabel('Sharpe Ratio')
+    plt.title('Comparison of Sharpe Ratios by Window')
     plt.xticks(x, windows)
     plt.legend()
     plt.grid(True, alpha=0.3)
     
-    # 3. 필터링 통계가 있는 경우 거래 횟수 비교
+    # 3. Compare trade counts if filtering statistics are available
     if 'raw_trades' in all_performances[0]:
         plt.subplot(2, 2, 3)
-        plt.bar(x - width/2, raw_trades, width, label='원본 거래', color='red', alpha=0.7)
-        plt.bar(x + width/2, filtered_trades, width, label='필터링 후 거래', color='blue')
-        plt.xlabel('윈도우')
-        plt.ylabel('거래 횟수')
-        plt.title('윈도우별 거래 횟수 비교')
+        plt.bar(x - width/2, raw_trades, width, label='Original Trades', color='red', alpha=0.7)
+        plt.bar(x + width/2, filtered_trades, width, label='Filtered Trades', color='blue')
+        plt.xlabel('Window')
+        plt.ylabel('Number of Trades')
+        plt.title('Comparison of Trade Counts by Window')
         plt.xticks(x, windows)
         plt.legend()
         plt.grid(True, alpha=0.3)
         
-        # 4. 거래 감소율
+        # 4. Trade reduction percentage
         plt.subplot(2, 2, 4)
         plt.bar(x, trade_reductions_pct, color='green')
         plt.axhline(y=np.mean(trade_reductions_pct), color='black', linestyle='--',
-                   label=f'평균: {np.mean(trade_reductions_pct):.2f}%')
-        plt.xlabel('윈도우')
-        plt.ylabel('거래 감소율 (%)')
-        plt.title('윈도우별 거래 감소율')
+                   label=f'Average: {np.mean(trade_reductions_pct):.2f}%')
+        plt.xlabel('Window')
+        plt.ylabel('Trade Reduction (%)')
+        plt.title('Trade Reduction Percentage by Window')
         plt.xticks(x, windows)
         plt.legend()
         plt.grid(True, alpha=0.3)
     else:
-        # 대체 그래프 (누적 성과)
+        # Alternative graph (cumulative performance)
         plt.subplot(2, 1, 2)
-        plt.plot(windows, np.cumsum(market_returns), 'o-', label='시장 누적', color='gray')
-        plt.plot(windows, np.cumsum(strategy_returns), 'o-', label='전략 누적', color='blue')
-        plt.xlabel('윈도우')
-        plt.ylabel('누적 수익률 (%)')
-        plt.title('윈도우 누적 성과')
+        plt.plot(windows, np.cumsum(market_returns), 'o-', label='Market Cumulative', color='gray')
+        plt.plot(windows, np.cumsum(strategy_returns), 'o-', label='Strategy Cumulative', color='blue')
+        plt.xlabel('Window')
+        plt.ylabel('Cumulative Return (%)')
+        plt.title('Cumulative Window Performance')
         plt.grid(True)
         plt.legend()
     
@@ -552,14 +541,14 @@ def visualize_all_windows_performance(all_performances, save_dir):
     plt.savefig(f"{save_dir}/all_windows_comparison.png")
     plt.close()
     
-    # 전체 성과 요약 계산
+    # Calculate overall performance summary
     total_market_return = sum(market_returns)
     total_strategy_return = sum(strategy_returns)
     avg_market_sharpe = np.mean(market_sharpes)
     avg_strategy_sharpe = np.mean(strategy_sharpes)
     win_rate = sum(np.array(strategy_returns) > np.array(market_returns)) / len(windows) * 100
     
-    # 평균 복리 수익률 계산
+    # Calculate average compound returns
     annualized_market_return = ((1 + total_market_return/100) ** (1/len(windows)) - 1) * 100
     annualized_strategy_return = ((1 + total_strategy_return/100) ** (1/len(windows)) - 1) * 100
     
@@ -583,7 +572,7 @@ def visualize_all_windows_performance(all_performances, save_dir):
         'win_rate': win_rate
     }
     
-    # 필터링 통계가 있는 경우 추가
+    # Add filtering statistics if available
     if 'raw_trades' in all_performances[0]:
         total_raw_trades = sum(raw_trades)
         total_filtered_trades = sum(filtered_trades)
@@ -598,25 +587,25 @@ def visualize_all_windows_performance(all_performances, save_dir):
             'avg_reduction_pct': np.mean(trade_reductions_pct)
         }
     
-    # 요약 저장
+    # Save summary
     with open(f"{save_dir}/performance_summary.json", 'w') as f:
         json.dump(summary, f, indent=4)
     
-    # 요약 출력
-    print("\n===== 전체 성과 요약 =====")
-    print(f"총 윈도우 수: {summary['total_windows']}")
-    print(f"총 시장 수익률: {summary['total_returns']['market']:.2f}%")
-    print(f"총 전략 수익률: {summary['total_returns']['strategy']:.2f}%")
-    print(f"수익률 차이: {summary['total_returns']['difference']:.2f}%")
-    print(f"연율화 시장 수익률: {summary['annualized_returns']['market']:.2f}%")
-    print(f"연율화 전략 수익률: {summary['annualized_returns']['strategy']:.2f}%")
-    print(f"평균 시장 샤프 비율: {summary['sharpe_ratios']['market_avg']:.2f}")
-    print(f"평균 전략 샤프 비율: {summary['sharpe_ratios']['strategy_avg']:.2f}")
-    print(f"시장 대비 승률: {summary['win_rate']:.2f}%")
+    # Print summary
+    print("\n===== Overall Performance Summary =====")
+    print(f"Total number of windows: {summary['total_windows']}")
+    print(f"Total market return: {summary['total_returns']['market']:.2f}%")
+    print(f"Total strategy return: {summary['total_returns']['strategy']:.2f}%")
+    print(f"Return difference: {summary['total_returns']['difference']:.2f}%")
+    print(f"Annualized market return: {summary['annualized_returns']['market']:.2f}%")
+    print(f"Annualized strategy return: {summary['annualized_returns']['strategy']:.2f}%")
+    print(f"Average market Sharpe ratio: {summary['sharpe_ratios']['market_avg']:.2f}")
+    print(f"Average strategy Sharpe ratio: {summary['sharpe_ratios']['strategy_avg']:.2f}")
+    print(f"Win rate vs market: {summary['win_rate']:.2f}%")
     
     if 'trading_statistics' in summary:
-        print("\n거래 통계:")
-        print(f"  총 원본 거래 횟수: {summary['trading_statistics']['total_raw_trades']}")
-        print(f"  총 필터링 후 거래 횟수: {summary['trading_statistics']['total_filtered_trades']}")
-        print(f"  총 거래 감소: {summary['trading_statistics']['total_reduction']} ({summary['trading_statistics']['total_reduction_pct']:.2f}%)")
-        print(f"  평균 거래 감소율: {summary['trading_statistics']['avg_reduction_pct']:.2f}%")
+        print("\nTrading statistics:")
+        print(f"  Total original trade count: {summary['trading_statistics']['total_raw_trades']}")
+        print(f"  Total filtered trade count: {summary['trading_statistics']['total_filtered_trades']}")
+        print(f"  Total trade reduction: {summary['trading_statistics']['total_reduction']} ({summary['trading_statistics']['total_reduction_pct']:.2f}%)")
+        print(f"  Average trade reduction percentage: {summary['trading_statistics']['avg_reduction_pct']:.2f}%")

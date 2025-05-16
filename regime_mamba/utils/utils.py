@@ -1,10 +1,10 @@
 import numpy as np
 import torch
 import matplotlib
-matplotlib.rcParams['axes.unicode_minus'] = False  # 마이너스 기호 깨짐 방지
+matplotlib.rcParams['axes.unicode_minus'] = False  # Prevent minus sign rendering issues
 
 def set_seed(seed=42):
-    """재현성을 위한 시드 설정"""
+    """Set seed for reproducibility"""
     np.random.seed(seed)
     torch.manual_seed(seed)
     if torch.cuda.is_available():
