@@ -21,7 +21,7 @@ class ModifiedJumpModel():
     on different time windows.
     """
 
-    def __init__(self, config, n_components=2, jump_penalty=5):
+    def __init__(self, config, n_components=2, jump_penalty=32):
         """
         Initializes the ModifiedJumpModel with the given configuration.
         Args:
@@ -56,6 +56,7 @@ class ModifiedJumpModel():
                 
         self.output_dir = config.results_dir
         self.jump_penalty = jump_penalty
+        self.config = config
         self.jm = JumpModel(n_components=n_components, jump_penalty=self.jump_penalty, cont=False)
         self.original_jm = JumpModel(n_components=2, jump_penalty=50, cont=False)
         self.original_feature = ['dd_10', 'sortino_20', 'sortino_60']
@@ -69,16 +70,7 @@ class ModifiedJumpModel():
         """차원에 따른 feature 컬럼 매핑"""
         feature_cols = {
             3: ['dd_10', 'sortino_20', 'sortino_60'],
-            4: ['dd_10', 'sortino_20', 'sortino_60', 'dollar_index'],
-            5: ['Open', 'Close', 'High', 'Low', 'treasury_rate'],
-            6: ["dd_10", "dd_20", "sortino_10", "sortino_20", "bb_pct_10","bb_pct_20"],
-            #6: ["dd_10", "dd_20", "dd_60", "sortino_10", "sortino_20", "sortino_60"],
-            7: ['Open', 'Close', 'High', 'Low', 'treasury_rate', 'treasury_rate_5y', 'dollar_index'],
-            8: ["Open", "Close", "High", "Low", "Volume", "treasury_rate", "treasury_rate_5y", "dollar_index"],
-            9: ["dd_10", "dd_20", "dd_60", "sortino_10", "sortino_20", "sortino_60", "bb_pct_10","bb_pct_20", "bb_pct_60"],
-            10: ["dd_10", "dd_20", "dd_60", "dd_120", "dd_200", "sortino_10", "sortino_20", "sortino_60", "sortino_120", "sortino_200"],
-            11: ["dd_10", "dd_20", "dd_60", "dd_120", "dd_200", "sortino_10", "sortino_20", "sortino_60", "sortino_120", "sortino_200", "dollar_index"],
-            15: ["dd_10", "dd_20", "dd_60", "dd_120", "dd_200","sortino_10", "sortino_20", "sortino_60", "sortino_120", "sortino_200", "bb_pct_10","bb_pct_20", "bb_pct_60", "bb_pct_120", "bb_pct_200"]
+            4: ['dd_10', 'sortino_20', 'sortino_60', 'dollar_index']
         }
         return feature_cols.get(input_dim, [])
     
@@ -88,9 +80,11 @@ class ModifiedJumpModel():
         epsilon = 1e-10
         
         # OHLC 데이터 로그 변환
-        for col in ['Open', 'Close', 'High', 'Low']:
-            if col in processed_data.columns:
-                processed_data[col] = np.log(processed_data[col] + epsilon) - np.log(processed_data['Close'].shift(1) + epsilon)
+        if 'dollar_index' in processed_data.columns:
+            processed_data['dollar_index'] = processed_data['dollar_index'] / self.config.scale
+        # for col in ['Open', 'Close', 'High', 'Low']:
+        #     if col in processed_data.columns:
+        #         processed_data[col] = np.log(processed_data[col] + epsilon) - np.log(processed_data['Close'].shift(1) + epsilon)
         
         # NaN 값 처리
         processed_data = processed_data.fillna(0)
@@ -155,32 +149,39 @@ class ModifiedJumpModel():
         date = self._parse_date(date_str)
         return (date + relativedelta(days=days)).strftime("%Y-%m-%d")
     
-    def train_for_window(self, train_start, train_end, data, valid_window, sort="cumret", window=1):
+    def train_for_window(self, train_start, train_end, data, valid_window, sort="cumret", window=1, dynamic=False, penalty_range=None):
         """
-        Trains the model on a specified time window.
+        Trains the model on a specified time window with optional dynamic jump penalty selection.
         Args:
             train_start (str): Start date for training data in 'YYYY-MM-DD' format.
             train_end (str): End date for training data in 'YYYY-MM-DD' format.
             data (pd.DataFrame): Input data containing time series features and returns.
+            valid_window (float): Validation window size in years.
             sort (str): Sorting criterion for the Jump Model ('cumret' or 'other').
             window (int): Window number for training.
+            dynamic (bool): Whether to dynamically select the best jump penalty.
+            penalty_range (list): List of jump penalties to evaluate. If None, uses default range.
         Returns:
             None
         """
-        print(f"\nTraining period: {train_start} ~ {train_end}")
-        
         # 날짜 문자열 정리 및 확장된 훈련용 종료 날짜 계산
-        train_start_clean = train_start.split(" ")[0]
-        train_end_clean = train_end.split(" ")[0]
-        original_end_date = (self._parse_date(train_end_clean) + relativedelta(years=valid_window)).strftime("%Y-%m-%d")
+        if self.config.train_years > 16:
+            train_end_clean = train_end.split(" ")[0]
+            train_start_clean = (self._parse_date(train_end_clean) - relativedelta(years = 20)).strftime("%Y-%m-%d") 
+        else:
+            train_start_clean = train_start.split(" ")[0]
+            train_end_clean = train_end.split(" ")[0]
+        
+        print(f"\nTraining period: {train_start_clean} ~ {train_end_clean}")
         
         # 원본 JumpModel 훈련
+        original_end_date = (self._parse_date(train_end_clean) + relativedelta(years=valid_window)).strftime("%Y-%m-%d")
         original_train_data = data[(data['Date'] >= train_start_clean) & (data['Date'] <= original_end_date)].copy()
-        original_features = original_train_data[self.original_feature].copy()#.iloc[self.seq_len-1:].copy()
-        original_train_return_data = original_train_data['returns']#.iloc[self.seq_len-1:]
+        original_features = original_train_data[self.original_feature].copy()
+        original_train_return_data = original_train_data['returns']
         
         # 일관된 인덱스 설정
-        common_dates = pd.to_datetime(original_train_data['Date'].values)#[self.seq_len-1:])
+        common_dates = pd.to_datetime(original_train_data['Date'].values)
         original_train_return_data.index = common_dates
         original_features.index = common_dates
         
@@ -206,20 +207,19 @@ class ModifiedJumpModel():
         )
         
         # 시퀀스 길이를 고려한 시작 날짜 조정
-        adjusted_start_date = train_start_clean #self._adjust_date(train_start_clean)
+        adjusted_start_date = train_start_clean
         
         # 수정된 JumpModel을 위한 데이터 준비
-        common_index = pd.to_datetime(train_data['Date']).iloc[1:]#.values[self.seq_len:])
+        common_index = pd.to_datetime(train_data['Date']).iloc[1:]
         
         # 일관된 인덱스로 리턴 데이터 준비
-        train_return_data = train_data['returns'].iloc[1:]#.iloc[self.seq_len:]
+        train_return_data = train_data['returns'].iloc[1:]
         train_return_data.index = common_index
         
         # 특성 추출
         feature_data = train_data[self.feature_col]
         hiddens = []
-        # 원본 코드와 정확히 동일한 범위 사용
-        for i in range(1, len(feature_data)):# - self.seq_len):
+        for i in range(1, len(feature_data)):
             with torch.no_grad():
                 if i < self.seq_len:
                     input_tensor = torch.tensor(
@@ -248,10 +248,154 @@ class ModifiedJumpModel():
             index=common_index
         )
         
-        # 수정된 JumpModel 피팅
+        # 스케일러 학습
         self.scaler.fit(hiddens_df)
         scaled_data = self.scaler.transform(hiddens_df)
-        self.jm.fit(scaled_data, train_return_data, sort_by=sort)
+        
+        # 동적 점프 페널티 선택 로직 (dynamic=True인 경우)
+        if dynamic:
+            # 검증 데이터 준비
+            valid_start = train_end_clean
+            valid_end = (self._parse_date(train_end_clean) + relativedelta(years=valid_window)).strftime("%Y-%m-%d")
+            
+            print(f"Validation period for dynamic penalty selection: {valid_start} ~ {valid_end}")
+            
+            # 검증 데이터 전처리
+            valid_data = self._preprocess_data(
+                data[(data['Date'] > valid_start) & (data['Date'] <= valid_end)].copy()
+            )
+            
+            if len(valid_data) == 0:
+                print("Warning: No validation data available. Using default jump penalty.")
+            else:
+                # 검증 데이터에서 특성 추출
+                valid_feature_data = valid_data[self.feature_col]
+                valid_hiddens = []
+                
+                for i in range(1, len(valid_feature_data)):
+                    with torch.no_grad():
+                        if i < self.seq_len:
+                            input_tensor = torch.tensor(
+                                valid_feature_data.iloc[:i, :].values,
+                                dtype=torch.float32
+                            ).unsqueeze(0).to(self.device)
+                        else:
+                            input_tensor = torch.tensor(
+                                valid_feature_data.iloc[i-self.seq_len:i, :].values, 
+                                dtype=torch.float32
+                            ).unsqueeze(0).to(self.device)
+                        
+                        if self.vae:
+                            _, _, _, _, hidden, _ = self.feature_extractor(input_tensor, return_hidden=True)
+                        else:
+                            _, hidden = self.feature_extractor(input_tensor, return_hidden=True)
+                    
+                    valid_hiddens.append(hidden.squeeze().cpu().detach().numpy())
+                
+                valid_hiddens = np.stack(valid_hiddens)
+                
+                # 검증 데이터 인덱스 설정
+                valid_dates = valid_data['Date'].iloc[1:]
+                valid_index = pd.to_datetime(valid_dates)
+                
+                # 검증 데이터 리턴
+                valid_return_data = valid_data['returns'].iloc[1:]
+                valid_return_data.index = valid_index
+                
+                # 검증 데이터 특성 DataFrame 생성
+                valid_hiddens_df = pd.DataFrame(
+                    valid_hiddens, 
+                    columns=[f"hidden_{i}" for i in range(valid_hiddens.shape[1])],
+                    index=valid_index
+                )
+                
+                # 검증 데이터 스케일링
+                valid_scaled_data = self.scaler.transform(valid_hiddens_df)
+                
+                # 페널티 범위 설정 (기본값 또는 사용자 지정)
+                if penalty_range is None:
+                    penalty_range = [16, 25, 32, 50, 64]
+                
+                # 각 페널티 값에 대한 검증 성능 평가
+                best_penalty = self.jump_penalty  # 기본값
+                best_performance = float('-inf')  # 초기화 (가장 나쁜 성능)
+                
+                # 각 페널티에 대한 결과 저장을 위한 딕셔너리
+                penalty_results = {}
+                
+                print("Evaluating jump penalties on validation data...")
+                
+                for penalty in penalty_range:
+                    # 해당 페널티로 JumpModel 생성 및 학습
+                    test_jm = JumpModel(n_components=self.jm.n_components, jump_penalty=penalty, cont=False)
+                    test_jm.fit(scaled_data, train_return_data, sort_by=sort)
+                    
+                    # 검증 데이터로 예측
+                    test_labels = test_jm.predict_online(valid_scaled_data)
+                    test_labels = pd.Series(test_labels, index=valid_index).fillna(0).astype(int)
+                    
+                    # 성능 평가 (누적 수익률로 평가)
+                    # 각 레이블에 따른 리턴 분리
+                    regime_returns = {}
+                    for label in test_labels.unique():
+                        regime_mask = test_labels == label
+                        regime_returns[label] = valid_return_data[regime_mask]
+                    
+                    # 각 레짐의 누적 수익률 계산
+                    cumulative_returns = {}
+                    for label, returns in regime_returns.items():
+                        if len(returns) > 0:
+                            cumulative_returns[label] = (1 + returns).cumprod().iloc[-1] - 1 if len(returns) > 0 else 0
+                        else:
+                            cumulative_returns[label] = 0
+                    
+                    # 가장 좋은 레짐과 가장 나쁜 레짐의 수익률 차이로 성능 측정
+                    if len(cumulative_returns) >= 2:
+                        returns_list = list(cumulative_returns.values())
+                        performance = max(returns_list) - min(returns_list)
+                    else:
+                        performance = 0
+                    
+                    # 결과 저장
+                    penalty_results[penalty] = {
+                        'performance': performance,
+                        'cumulative_returns': cumulative_returns,
+                        'model': test_jm
+                    }
+                    
+                    print(f"Jump penalty {penalty}: Performance = {performance:.4f}, Cumulative returns = {cumulative_returns}")
+                    
+                    # 최고 성능 모델 업데이트
+                    if performance > best_performance:
+                        best_performance = performance
+                        best_penalty = penalty
+                
+                # 최적의 페널티 출력 및 설정
+                print(f"Selected best jump penalty: {best_penalty} with performance: {best_performance:.4f}")
+                
+                # 최적의 JumpModel 선택
+                self.jump_penalty = best_penalty
+                self.jm = penalty_results[best_penalty]['model']
+                
+                # 검증 결과 시각화
+                import matplotlib.pyplot as plt
+                
+                penalties = list(penalty_results.keys())
+                performances = [penalty_results[p]['performance'] for p in penalties]
+                
+                plt.figure(figsize=(10, 6))
+                plt.plot(penalties, performances, 'o-')
+                plt.axvline(x=best_penalty, color='r', linestyle='--', label=f'Best penalty: {best_penalty}')
+                plt.xlabel('Jump Penalty')
+                plt.ylabel('Performance (Regime Return Difference)')
+                plt.title('Jump Penalty Selection Performance')
+                plt.grid(True)
+                plt.legend()
+                plt.tight_layout()
+                savefig_plt(f"{self.output_dir}/window_{window}/jump_penalty_selection.png")
+        else:
+            # 동적 선택을 사용하지 않는 경우 기존 로직 유지
+            self.jm.fit(scaled_data, train_return_data, sort_by=sort)
         
         # 수정된 JumpModel 결과 시각화
         ax, ax2 = plot_regimes_and_cumret(
@@ -263,7 +407,7 @@ class ModifiedJumpModel():
         )
         ax.set(title=f"In-Sample Fitted Regimes by the JM(lambda : {self.jump_penalty})")
         savefig_plt(f"{self.output_dir}/window_{window}/JM_lambd_{self.jump_penalty}_train.png")
-    
+
     def predict(self, start_date, end_date, data, window_number, sort="cumret"):
         """
         Predicts regimes for a specified time window.

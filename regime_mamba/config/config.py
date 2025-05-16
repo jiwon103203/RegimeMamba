@@ -6,25 +6,22 @@ class RegimeMambaConfig:
         """RegimeMamba 모델 설정 클래스"""
         # 데이터 관련 설정
         self.data_path = None
-        self.target_type = "next_day"
-        self.target_horizon = 1
-        self.preprocessed = False
         
         # 모델 구조 관련 설정
-        self.d_model = 128
-        self.d_state = 128
+        self.d_model = 8
+        self.d_state = 32
         self.d_conv = 4
         self.expand = 2
         self.n_layers = 4
         self.dropout = 0.1
         self.input_dim = 4
-        self.seq_len = 128
+        self.seq_len = 60
         
         # 훈련 관련 설정
-        self.batch_size = 64
-        self.learning_rate = 1e-6
-        self.max_epochs = 50
-        self.patience = 10
+        self.batch_size = 1024
+        self.learning_rate = 5e-4
+        self.max_epochs = 300
+        self.patience = 60
         self.transaction_cost = 0.001
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         self.direct_train = False
@@ -39,19 +36,7 @@ class RegimeMambaConfig:
         # Extra 설정
         self.jump_model = False
         self.jump_penalty = 0
-        self.rl_model = False
-        self.rl_learning_rate = 1e-4
-        self.rl_gamma = 0.99
-        self.freeze_feature_extractor = True
-        self.position_penalty = 0.01
-        self.reward_type = 'sharpe'
-        self.window_size = 252
-        self.n_episodes = 50
-        self.steps_per_episode = 2048
-        self.n_epochs = 50
-        self.rl_batch_size = 512
         self.n_positions = 3
-        self.optimize_thresholds = False
         self.lstm = False
         self.seed = 42
         self.scale = 1

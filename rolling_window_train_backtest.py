@@ -127,8 +127,6 @@ def parse_args():
     parser.add_argument('--batch_size', type=int, default=64, help='Batch size')
     parser.add_argument('--learning_rate', type=float, default=1e-6, help='Learning rate')
     parser.add_argument('--output_dim', type=int, default=1, help='Output dimension')
-    parser.add_argument('--target_type', type=str, default='average', help='Target type')
-    parser.add_argument('--target_horizon', type=int, default=5, help='Target horizon')
     parser.add_argument('--cluster_method', type=str, default='cosine_kmeans', help='Clustering method')
     parser.add_argument('--direct_train', action='store_true', help='Train model directly for clasification')
     parser.add_argument('--vae', action='store_true', help='Train model with VAE')
@@ -141,22 +139,13 @@ def parse_args():
     parser.add_argument('--use_onecycle', type=bool, default=True, help='Use one-cycle learning rate policy')
     parser.add_argument('--progressive_train', type=bool, default=False, help='Progressive training flag')
 
-    # Extra Settings (jump model, rl_model and lstm)
+    # Extra Settings (jump model,and lstm)
     parser.add_argument('--jump_model', type=bool, default=False, help='Jump model flag')
-    parser.add_argument('--rl_model', type=bool, default=False, help='Reinforcement learning model flag')
-    parser.add_argument('--rl_learning_rate', type=float, default=1e-4, help='Reinforcement learning learning rate')
-    parser.add_argument('--rl_gamma', type=float, default=0.99, help='Reinforcement learning discount factor')
+    parser.add_argument('--jump_penalty', type=int, default=0, help='Jump penalty')
     parser.add_argument('--freeze_feature_extractor', type=bool, default=True, help='Freeze feature extractor during training')
-    parser.add_argument('--position_penalty', type=float, default=0.01, help='Reinforcement learning position penalty')
-    parser.add_argument('--reward_type', type=str, default='sharpe', help='Reinforcement learning reward type')
     parser.add_argument('--window_size', type=int, default=252, help='Window size for Sharpe calculation')
-    parser.add_argument('--n_episodes', type=int, default=50, help='Number of episodes for reinforcement learning')
-    parser.add_argument('--n_epochs', type=int, default=50, help='Number of epochs for reinforcement learning')
-    parser.add_argument('--rl_batch_size', type=int, default=512, help='Batch size for reinforcement learning')
-    parser.add_argument('--steps_per_episode', type=int, default=2048, help='Steps per episode for reinforcement learning')
-    parser.add_argument('--n_positions', type=int, default=3, help='Number of positions for reinforcement learning')
-    parser.add_argument('--optimize_thresholds', action='store_true', help='Optimize action thresholds for reinforcement learning')
     parser.add_argument('--lstm', action='store_true', help='Use LSTM model')
+    parser.add_argument('--scale', type=int, default=1, help='Scaling Dollar Index')
 
     # Performance-related settings
     parser.add_argument('--max_workers', type=int, help='Maximum number of worker processes')
@@ -183,7 +172,7 @@ def load_config(args) -> RollingWindowTrainConfig:
     
     # Set default values / 1982-04-20
     defaults = {
-        'results_dir': '/content/drive/MyDrive/train_backtest_results',
+        'results_dir': './train_backtest_results',
         'start_date': '2012-04-20',
         'end_date': '2023-12-31',
         'preprocessed': True,
@@ -202,7 +191,6 @@ def load_config(args) -> RollingWindowTrainConfig:
         'max_epochs': 100,
         'patience': 10,
         'transaction_cost': 0.001,
-        'seed': 42,
         'max_workers': None,
         'gpu_id': 0,
         'enable_checkpointing': False,
@@ -1012,39 +1000,7 @@ def run_rolling_window_backtest(
         try:
             # 1. Train model
             logger.info("Training model...")
-            if config.rl_model:
-                # RL 모델 학습 - ActorCritic + PPO 에이전트 학습
-                from regime_mamba.train.rl_train import train_rl_agent_for_window
-                from regime_mamba.evaluate.rl_evaluate import evaluate_rl_agent
-                
-                logger.info("Training RL agent...")
-                agent, model, history = train_model_for_window(
-                    config,
-                    window_info['train_period']['start'],
-                    window_info['train_period']['end'],
-                    window_info['valid_period']['start'],
-                    window_info['valid_period']['end'],
-                    data,
-                    window_number=window_number
-                )
-                
-                # Agent training 실패 시 다음 윈도우로 넘어감
-                if agent is None or model is None:
-                    logger.warning("RL agent training failed, skipping window")
-                    continue
-                
-                # 학습 이력 저장
-                history_path = os.path.join(window_dir, 'training_history.json')
-                with open(history_path, 'w') as f:
-                    json.dump(history, f, default=json_serializer, indent=4)
-                
-                # 학습 이력 시각화
-                from regime_mamba.utils.rl_visualize import visualize_training_history
-                visualize_training_history(
-                    history, 
-                    os.path.join(window_dir, 'training_history.png')
-                )
-            elif config.jump_model:
+            if config.jump_model:
 
                 logger.info("Training jump model...")
                 model = train_model_for_window(
@@ -1078,10 +1034,8 @@ def run_rolling_window_backtest(
                     continue
             
             # 2. Identify regimes
-            if config.rl_model or config.jump_model or config.lstm:
-                # RL 모델은 클러스터링 대신 에이전트가 직접 결정
-                logger.info("Skipping regime identification for RL model (agent makes decisions)")
-                # RL에서는 kmeans와 bull_regime이 필요 없음
+            if config.jump_model or config.lstm:
+                logger.info("Skipping regime identification for this model")
                 kmeans, bull_regime = None, None
             else:
                 logger.info("Identifying regimes...")
@@ -1099,53 +1053,7 @@ def run_rolling_window_backtest(
                     continue
             
             # 3. Evaluate smoothing methods
-            if config.rl_model:
-                # RL 모델 평가 단계
-                logger.info("Evaluating RL agent...")
-                
-                # 미래 기간에 대한 에이전트 평가
-                results_df, performance = evaluate_rl_agent(
-                    config, 
-                    agent, 
-                    data, 
-                    window_info['forward_period']['start'], 
-                    window_info['forward_period']['end'], 
-                    window_number
-                )
-                
-                if results_df is None or performance is None:
-                    logger.warning("RL evaluation failed, skipping window")
-                    continue
-                
-                # RL 결과를 smoothing methods와 동일한 형식으로 변환
-                methods_results = {
-                    'rl_agent': {
-                        'method_id': 'rl_agent',
-                        'method_name': 'rl_agent',
-                        'params': {'type': 'ppo'},
-                        'df': results_df,
-                        'performance': performance,
-                        'cum_return': performance['total_returns']['strategy'],
-                        'n_trades': performance['position_changes'],
-                        'sharpe': performance['sharpe_ratio']['strategy']
-                    }
-                }
-                
-                # 결과 저장
-                results_df.to_csv(os.path.join(window_dir, 'rl_results.csv'), index=False)
-                with open(os.path.join(window_dir, 'rl_performance.json'), 'w') as f:
-                    json.dump(performance, f, default=json_serializer, indent=4)
-                    
-                # RL 결과 시각화
-                from regime_mamba.utils.rl_visualize import visualize_rl_results
-                visualize_rl_results(
-                    results_df,
-                    performance,
-                    window_number,
-                    f"Window {window_number}: {window_info['forward_period']['start']} ~ {window_info['forward_period']['end']}",
-                    os.path.join(window_dir, 'rl_performance.png')
-                )
-            elif config.jump_model:
+            if config.jump_model:
                 # 미래 기간에 대한 에이전트 평가
                 model.predict(
                     window_info['forward_period']['start'], 
@@ -1211,7 +1119,6 @@ def run_rolling_window_backtest(
     # 6. Create final comparison
     logger.info("Creating final comparison...")
     if combined_results:
-        # RL 모델과 일반 모델을 모두 포함한 비교 시각화
         summary = visualize_final_comparison(combined_results, config.results_dir)
         
         # Save combined results
@@ -1227,12 +1134,6 @@ def run_rolling_window_backtest(
         
         with open(os.path.join(config.results_dir, 'combined_results.json'), 'w') as f:
             json.dump(result_data, f, default=json_serializer, indent=4)
-        
-        # RL 모델 결과만 별도로 저장
-        if config.rl_model:
-            rl_summary = {k: v for k, v in result_data.items() if k.startswith('rl_')}
-            with open(os.path.join(config.results_dir, 'rl_results.json'), 'w') as f:
-                json.dump(rl_summary, f, default=json_serializer, indent=4)
         
         logger.info(f"Backtest complete with {len(result_data)} methods across {len(window_schedule)} windows")
         return {'combined_results': combined_results, 'summary': summary}
