@@ -11,59 +11,19 @@ from tqdm import tqdm
 import copy
 
 from ..utils.utils import set_seed
-from ..data.dataset import RegimeMambaDataset, create_dataloaders, DateRangeRegimeMambaDataset
+from ..data.dataset_full import RegimeMambaDataset, create_dataloaders, DateRangeRegimeMambaDataset
 from ..models.mamba_model import TimeSeriesMamba, create_model_from_config
+from ..models.lstm import StackedLSTM
+from ..models.rl_model import ActorCritic
+from ..models.jump_model import ModifiedJumpModel
 from ..train.train import train_with_early_stopping
+from ..train.rl_train import train_rl_agent_for_window
 from .clustering import identify_bull_bear_regimes, predict_regimes, extract_hidden_states
 from .strategy import evaluate_regime_strategy, visualize_all_periods_performance
 from .smoothing import apply_regime_smoothing, apply_minimum_holding_period
 
-# class RollingWindowTrainConfig:
-#     def __init__(self):
-#         """롤링 윈도우 재학습 설정 클래스"""
-#         # 데이터 관련 설정
-#         self.data_path = None
-#         self.total_window_years = 40        # 총 사용할 데이터 기간(년)
-#         self.train_years = 20              # 학습에 사용할 기간(년)
-#         self.valid_years = 10              # 검증에 사용할 기간(년)
-#         self.clustering_years = 10         # 클러스터링에 사용할 기간(년)
-#         self.forward_months = 60           # 다음 윈도우까지의 간격(개월)
-#         self.start_date = '1990-01-01'     # 첫 번째 윈도우 시작일
-#         self.end_date = '2023-12-31'       # 마지막 윈도우 종료일
-#         self.target_type = 'average'
-#         self.target_horizon = 5
-#         self.preprocessed = False
-        
-#         # 모델 관련 설정
-#         self.d_model = 128
-#         self.d_state = 128
-#         self.n_layers = 4
-#         self.dropout = 0.1
-#         self.d_conv = 4
-#         self.expand = 2
-#         self.seq_len = 128
-#         self.batch_size = 64
-#         self.learning_rate = 1e-6
-#         self.n_clusters = 2
-#         self.cluster_method = 'cosine_kmeans'
-#         self.transaction_cost = 0.001
-#         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        
-#         # 학습 관련 설정
-#         self.max_epochs = 100
-#         self.patience = 10
-#         self.use_onecycle = True
-        
-#         # 필터링 관련 설정
-#         self.apply_filtering = True
-#         self.filter_method = 'minimum_holding'
-#         self.min_holding_days = 20
-        
-#         # 저장 관련 설정
-#         self.results_dir = './rolling_window_train_results'
-#         os.makedirs(self.results_dir, exist_ok=True)
 
-def train_model_for_window(config, train_start, train_end, valid_start, valid_end, data):
+def train_model_for_window(config, train_start, train_end, valid_start, valid_end, data, window_number=1):
     """
     특정 기간에 대해 모델 학습
     
@@ -87,14 +47,16 @@ def train_model_for_window(config, train_start, train_end, valid_start, valid_en
         data=data, 
         seq_len=config.seq_len,
         start_date=train_start,
-        end_date=train_end
+        end_date=train_end,
+        config=config
     )
     
     valid_dataset = DateRangeRegimeMambaDataset(
         data=data, 
         seq_len=config.seq_len,
         start_date=valid_start,
-        end_date=valid_end
+        end_date=valid_end,
+        config=config
     )
     
     # 데이터 로더 생성
@@ -102,14 +64,14 @@ def train_model_for_window(config, train_start, train_end, valid_start, valid_en
         train_dataset,
         batch_size=config.batch_size,
         shuffle=True,
-        num_workers=4
+        num_workers=2
     )
     
     valid_loader = DataLoader(
         valid_dataset,
         batch_size=config.batch_size,
         shuffle=False,
-        num_workers=4
+        num_workers=2
     )
     
     # 데이터가 충분한지 확인
@@ -118,30 +80,72 @@ def train_model_for_window(config, train_start, train_end, valid_start, valid_en
         return None, float('inf')
     
     # 모델 생성
-    model = TimeSeriesMamba(
-        input_dim=4,
-        d_model=config.d_model,
-        d_state=config.d_state,
-        d_conv=config.d_conv,
-        expand=config.expand,
-        n_layers=config.n_layers,
-        dropout=config.dropout
-    )
+    if config.lstm:
+        model = StackedLSTM(
+            input_dim = config.input_dim
+        )
+        model.train_for_window(train_start, train_end, data, valid_window=config.valid_years, outputdir=config.results_dir)
+        # 저장된 모델 불러오기
+        model.load_state_dict(torch.load(f"./{config.results_dir}/best_model.pth"))
+    else:
+        model = TimeSeriesMamba(
+                input_dim=config.input_dim,
+                d_model=config.d_model,
+                d_state=config.d_state,
+                d_conv=config.d_conv,
+                expand=config.expand,
+                n_layers=config.n_layers,
+                dropout=config.dropout,
+                config=config
+        )
     
-    # 조기 종료를 적용한 모델 학습
-    best_val_loss, best_epoch, trained_model = train_with_early_stopping(
-        model, 
-        train_loader, 
-        valid_loader, 
-        config, 
-        max_epochs=config.max_epochs, 
-        patience=config.patience, 
-        use_onecycle=config.use_onecycle
-    )
+        if config.progressive_train:
+            for i in range(1,3):
+                best_val_loss, best_epoch, model = train_with_early_stopping(
+                    model, 
+                    train_loader, 
+                    valid_loader, 
+                    config, 
+                    use_onecycle=config.use_onecycle,
+                    progressive_train=i
+                )
+        else:
+            # 조기 종료를 적용한 모델 학습
+            best_val_loss, best_epoch, model = train_with_early_stopping(
+                model, 
+                train_loader, 
+                valid_loader, 
+                config, 
+                use_onecycle=config.use_onecycle
+            )
     
-    print(f"학습 완료. 최적 검증 손실: {best_val_loss:.6f} (에폭 {best_epoch+1})")
+        print(f"학습 완료. 최적 검증 손실: {best_val_loss:.6f} (에폭 {best_epoch+1})")
     
-    return trained_model, best_val_loss
+    if config.rl_model:
+        rl_model=ActorCritic(config, config.n_positions)
+        rl_model.feature_extractor = model
+        rl_model.to(config.device)
+        
+        # valid_start~valid end를 8:2 비율로 test, valid로 나누는 기준 만들기 (ex. valid_start = 2020-01-01, valid_end = 2020-12-31 -> test_start = 2020-10-01, test_end = 2020-12-31)
+        total_valid_days = (datetime.strptime(valid_end, "%Y-%m-%d") - datetime.strptime(valid_start, "%Y-%m-%d")).days
+        test_days = int(total_valid_days * 0.2)
+        rl_train_start = valid_start
+        rl_train_end = (datetime.strptime(valid_end, "%Y-%m-%d") - relativedelta(days=test_days + 1)).strftime("%Y-%m-%d")
+        rl_test_start = (datetime.strptime(valid_end, "%Y-%m-%d") - relativedelta(days=test_days)).strftime("%Y-%m-%d")
+        rl_test_end = valid_end
+        agent, model, history = train_rl_agent_for_window(config, rl_model, rl_train_start, rl_train_end, rl_test_start, rl_test_end, data)
+        
+
+        return agent, model, history
+
+    elif config.jump_model:
+        jump_model = ModifiedJumpModel(config=config)
+        jump_model.feature_extractor = model
+        jump_model.train_for_window(train_start, train_end, data, config.valid_years, sort='cumret', window=window_number)
+
+        return jump_model
+    
+    return model, best_val_loss
 
 def identify_regimes_for_window(config, model, data, clustering_start, clustering_end):
     """
@@ -166,8 +170,7 @@ def identify_regimes_for_window(config, model, data, clustering_start, clusterin
         seq_len=config.seq_len,
         start_date=clustering_start,
         end_date=clustering_end,
-        target_type=config.target_type,
-        target_horizon=config.target_horizon
+        config=config
     )
     
     # 데이터 로더 생성
@@ -216,7 +219,8 @@ def apply_and_evaluate_regimes(config, model, data, kmeans, bull_regime, forward
         data=data, 
         seq_len=config.seq_len,
         start_date=forward_start,
-        end_date=forward_end
+        end_date=forward_end,
+        config=config
     )
     
     # 데이터 로더 생성
@@ -250,7 +254,8 @@ def apply_and_evaluate_regimes(config, model, data, kmeans, bull_regime, forward
         predictions,
         true_returns,
         dates,
-        transaction_cost=config.transaction_cost
+        transaction_cost=config.transaction_cost,
+        config=config
     )
     
     # 결과에 기간 정보 추가

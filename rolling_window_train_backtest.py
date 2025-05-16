@@ -29,7 +29,7 @@ import copy
 from regime_mamba.utils.utils import set_seed
 from regime_mamba.config.config import RollingWindowTrainConfig
 from regime_mamba.data.dataset_full import DateRangeRegimeMambaDataset
-from regime_mamba.evaluate.rolling_window_w_train_full import (
+from regime_mamba.evaluate.rolling_window_w_train import (
     train_model_for_window, 
     identify_regimes_for_window
 )
