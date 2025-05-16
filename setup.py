@@ -3,12 +3,12 @@ from setuptools import setup, find_packages
 setup(
     name="regime_mamba",
     version="0.1.0",
-    author="Jiwon Kim",
-    author_email="wldnjs103203@gmail.com",
+    author="Anonymous",
+    author_email="Anonymous@gmail.com",
     description="Mamba 기반 시장 레짐 식별 시스템",
     long_description=open("README.md").read(),
     long_description_content_type="text/markdown",
-    url="https://github.com/jiwon103203/regime_mamba",
+    url="https://github.com/Anonymous/regime_mamba",
     packages=find_packages(),
     classifiers=[
         "Programming Language :: Python :: 3",
