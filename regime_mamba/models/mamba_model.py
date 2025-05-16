@@ -45,27 +45,6 @@ class TimeSeriesMamba(nn.Module):
             self.input_dim = config.input_dim
             self.d_model = config.d_model
             self.output_dim = 3 if config.direct_train else 1
-            
-            
-            if self.config.vae:
-                self.start_point = int(np.log2(config.d_model)) - 1 # d_state가 128이면 6, 64이면 5
-                self.latent_dim = 2**(self.start_point-3)
-                self.fc_mu = nn.Linear(config.d_model, self.latent_dim)
-                self.fc_var = nn.Linear(config.d_model, self.latent_dim)
-                self.decoder = nn.Sequential(
-                    nn.Linear(2**(self.start_point-3), 2**(self.start_point-2)),
-                    nn.BatchNorm1d(2**(self.start_point-2)),
-                    nn.ReLU(),
-                    nn.Linear(2**(self.start_point-2), 2**(self.start_point-1)),
-                    nn.BatchNorm1d(2**(self.start_point-1)),
-                    nn.ReLU(),
-                    nn.Linear(2**(self.start_point-1), 2**self.start_point),
-                    nn.BatchNorm1d(2**self.start_point),
-                    nn.ReLU(),
-                    nn.Linear(2**self.start_point, config.d_model),
-                    nn.BatchNorm1d(config.d_model),
-                    nn.ReLU(),
-                    )
                 
 
         # 입력 임베딩
@@ -95,53 +74,6 @@ class TimeSeriesMamba(nn.Module):
         # 예측 헤드 (1개 값만 예측)
         self.pred_head = nn.Linear(d_model, self.output_dim)
 
-    def encode(self, x):
-        """
-        VAE 인코더: hidden state에서 평균과 로그 분산을 계산
-
-        Args:
-            x: hidden state 텐서 [batch_size, d_model]
-
-        Returns:
-            mu: 평균 [batch_size, latent_dim]
-            log_var: 로그 분산 [batch_size, latent_dim]
-        """
-        mu = self.fc_mu(x)
-        log_var = self.fc_var(x)
-        log_var = torch.clamp(log_var, -10, 10)  # 로그 분산의 최대/최소 값 제한
-
-        return mu, log_var
-    
-    def reparameterize(self, mu, log_var):
-        """
-        Reparameterization trick: 평균과 로그 분산에서 잠재 벡터 샘플링
-
-        Args:
-            mu: 평균 [batch_size, latent_dim]
-            log_var: 로그 분산 [batch_size, latent_dim]
-
-        Returns:
-            z: 샘플링된 잠재 벡터 [batch_size, latent_dim]
-        """
-
-        std = torch.exp(0.5 * log_var)
-        eps = torch.randn_like(std)
-        z = mu + eps * std
-        return z
-    
-    def decode(self, z):
-        """
-        VAE 디코더
-
-        Args:
-            z: 잠재 벡터 [batch_size, latent_dim]
-
-        Returns:
-            reonstructed: 재구성된 텐서 [batch_size, d_model]
-        """
-        return self.decoder(z)
-
-
     def forward(self, x, return_hidden=False):
         """
         순방향 전파
@@ -170,55 +102,9 @@ class TimeSeriesMamba(nn.Module):
         # 예측 헤드 (수익률만 예측)
         prediction = self.pred_head(hidden)  # [batch_size, 1]
 
-        if self.config and self.config.vae:
-            mu, log_var = self.encode(hidden)
-            z = self.reparameterize(mu, log_var)
-            reconstructed = self.decode(z)
-            return prediction, hidden, mu, log_var, z ,reconstructed
-
         if return_hidden:
             return prediction, hidden
         return prediction
-
-    def vae_loss_function(self, recon_hidden, hidden, mu, log_var, pred, target, beta=0.1):
-        """
-        VAE 손실 함수: 재구성 손실 + KL 발산 + 예측 손실
-        
-        Args:
-            recon_hidden: 재구성된 hidden state
-            hidden: 원본 hidden state
-            mu: 잠재 공간의 평균
-            log_var: 잠재 공간의 로그 분산
-            pred: 모델의 예측값
-            target: 실제 타겟값
-            beta: KL 발산 가중치
-            
-        Returns:
-            total_loss: 전체 손실
-            recon_loss: 재구성 손실
-            kl_loss: KL 발산 손실
-            pred_loss: 예측 손실
-        """
-        # MSE 손실 계산기
-        mse_loss = nn.MSELoss(reduction='mean')
-        
-        # 재구성 손실 (hidden state 복원에 대한 MSE)
-        recon_loss = mse_loss(recon_hidden, hidden)
-        
-        # KL 발산: -0.5 * sum(1 + log(sigma^2) - mu^2 - sigma^2)
-        kl_loss = torch.sum(0.5 * (mu.pow(2) + log_var.exp() - log_var - 1))
-        
-        # 예측 손실 (주요 태스크에 대한 손실)
-        if pred.shape[1] > 1:  # 다중 클래스 분류인 경우
-            target = torch.argmax(target, dim=1) # 벡터 타겟을 스칼라로 변환
-            pred_loss = nn.CrossEntropyLoss()(pred, target)
-        else:  # 회귀인 경우
-            pred_loss = mse_loss(pred.squeeze(), target)
-        
-        # 전체 손실
-        total_loss = pred_loss + recon_loss + beta * kl_loss
-        
-        return total_loss, recon_loss, kl_loss, pred_loss
 
 def create_model_from_config(config):
     """

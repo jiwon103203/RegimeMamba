@@ -119,17 +119,16 @@ def parse_args():
     
     # Model parameters
     parser.add_argument('--input_dim', type=int, default=4, help='Input dimension')
-    parser.add_argument('--d_model', type=int, default=128, help='Model dimension')
-    parser.add_argument('--d_state', type=int, default=128, help='State dimension')
+    parser.add_argument('--d_model', type=int, default=8, help='Model dimension')
+    parser.add_argument('--d_state', type=int, default=32, help='State dimension')
     parser.add_argument('--n_layers', type=int, default=4, help='Number of layers')
     parser.add_argument('--dropout', type=float, default=0.1, help='Dropout rate')
-    parser.add_argument('--seq_len', type=int, default=128, help='Sequence length')
-    parser.add_argument('--batch_size', type=int, default=64, help='Batch size')
-    parser.add_argument('--learning_rate', type=float, default=1e-6, help='Learning rate')
+    parser.add_argument('--seq_len', type=int, default=60, help='Sequence length')
+    parser.add_argument('--batch_size', type=int, default=1024, help='Batch size')
+    parser.add_argument('--learning_rate', type=float, default=5e-4, help='Learning rate')
     parser.add_argument('--output_dim', type=int, default=1, help='Output dimension')
     parser.add_argument('--cluster_method', type=str, default='cosine_kmeans', help='Clustering method')
     parser.add_argument('--direct_train', action='store_true', help='Train model directly for clasification')
-    parser.add_argument('--vae', action='store_true', help='Train model with VAE')
 
     # Training-related settings
     parser.add_argument('--max_epochs', type=int, default=50, help='Maximum training epochs')
@@ -137,7 +136,6 @@ def parse_args():
     parser.add_argument('--transaction_cost', type=float, default=0.001, help='Transaction cost (0.001 = 0.1%)')
     parser.add_argument('--seed', type=int, default=42, help='Random seed')
     parser.add_argument('--use_onecycle', type=bool, default=True, help='Use one-cycle learning rate policy')
-    parser.add_argument('--progressive_train', type=bool, default=False, help='Progressive training flag')
 
     # Extra Settings (jump model,and lstm)
     parser.add_argument('--jump_model', type=bool, default=False, help='Jump model flag')
@@ -173,23 +171,22 @@ def load_config(args) -> RollingWindowTrainConfig:
     # Set default values / 1982-04-20
     defaults = {
         'results_dir': './train_backtest_results',
-        'start_date': '2012-04-20',
+        'start_date': '1990-04-20',
         'end_date': '2023-12-31',
-        'preprocessed': True,
-        'total_window_years': 30,
-        'train_years': 10,
-        'valid_years': 10,
-        'clustering_years': 10,
+        'total_window_years': 54,
+        'train_years': 50,
+        'valid_years': 4,
+        'clustering_years': 4,
         'forward_months': 24,
-        'd_model': 128,
-        'd_state': 128,
+        'd_model': 8,
+        'd_state': 32,
         'n_layers': 4,
         'dropout': 0.1,
-        'seq_len': 128,
-        'batch_size': 64,
-        'learning_rate': 1e-6,
-        'max_epochs': 100,
-        'patience': 10,
+        'seq_len': 60,
+        'batch_size': 1024,
+        'learning_rate': 5e-4,
+        'max_epochs': 300,
+        'patience': 50,
         'transaction_cost': 0.001,
         'max_workers': None,
         'gpu_id': 0,

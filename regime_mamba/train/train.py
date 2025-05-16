@@ -101,67 +101,25 @@ def train_with_early_stopping(model, train_loader, valid_loader, config, use_one
                     train_vae_loss += 0.1*vae_loss.item()
                     train_vae_loss += 0.01*kl_loss.item()
 
-        elif config.preprocessed:
-            for i, (x, y, _) in enumerate(train_loader):
-                x = x.to(device)
-                y = y.to(device)
+        for i, (x, y, _, _) in enumerate(train_loader):
+            x = x.to(device)
+            y = y.to(device)
 
-                optimizer.zero_grad()
-                if config.vae:
-                    pred, h, mu, log_var, z, recon = model(x)
-                    loss, vae_loss, kl_loss, pred_loss = model.vae_loss_function(recon, h, mu, log_var, pred, y)
-                    if progressive_train == 1:
-                        loss = pred_loss
-                    elif progressive_train == 2:
-                        loss = vae_loss + kl_loss
-                else:
-                    pred = model(x)
-                    loss = criterion(pred.squeeze(), y)
-                loss.backward()
-
-                # 그래디언트 클리핑 추가
-                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
-
-                optimizer.step()
-
-                if use_onecycle:
-                    scheduler.step()
-
-                train_loss += loss.item()
-                if config.vae:
-                    train_vae_loss += 0.1*vae_loss.item()
-                    train_vae_loss += 0.01*kl_loss.item()
-        else:
-            for i, (x, y, _, _) in enumerate(train_loader):
-                x = x.to(device)
-                y = y.to(device)
-
-                optimizer.zero_grad()
-                if config.vae:
-                    pred, h, mu, log_var, z, recon = model(x)
-                    loss, vae_loss, kl_loss, pred_loss = model.vae_loss_function(recon, h, mu, log_var, pred, y)
-                    if progressive_train == 1:
-                        loss = pred_loss
-                    elif progressive_train == 2:
-                        loss = vae_loss + kl_loss
-                else:
-                    pred = model(x)
-                    loss = criterion(pred.squeeze(), y)
+            optimizer.zero_grad()
+            pred = model(x)
+            loss = criterion(pred.squeeze(), y)
  
-                loss.backward()
+            loss.backward()
 
-                # 그래디언트 클리핑 추가
-                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+            # 그래디언트 클리핑 추가
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
 
-                optimizer.step()
+            optimizer.step()
 
-                if use_onecycle:
-                    scheduler.step()
+            if use_onecycle:
+                scheduler.step()
 
-                train_loss += loss.item()
-                if config.vae:
-                    train_vae_loss += 0.1*vae_loss.item()
-                    train_vae_loss += 0.01*kl_loss.item()
+            train_loss += loss.item()
 
         # 검증 단계
         model.eval()
@@ -174,76 +132,29 @@ def train_with_early_stopping(model, train_loader, valid_loader, config, use_one
                     x = x.to(device)
                     y = y.to(device)
 
-                    if config.vae:
-                        pred, h, mu, log_var, z, recon = model(x)
-                        loss, vae_loss, kl_loss, pred_loss = model.vae_loss_function(recon, h, mu, log_var, pred, y)
-                        if progressive_train == 1:
-                            loss = pred_loss
-                        elif progressive_train == 2:
-                            loss = vae_loss + kl_loss
-                    else:
-                        pred = model(x)
-                        y_indices = torch.argmax(y, dim=1)
-                        loss = criterion(pred.squeeze(), y_indices)
+                    pred = model(x)
+                    y_indices = torch.argmax(y, dim=1)
+                    loss = criterion(pred.squeeze(), y_indices)
                     
                     val_loss += loss.item()
-                    if config.vae:
-                        val_vae_loss += 0.1*vae_loss.item()
-                        val_vae_loss += 0.01*kl_loss.item()
-            elif config.preprocessed:
-                for x, y, _ in valid_loader:
-                    x = x.to(device)
-                    y = y.to(device)
-
-                    if config.vae:
-                        pred, h, mu, log_var, z, recon = model(x)
-                        loss, vae_loss, kl_loss, pred_loss = model.vae_loss_function(recon, h, mu, log_var, pred, y)
-                        if progressive_train == 1:
-                            loss = pred_loss
-                        elif progressive_train == 2:
-                            loss = vae_loss + kl_loss
-                    else:
-                        pred = model(x)
-                        loss = criterion(pred.squeeze(), y)
-
-                    val_loss += loss.item()
-                    if config.vae:
-                        val_vae_loss += 0.1*vae_loss.item()
-                        val_vae_loss += 0.01*kl_loss.item()
             else:
                 for x, y, _, _ in valid_loader:
                     x = x.to(device)
                     y = y.to(device)
 
-                    if config.vae:
-                        pred, h, mu, log_var, z, recon = model(x)
-                        loss, vae_loss, kl_loss, pred_loss = model.vae_loss_function(recon, h, mu, log_var, pred, y)
-                        if progressive_train == 1:
-                            loss = pred_loss
-                        elif progressive_train == 2:
-                            loss = vae_loss + kl_loss
-                    else:
-                        pred = model(x)
-                        loss = criterion(pred.squeeze(), y)
+                    pred = model(x)
+                    loss = criterion(pred.squeeze(), y)
 
                     val_loss += loss.item()
-                    if config.vae:
-                        val_vae_loss += 0.1*vae_loss.item()
-                        val_vae_loss += 0.01*kl_loss.item()
 
         avg_train_loss = train_loss / len(train_loader)
         avg_val_loss = val_loss / len(valid_loader)
-        if config.vae:
-            avg_vae_loss = vae_loss / len(train_loader)
-            avg_val_vae_loss = val_vae_loss / len(valid_loader)
 
         if not use_onecycle:
             scheduler.step(avg_val_loss)
 
         current_lr = optimizer.param_groups[0]['lr']
         print(f"에폭 {epoch+1}/{config.max_epochs}: 훈련 손실 = {avg_train_loss:.6f}, 검증 손실 = {avg_val_loss:.6f}, 학습률: {current_lr:.2e}")
-        if config.vae:
-            print(f"  VAE 손실: {avg_vae_loss:.6f}, 검증 VAE 손실: {avg_val_vae_loss:.6f}")
 
 
         # 최적 모델 저장
@@ -279,7 +190,6 @@ def train_regime_mamba(model, train_loader, valid_loader, config, save_path=None
         valid_loader: 검증 데이터 로더
         config: 설정 객체
         save_path: 모델 저장 경로 (None이면 저장하지 않음)
-        progressive_train: 점진적 훈련 단계 (0: 전체, 1: fc_mu, fc_var, decoder 고정, 2: fc_mu, fc_var, decoder만 학습)
 
     Returns:
         model: 훈련된 모델
@@ -302,21 +212,6 @@ def train_regime_mamba(model, train_loader, valid_loader, config, save_path=None
     device = config.device
     model.to(device)
 
-    if progressive_train == 1:
-        # 모델의 fc_mu, fc_var, decoder 파라미터를 고정
-        # 고정할 파라미터를 집합으로 정의
-        frozen_params = {model.fc_mu.weight, model.fc_var.weight, model.decoder[0].weight, model.decoder[1].weight, model.decoder[3].weight,
-                         model.decoder[4].weight, model.decoder[6].weight, model.decoder[7].weight, model.decoder[9].weight, model.decoder[10].weight}
-
-        for param in model.parameters():
-            param.requires_grad = param not in frozen_params
-
-    elif progressive_train == 2:
-        active_params = {model.fc_mu.weight, model.fc_var.weight, model.decoder[0].weight, model.decoder[1].weight, model.decoder[3].weight,
-                         model.decoder[4].weight, model.decoder[6].weight, model.decoder[7].weight, model.decoder[9].weight, model.decoder[10].weight}
-        for param in model.parameters():
-            param.requires_grad = param in active_params
-
     best_val_loss = float('inf')
 
     for epoch in range(config.max_epochs):
@@ -331,18 +226,9 @@ def train_regime_mamba(model, train_loader, valid_loader, config, save_path=None
                 x = x.to(device)
                 y = y.to(device)
 
-                optimizer.zero_grad()
-                if config.vae:
-                    pred, h, mu, log_var, z, recon = model(x)
-                    loss, vae_loss, kl_loss, pred_loss = model.vae_loss_function(recon, h, mu, log_var, pred, y)
-                    if progressive_train == 1:
-                        loss = pred_loss
-                    elif progressive_train == 2:
-                        loss = vae_loss + kl_loss
-                else:
-                    pred = model(x)
-                    y_indices = torch.argmax(y, dim=1)
-                    loss = criterion(pred.squeeze(), y_indices)
+                pred = model(x)
+                y_indices = torch.argmax(y, dim=1)
+                loss = criterion(pred.squeeze(), y_indices)
                 
                 loss.backward()
 
@@ -353,57 +239,16 @@ def train_regime_mamba(model, train_loader, valid_loader, config, save_path=None
                 scheduler.step()
 
                 train_loss += loss.item()
-                if config.vae:
-                    train_vae_loss += 0.1*vae_loss.item()
-                    train_vae_loss += 0.01*kl_loss.item()
                 train_pbar.set_postfix({"train_loss": train_loss / (i + 1)})
 
-        elif config.preprocessed:
-            for i, (x, y, _) in train_pbar:
-                x = x.to(device)
-                y = y.to(device)
-
-                optimizer.zero_grad()
-                if config.vae:
-                    pred, h, mu, log_var, z, recon = model(x)
-                    loss, vae_loss, kl_loss, pred_loss = model.vae_loss_function(recon, h, mu, log_var, pred, y)
-                    if progressive_train == 1:
-                        loss = pred_loss
-                    elif progressive_train == 2:
-                        loss = vae_loss + kl_loss
-                else:
-                    pred = model(x)
-                    loss = criterion(pred.squeeze(), y)
-
-                loss.backward()
-
-                # 그래디언트 클리핑
-                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
-
-                optimizer.step()
-                scheduler.step()
-
-                train_loss += loss.item()
-                if config.vae:
-                    train_vae_loss += 0.1*vae_loss.item()
-                    train_vae_loss += 0.01*kl_loss.item()
-                train_pbar.set_postfix({"train_loss": train_loss / (i + 1)})
         else:
             for i, (x, y, _, _) in train_pbar:
                 x = x.to(device)
                 y = y.to(device)
 
                 optimizer.zero_grad()
-                if config.vae:
-                    pred, h, mu, log_var, z, recon = model(x)
-                    loss, vae_loss, kl_loss, pred_loss = model.vae_loss_function(recon, h, mu, log_var, pred, y)
-                    if progressive_train == 1:
-                        loss = pred_loss
-                    elif progressive_train == 2:
-                        loss = vae_loss + kl_loss
-                else:
-                    pred = model(x)
-                    loss = criterion(pred.squeeze(), y)
+                pred = model(x)
+                loss = criterion(pred.squeeze(), y)
                 
                 loss.backward()
 
@@ -414,9 +259,6 @@ def train_regime_mamba(model, train_loader, valid_loader, config, save_path=None
                 scheduler.step()
 
                 train_loss += loss.item()
-                if config.vae:
-                    train_vae_loss += 0.1*vae_loss.item()
-                    train_vae_loss += 0.01*kl_loss.item()
                 train_pbar.set_postfix({"train_loss": train_loss / (i + 1)})
 
         # 검증 단계
@@ -431,75 +273,28 @@ def train_regime_mamba(model, train_loader, valid_loader, config, save_path=None
                     x = x.to(device)
                     y = y.to(device)
 
-                    if config.vae:
-                        pred, h, mu, log_var, z, recon = model(x)
-                        loss, vae_loss, kl_loss, pred_loss = model.vae_loss_function(recon, h, mu, log_var, pred, y)
-                        if progressive_train == 1:
-                            loss = pred_loss
-                        elif progressive_train == 2:
-                            loss = vae_loss + kl_loss
-                    else:
-                        pred = model(x)
-                        y_indices = torch.argmax(y, dim=1)
-                        loss = criterion(pred.squeeze(), y_indices)
+                    pred = model(x)
+                    y_indices = torch.argmax(y, dim=1)
+                    loss = criterion(pred.squeeze(), y_indices)
 
                     val_loss += loss.item()
-                    if config.vae:
-                        val_vae_loss += 0.1*vae_loss.item()
-                        val_vae_loss += 0.01*kl_loss.item()
 
-            elif config.preprocessed:
-                for i, (x, y, _) in enumerate(valid_loader):
-                    x = x.to(device)
-                    y = y.to(device)
-
-                    if config.vae:
-                        pred, h, mu, log_var, z, recon = model(x)
-                        loss, vae_loss, kl_loss, pred_loss = model.vae_loss_function(recon, h, mu, log_var, pred, y)
-                        if progressive_train == 1:
-                            loss = pred_loss
-                        elif progressive_train == 2:
-                            loss = vae_loss + kl_loss
-                    else:
-                        pred = model(x)
-                        loss = criterion(pred.squeeze(), y)
-
-                    val_loss += loss.item()
-                    if config.vae:
-                        val_vae_loss += 0.1*vae_loss.item()
-                        val_vae_loss += 0.01*kl_loss.item()
             else:
                 for i, (x, y, _, _) in enumerate(valid_loader):
                     x = x.to(device)
                     y = y.to(device)
 
-                    if config.vae:
-                        pred, h, mu, log_var, z, recon = model(x)
-                        loss, vae_loss, kl_loss, pred_loss = model.vae_loss_function(recon, h, mu, log_var, pred, y)
-                        if progressive_train == 1:
-                            loss = pred_loss
-                        elif progressive_train == 2:
-                            loss = vae_loss + kl_loss
-                    else:
-                        pred = model(x)
-                        loss = criterion(pred.squeeze(), y)
+                    pred = model(x)
+                    loss = criterion(pred.squeeze(), y)
 
                     val_loss += loss.item()
-                    if config.vae:
-                        val_vae_loss += 0.1*vae_loss.item()
-                        val_vae_loss += 0.01*kl_loss.item()
 
         avg_train_loss = train_loss / len(train_loader)
         avg_val_loss = val_loss / len(valid_loader)
-        if config.vae:
-            avg_vae_loss = vae_loss / len(train_loader)
-            avg_val_vae_loss = val_vae_loss / len(valid_loader)
 
         current_lr = optimizer.param_groups[0]['lr']
         print(f"에폭 {epoch+1}: 훈련 손실 = {avg_train_loss:.6f}, 검증 손실 = {avg_val_loss:.6f}, 학습률: {current_lr:.2e}")
-        if config.vae:
-            print(f"  VAE 손실: {avg_vae_loss:.6f}, 검증 VAE 손실: {avg_val_vae_loss:.6f}")
-
+        
         # 모델 저장
         if avg_val_loss < best_val_loss and save_path is not None:
             best_val_loss = avg_val_loss
