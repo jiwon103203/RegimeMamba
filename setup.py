@@ -5,7 +5,7 @@ setup(
     version="0.1.0",
     author="Anonymous",
     author_email="Anonymous@gmail.com",
-    description="Mamba 기반 시장 레짐 식별 시스템",
+    description="Regime Mamba: Regime Switch Detection in Financial Time Series via Mamba–Jump Hybrid Deep Model",
     long_description=open("README.md").read(),
     long_description_content_type="text/markdown",
     url="https://anonymous.4open.science/r/RegimeMamba-998F",
