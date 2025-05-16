@@ -17,7 +17,7 @@ Regime Mamba is a novel hybrid deep learning architecture that combines the sele
 
 ## Model Architecture
 
-![Regime Mamba Architecture](https://github.com/anonymous/regime-mamba/raw/main/architecture.png)
+![Regime Mamba Architecture](./architecture.png)
 
 The Regime Mamba architecture consists of:
 
