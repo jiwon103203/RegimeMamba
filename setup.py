@@ -8,11 +8,11 @@ setup(
     description="Mamba 기반 시장 레짐 식별 시스템",
     long_description=open("README.md").read(),
     long_description_content_type="text/markdown",
-    url="https://github.com/Anonymous/regime_mamba",
+    url="https://anonymous.4open.science/r/RegimeMamba-998F",
     packages=find_packages(),
     classifiers=[
         "Programming Language :: Python :: 3",
-        "License :: OSI Approved :: MIT License",
+        "License :: OSI Approved :: CC BY-SA 4.0",
         "Operating System :: OS Independent",
     ],
     python_requires=">=3.7",
