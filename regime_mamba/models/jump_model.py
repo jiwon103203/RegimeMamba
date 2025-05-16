@@ -3,7 +3,7 @@ import numpy as np
 from datetime import datetime
 from dateutil.relativedelta import relativedelta
 import torch
-from lstm import StackedLSTM
+from .lstm import StackedLSTM
 from jumpmodels.jump import JumpModel
 from jumpmodels.preprocess import StandardScalerPD
 from jumpmodels.plot import plot_regimes_and_cumret, savefig_plt
@@ -33,9 +33,10 @@ class ModifiedJumpModel():
 
         self.device = config.device
         self.seq_len = config.seq_len
+        self.feature_extractor_type = 'lstm' if config.lstm else 'mamba'
         if config.lstm:
-            self.model = StackedLSTM(
-                input_size=config.input_dim,
+            self.feature_extractor = StackedLSTM(
+                input_dim=config.input_dim,
             )
         else:
             self.feature_extractor = TimeSeriesMamba(
@@ -103,25 +104,42 @@ class ModifiedJumpModel():
         hiddens = []
         
         # 원본 코드와 일치하도록 범위 수정 (+ 1 제거)
-        for i in range(1, len(data)+1):# - self.seq_len):
-            with torch.no_grad():
-                if i < self.seq_len:
-                    input_tensor = torch.tensor(
-                        data.iloc[:i, :].values, 
-                        dtype=torch.float32
-                    ).unsqueeze(0).to(self.device)
-                else:
-                    input_tensor = torch.tensor(
-                        data.iloc[i-self.seq_len:i, :].values, 
-                        dtype=torch.float32
-                    ).unsqueeze(0).to(self.device)
-                
-                if self.vae:
-                    _, _, _, _, hidden, _ = self.feature_extractor(input_tensor, return_hidden=True)
-                else:
+        if self.feature_extractor_type == 'lstm':
+            for i in range(1, len(data)+1):
+                with torch.no_grad():
+                    if i < self.seq_len:
+                        input_tensor = torch.tensor(
+                            data.iloc[:i, :].values,
+                            dtype=torch.float32
+                        ).unsqueeze(0).to(self.device)
+                    else:
+                        input_tensor = torch.tensor(
+                            data.iloc[i-self.seq_len:i, :].values, 
+                            dtype=torch.float32
+                        ).unsqueeze(0).to(self.device)
+                    
                     _, hidden = self.feature_extractor(input_tensor, return_hidden=True)
+                hiddens.append(hidden.squeeze().cpu().detach().numpy())
+        else:            
+            for i in range(1, len(data)+1):# - self.seq_len):
+                with torch.no_grad():
+                    if i < self.seq_len:
+                        input_tensor = torch.tensor(
+                            data.iloc[:i, :].values, 
+                            dtype=torch.float32
+                        ).unsqueeze(0).to(self.device)
+                    else:
+                        input_tensor = torch.tensor(
+                            data.iloc[i-self.seq_len:i, :].values, 
+                            dtype=torch.float32
+                        ).unsqueeze(0).to(self.device)
+                    
+                    if self.vae:
+                        _, _, _, _, hidden, _ = self.feature_extractor(input_tensor, return_hidden=True)
+                    else:
+                        _, hidden = self.feature_extractor(input_tensor, return_hidden=True)
             
-            hiddens.append(hidden.squeeze().cpu().detach().numpy())
+                hiddens.append(hidden.squeeze().cpu().detach().numpy())
         
         return np.stack(hiddens)
     

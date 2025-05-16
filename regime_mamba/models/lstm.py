@@ -9,7 +9,7 @@ Stacked LSTM 모델 Class 구현
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import DataLoader, TensorDataset
 
 from datetime import datetime
 from dateutil.relativedelta import relativedelta
@@ -24,24 +24,24 @@ class StackedLSTM(nn.Module):
     출력층에는 단일 뉴런을 사용하고 Adam 최적화 알고리즘과 MSE 손실 함수를 적용
     입력 시퀀스의 길이는 60, 배치 크기는 2048
     Args:
-        input_size (int): 입력 특성의 차원
-        hidden_size (int): LSTM의 은닉 상태 차원
+        input_dim (int): 입력 특성의 차원
+        hidden_dim (int): LSTM의 은닉 상태 차원
         num_layers (int): LSTM 레이어의 수
-        output_size (int): 출력 특성의 차원
+        output_dim (int): 출력 특성의 차원
     '''
-    def __init__(self, input_size, hidden_size=32, num_layers=8, output_size=1):
+    def __init__(self, input_dim, hidden_dim=32, num_layers=8, output_dim=1):
         super(StackedLSTM, self).__init__()
         
         # LSTM 레이어 초기화
-        self.lstm = nn.LSTM(input_size, hidden_size, num_layers, batch_first=True)
+        self.lstm = nn.LSTM(input_dim, hidden_dim, num_layers, batch_first=True)
         
         # 드롭아웃 레이어 초기화
         self.dropout = nn.Dropout(0.1)
         
         # 출력층 초기화
-        self.fc = nn.Linear(hidden_size, output_size)
+        self.fc = nn.Linear(hidden_dim, output_dim)
 
-    def forward(self, x):
+    def forward(self, x, return_hidden=False):
         # LSTM 레이어 통과
         lstm_out, _ = self.lstm(x)
         
@@ -53,7 +53,9 @@ class StackedLSTM(nn.Module):
         
         # 출력층 통과
         out = self.fc(out)
-        
+
+        if return_hidden:
+            return out, lstm_out
         return out
     
     def train_for_window(self, train_start, train_end, data, valid_window, outputdir):
@@ -71,43 +73,75 @@ class StackedLSTM(nn.Module):
         self.valid_window = valid_window
         
         # 훈련 데이터와 검증 데이터 분리
-        self.train_data = data[train_start:train_end]
-        # train_end: str -> datetime
-        self.valid_end = str(datetime.strptime(train_end, '%Y-%m-%d') + relativedelta(years=valid_window))
-        self.valid_data = data[train_end:self.valid_end]
+        self.train_data = data[(data['Date'] >= train_start) & (data['Date'] <= train_end)].copy()
+        self.train_data = self.train_data[['dd_10','sortino_20','sortino_60','dollar_index', 'target_returns_1']]
 
-        train_dataloader = DataLoader(self.train_data, batch_size=2048, shuffle=False)
-        valid_dataloader = DataLoader(self.valid_data, batch_size=2048, shuffle=False)
+        self.train_sequence_x = []
+        self.train_sequence_y = []
+        for i in range(1, len(self.train_data)):
+            if i < 60:
+                continue
+            self.train_sequence_x.append(self.train_data.iloc[i-60:i][['dd_10','sortino_20','sortino_60','dollar_index']].values)
+            self.train_sequence_y.append(self.train_data.iloc[i]['target_returns_1'])
+        self.train_sequence_x = torch.tensor(self.train_sequence_x, dtype=torch.float32)
+        self.train_sequence_y = torch.tensor(self.train_sequence_y, dtype=torch.float32).unsqueeze(1)  # 1D로 변환
+
+        self.valid_end = str(datetime.strptime(train_end, '%Y-%m-%d') + relativedelta(years=valid_window))
+        self.valid_data = data[(data['Date'] >= train_end) & (data['Date'] <= self.valid_end)].copy()
+        self.valid_data = self.valid_data[['dd_10','sortino_20','sortino_60','dollar_index', 'target_returns_1']]
+        self.valid_sequence_x = []
+        self.valid_sequence_y = []
+        for i in range(1, len(self.valid_data)):
+            if i < 60:
+                continue
+            self.valid_sequence_x.append(self.valid_data.iloc[i-60:i][['dd_10','sortino_20','sortino_60','dollar_index']].values)
+            self.valid_sequence_y.append(self.valid_data.iloc[i]['target_returns_1'])
+        self.valid_sequence_x = torch.tensor(self.valid_sequence_x, dtype=torch.float32)
+        self.valid_sequence_y = torch.tensor(self.valid_sequence_y, dtype=torch.float32).unsqueeze(1)
+
+        # TensorDataset 생성
+        self.train_dataset = TensorDataset(self.train_sequence_x, self.train_sequence_y)
+        self.valid_dataset = TensorDataset(self.valid_sequence_x, self.valid_sequence_y)
+
+        train_dataloader = DataLoader(self.train_dataset, batch_size=2048, shuffle=False)
+        valid_dataloader = DataLoader(self.valid_dataset, batch_size=2048, shuffle=False)
 
         optimizer = torch.optim.Adam(self.parameters(), lr=0.001)
         criterion = nn.MSELoss()
         patience = 30
         best_loss = float('inf')
         best_model = None
+        self.to('cuda')
+        #self.dropout.to('cuda')
+        #self.fc.to('cuda')
 
         for epoch in range(1000):
             for i, (x, y) in enumerate(train_dataloader):
                 # 모델 훈련
+                x = x.to('cuda')
+                y = y.to('cuda')
                 self.train()
                 optimizer.zero_grad()
-                output = self(x)
+                output = self.forward(x)
                 loss = criterion(output, y)
                 loss.backward()
                 optimizer.step()
                 
                 if i % 100 == 0:
-                    print(f'Epoch [{epoch+1}/200], Step [{i+1}/{len(train_dataloader)}], Loss: {loss.item():.4f}')
+                    print(f'Epoch [{epoch+1}/1000], Loss: {loss.item():.5f}')
 
             # 검증 데이터로 모델 평가
             self.eval()
             valid_loss = 0
             with torch.no_grad():
                 for x, y in valid_dataloader:
-                    output = self(x)
+                    x = x.to('cuda')
+                    y = y.to('cuda')
+                    output = self.forward(x)
                     loss = criterion(output, y)
                     valid_loss += loss.item()
                 valid_loss /= len(valid_dataloader)
-                print(f'Validation Loss: {valid_loss:.4f}')
+                print(f'Validation Loss: {valid_loss:.5f}')
                 # 조기 종료 조건 확인
                 if valid_loss < best_loss:
                     best_loss = valid_loss

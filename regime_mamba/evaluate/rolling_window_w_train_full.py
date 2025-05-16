@@ -86,7 +86,7 @@ def train_model_for_window(config, train_start, train_end, valid_start, valid_en
         )
         model.train_for_window(train_start, train_end, data, valid_window=config.valid_years, outputdir=config.results_dir)
         # 저장된 모델 불러오기
-        model.load_state_dict(torch.load(f"./{config.results_dir}/best_model.pth")['model_state_dict'])
+        model.load_state_dict(torch.load(f"./{config.results_dir}/best_model.pth"))
     else:
         model = TimeSeriesMamba(
                 input_dim=config.input_dim,
@@ -119,7 +119,7 @@ def train_model_for_window(config, train_start, train_end, valid_start, valid_en
                 use_onecycle=config.use_onecycle
             )
     
-    print(f"학습 완료. 최적 검증 손실: {best_val_loss:.6f} (에폭 {best_epoch+1})")
+        print(f"학습 완료. 최적 검증 손실: {best_val_loss:.6f} (에폭 {best_epoch+1})")
     
     if config.rl_model:
         rl_model=ActorCritic(config, config.n_positions)
@@ -141,7 +141,7 @@ def train_model_for_window(config, train_start, train_end, valid_start, valid_en
     elif config.jump_model:
         jump_model = ModifiedJumpModel(config=config)
         jump_model.feature_extractor = model
-        jump_model.train_for_window(train_start, train_end, data, sort='cumret', window=window_number)
+        jump_model.train_for_window(train_start, train_end, data, config.valid_years, sort='cumret', window=window_number)
 
         return jump_model
     
