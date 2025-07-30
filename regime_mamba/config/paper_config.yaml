@@ -12,8 +12,8 @@ input_dim: 4
 data_path: ./regime_mamba/data/data_full_final.csv
 
 # 학습 관련 파라미터
-max_epochs: 300
-patience: 50
+max_epochs: 400
+patience: 80
 use_onecycle: True
 
 #클러스터링 관련 설정
@@ -22,10 +22,10 @@ cluster_method: kmeans
 
 results_dir: './train_results'
 start_date: '1990-01-01'
-total_window_years: 54
-train_years: 50
+total_window_years: 20
+train_years: 16
 valid_years: 4
 clustering_years: 0
 forward_months: 24
 seed : 10
-scale : 10
+scale : 2000
