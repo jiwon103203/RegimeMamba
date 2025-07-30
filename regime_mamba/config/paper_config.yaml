@@ -28,4 +28,5 @@ valid_years: 4
 clustering_years: 0
 forward_months: 24
 seed : 10
+jump_penalty: 256
 scale : 2000
