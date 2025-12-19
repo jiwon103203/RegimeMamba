@@ -68,7 +68,7 @@ class E2ERegimeMambaConfig(RollingWindowTrainConfig):
         self.patience = 30
         self.learning_rate = 5e-4
         self.weight_decay = 0.01
-        self.batch_size = 1024
+        self.batch_size = 4096
         
         # ============================================
         # Model Architecture (Inherited + Extended)
@@ -281,5 +281,5 @@ class E2EConfigPresets:
         config.n_layers = 2
         config.max_epochs = 50
         config.patience = 15
-        config.batch_size = 2048
+        config.batch_size = 4096
         return config
