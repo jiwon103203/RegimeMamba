@@ -2,6 +2,9 @@
 End-to-End Regime Mamba Model Implementation
 Uses Gumbel Softmax for differentiable regime detection, enabling joint optimization
 of feature extraction (Mamba) and regime classification in a single training loop.
+
+Updated: Two-Level Entropy Regularization (sample-level minimize + batch-level maximize)
+         Direction Loss removed (return sign assumption eliminated)
 """
 
 import torch
@@ -315,9 +318,6 @@ class RegimeSeparationLoss(nn.Module):
         Returns:
             Separation loss value
         """
-        batch_size, n_regimes = regime_probs.shape
-        d_model = hidden_states.size(-1)
-        
         if self.loss_type == 'centroid':
             return self._centroid_loss(regime_probs, hidden_states)
         elif self.loss_type == 'contrastive':
@@ -325,7 +325,6 @@ class RegimeSeparationLoss(nn.Module):
         elif self.loss_type == 'silhouette':
             return self._silhouette_loss(regime_probs, hidden_states)
         elif self.loss_type == 'return_weighted':
-            # Hybrid: hidden separation with return guidance
             return self._return_weighted_loss(regime_probs, hidden_states, returns)
         else:
             raise ValueError(f"Unknown loss type: {self.loss_type}")
@@ -337,31 +336,23 @@ class RegimeSeparationLoss(nn.Module):
     ) -> torch.Tensor:
         """
         Centroid-based loss: maximize inter-centroid distance, minimize intra-cluster variance.
-        
-        Loss = lambda_intra * (intra-cluster compactness) - lambda_inter * (inter-cluster separation)
         """
         n_regimes = regime_probs.size(-1)
         
         # Compute soft centroids for each regime
-        # centroid_k = sum(p_ik * h_i) / sum(p_ik)
-        # regime_probs: (batch, n_regimes), hidden_states: (batch, d_model)
-        
-        weighted_sum = torch.einsum('bn,bd->nd', regime_probs, hidden_states)  # (n_regimes, d_model)
-        regime_weights = regime_probs.sum(dim=0, keepdim=True).T + 1e-8  # (n_regimes, 1)
-        centroids = weighted_sum / regime_weights  # (n_regimes, d_model)
+        weighted_sum = torch.einsum('bn,bd->nd', regime_probs, hidden_states)
+        regime_weights = regime_probs.sum(dim=0, keepdim=True).T + 1e-8
+        centroids = weighted_sum / regime_weights
         
         # Inter-cluster loss: maximize pairwise centroid distances
         inter_loss = torch.tensor(0.0, device=hidden_states.device)
         n_pairs = 0
         for i in range(n_regimes):
             for j in range(i + 1, n_regimes):
-                # Compute distance and squeeze to scalar
                 dist = F.pairwise_distance(
                     centroids[i:i+1], 
                     centroids[j:j+1]
-                ).squeeze()  # Convert to scalar tensor
-                
-                # Hinge loss: penalize if distance < margin
+                ).squeeze()
                 inter_loss = inter_loss + F.relu(self.margin - dist)
                 n_pairs += 1
         
@@ -369,20 +360,11 @@ class RegimeSeparationLoss(nn.Module):
             inter_loss = inter_loss / n_pairs
         
         # Intra-cluster loss: minimize weighted distance to assigned centroid
-        # For soft assignments, use expected distance
-        # E[d(h_i, c_k)] weighted by p_ik
-        
-        # Expand for broadcasting: hidden_states (batch, 1, d_model), centroids (1, n_regimes, d_model)
-        hidden_expanded = hidden_states.unsqueeze(1)  # (batch, 1, d_model)
-        centroids_expanded = centroids.unsqueeze(0)  # (1, n_regimes, d_model)
-        
-        # Squared distance to each centroid
-        sq_distances = ((hidden_expanded - centroids_expanded) ** 2).sum(dim=-1)  # (batch, n_regimes)
-        
-        # Weighted average distance (soft assignment)
+        hidden_expanded = hidden_states.unsqueeze(1)
+        centroids_expanded = centroids.unsqueeze(0)
+        sq_distances = ((hidden_expanded - centroids_expanded) ** 2).sum(dim=-1)
         intra_loss = (regime_probs * sq_distances).sum(dim=-1).mean()
         
-        # Total loss
         total_loss = self.lambda_intra * intra_loss + self.lambda_inter * inter_loss
         
         return total_loss
@@ -395,37 +377,21 @@ class RegimeSeparationLoss(nn.Module):
     ) -> torch.Tensor:
         """
         Contrastive loss: samples in same regime should be closer than samples in different regimes.
-        Uses soft regime assignments for differentiability.
         """
         batch_size = hidden_states.size(0)
         
-        # Normalize hidden states for cosine similarity
-        hidden_norm = F.normalize(hidden_states, p=2, dim=-1)  # (batch, d_model)
+        hidden_norm = F.normalize(hidden_states, p=2, dim=-1)
+        sim_matrix = torch.mm(hidden_norm, hidden_norm.t())
+        same_regime_prob = torch.mm(regime_probs, regime_probs.t())
         
-        # Compute pairwise cosine similarity
-        sim_matrix = torch.mm(hidden_norm, hidden_norm.t())  # (batch, batch)
-        
-        # Compute soft "same regime" probability for each pair
-        # P(same regime for i,j) = sum_k(p_ik * p_jk)
-        same_regime_prob = torch.mm(regime_probs, regime_probs.t())  # (batch, batch)
-        
-        # Mask diagonal (self-similarity)
         mask = torch.eye(batch_size, device=hidden_states.device).bool()
         sim_matrix = sim_matrix.masked_fill(mask, -float('inf'))
         same_regime_prob = same_regime_prob.masked_fill(mask, 0)
         
-        # Contrastive loss: pull together same-regime pairs, push apart different-regime pairs
-        # For each sample, maximize similarity to same-regime samples, minimize to different-regime
-        
         exp_sim = torch.exp(sim_matrix / temperature)
-        
-        # Positive: same regime (weighted by same_regime_prob)
         pos_sim = (exp_sim * same_regime_prob).sum(dim=-1)
-        
-        # All pairs (denominator)
         all_sim = exp_sim.sum(dim=-1)
         
-        # Avoid log(0)
         loss = -torch.log((pos_sim + 1e-8) / (all_sim + 1e-8)).mean()
         
         return loss
@@ -437,46 +403,27 @@ class RegimeSeparationLoss(nn.Module):
     ) -> torch.Tensor:
         """
         Differentiable silhouette-like score.
-        Silhouette = (b - a) / max(a, b) where:
-        - a = mean intra-cluster distance
-        - b = mean nearest-cluster distance
-        
-        We maximize silhouette (minimize negative silhouette).
         """
-        batch_size, n_regimes = regime_probs.shape
+        n_regimes = regime_probs.shape[-1]
         
-        # Compute pairwise distances
-        # (batch, batch)
         dist_matrix = torch.cdist(hidden_states, hidden_states, p=2)
         
-        # Compute soft centroids
         weighted_sum = torch.einsum('bn,bd->nd', regime_probs, hidden_states)
         regime_weights = regime_probs.sum(dim=0, keepdim=True).T + 1e-8
-        centroids = weighted_sum / regime_weights  # (n_regimes, d_model)
+        centroids = weighted_sum / regime_weights
         
-        # Distance from each sample to each centroid
-        dist_to_centroids = torch.cdist(hidden_states, centroids, p=2)  # (batch, n_regimes)
+        dist_to_centroids = torch.cdist(hidden_states, centroids, p=2)
         
-        # a: weighted average distance to samples in same cluster
-        # Approximate using distance to own centroid weighted by assignment
-        a = (regime_probs * dist_to_centroids).sum(dim=-1)  # (batch,)
+        a = (regime_probs * dist_to_centroids).sum(dim=-1)
         
-        # b: distance to nearest other cluster centroid
-        # Mask own cluster and find minimum
-        hard_assignment = regime_probs.argmax(dim=-1)  # (batch,)
-        
-        # Create mask for own cluster
+        hard_assignment = regime_probs.argmax(dim=-1)
         own_cluster_mask = F.one_hot(hard_assignment, num_classes=n_regimes).bool()
-        
-        # Set own cluster distance to inf, then find min
         masked_dist = dist_to_centroids.masked_fill(own_cluster_mask, float('inf'))
-        b = masked_dist.min(dim=-1).values  # (batch,)
+        b = masked_dist.min(dim=-1).values
         
-        # Silhouette score: (b - a) / max(a, b)
         max_ab = torch.max(a, b)
         silhouette = (b - a) / (max_ab + 1e-8)
         
-        # We want to maximize silhouette, so minimize negative
         loss = -silhouette.mean()
         
         return loss
@@ -489,35 +436,23 @@ class RegimeSeparationLoss(nn.Module):
     ) -> torch.Tensor:
         """
         Hybrid loss: hidden space separation with return-based guidance.
-        Encourages regime 1 (Bull) to cluster positive-return samples,
-        regime 0 (Bear) to cluster negative-return samples.
         """
         if returns is None:
-            # Fall back to centroid loss if no returns provided
             return self._centroid_loss(regime_probs, hidden_states)
         
         returns = returns.view(-1)
         n_regimes = regime_probs.size(-1)
         
-        # Base hidden space separation
         centroid_loss = self._centroid_loss(regime_probs, hidden_states)
         
-        # Return guidance: soft cross-entropy with return-based pseudo-labels
         if n_regimes == 2:
-            # Create soft labels based on returns
-            # Positive returns -> Bull (1), Negative returns -> Bear (0)
-            return_direction = torch.sigmoid(returns * 10)  # Soft label in [0, 1]
-            
-            # Soft labels: (batch, 2) where [:, 1] is Bull probability
+            return_direction = torch.sigmoid(returns * 10)
             soft_labels = torch.stack([1 - return_direction, return_direction], dim=-1)
-            
-            # Soft cross-entropy
             log_probs = F.log_softmax(regime_probs, dim=-1)
             guidance_loss = -(soft_labels * log_probs).sum(dim=-1).mean()
         else:
             guidance_loss = torch.tensor(0.0, device=hidden_states.device)
         
-        # Combine losses (guidance is auxiliary, lower weight)
         total_loss = centroid_loss + 0.1 * guidance_loss
         
         return total_loss
@@ -525,54 +460,106 @@ class RegimeSeparationLoss(nn.Module):
 
 class EntropyRegularization(nn.Module):
     """
-    Prevents regime collapse by encouraging diverse regime assignments.
+    Two-Level Entropy Regularization:
+    - Minimize sample-level entropy: each sample should be confident (close to [0,1] or [1,0])
+    - Maximize batch-level entropy: overall distribution should be balanced
+    
+    This breaks the symmetric equilibrium where all samples output [0.5, 0.5]
+    
+    L = lambda_sample * (1/N) * Σ H(p_i) - lambda_batch * H(p̄)
     """
     
-    def __init__(self, lambda_entropy: float = 0.1, target_entropy: Optional[float] = None):
+    def __init__(
+        self, 
+        lambda_entropy: float = 0.1, 
+        target_entropy: Optional[float] = None,
+        lambda_sample: float = 1.0,
+        lambda_batch: float = 0.5
+    ):
         """
         Args:
-            lambda_entropy: Entropy regularization coefficient
-            target_entropy: Target entropy value (None = maximize entropy)
+            lambda_entropy: Overall entropy regularization coefficient (legacy, for compatibility)
+            target_entropy: Target entropy value (None = use two-level approach)
+            lambda_sample: Weight for sample-level entropy minimization (confidence)
+            lambda_batch: Weight for batch-level entropy maximization (balance)
         """
         super().__init__()
         self.lambda_entropy = lambda_entropy
         self.target_entropy = target_entropy
+        self.lambda_sample = lambda_sample
+        self.lambda_batch = lambda_batch
     
-    def forward(self, regime_probs: torch.Tensor) -> torch.Tensor:
+    def forward(self, regime_probs: torch.Tensor) -> Tuple[torch.Tensor, Dict[str, float]]:
         """
-        Compute entropy regularization loss.
+        Compute two-level entropy loss.
         
         Args:
             regime_probs: (batch, n_regimes) soft regime assignments
             
         Returns:
-            Entropy regularization loss
+            Total entropy loss and component breakdown
         """
-        # Average regime distribution across batch
-        avg_probs = regime_probs.mean(dim=0)  # (n_regimes,)
-        
-        # Compute entropy
         eps = 1e-8
-        entropy = -(avg_probs * (avg_probs + eps).log()).sum()
-        
-        # Maximum possible entropy for uniform distribution
         n_regimes = regime_probs.size(-1)
         max_entropy = np.log(n_regimes)
         
-        if self.target_entropy is not None:
-            # Match target entropy
-            loss = (entropy - self.target_entropy) ** 2
-        else:
-            # Maximize entropy (minimize negative entropy)
-            loss = -entropy / max_entropy  # Normalized
+        # ==========================================
+        # Sample-level entropy: MINIMIZE (confidence)
+        # ==========================================
+        # H(p_i) for each sample
+        sample_entropy = -(regime_probs * (regime_probs + eps).log()).sum(dim=-1)  # (batch,)
+        avg_sample_entropy = sample_entropy.mean()
         
-        return self.lambda_entropy * loss
+        # Normalize by max entropy for stable scaling
+        sample_loss = avg_sample_entropy / max_entropy  # want to minimize
+        
+        # ==========================================
+        # Batch-level entropy: MAXIMIZE (balance)
+        # ==========================================
+        # H(p̄) where p̄ = mean(p_i)
+        avg_probs = regime_probs.mean(dim=0)  # (n_regimes,)
+        batch_entropy = -(avg_probs * (avg_probs + eps).log()).sum()
+        
+        # Normalize
+        batch_loss = -batch_entropy / max_entropy  # negative because we want to maximize
+        
+        # ==========================================
+        # Total loss
+        # ==========================================
+        # Legacy mode: if target_entropy is set, use old behavior
+        if self.target_entropy is not None:
+            total_loss = self.lambda_entropy * (batch_entropy - self.target_entropy) ** 2
+            components = {
+                'sample_entropy': avg_sample_entropy.item(),
+                'batch_entropy': batch_entropy.item(),
+                'sample_loss': 0.0,
+                'batch_loss': total_loss.item()
+            }
+            return total_loss, components
+        
+        # Two-level mode
+        total_loss = self.lambda_sample * sample_loss + self.lambda_batch * batch_loss
+        
+        # Apply overall scaling
+        total_loss = self.lambda_entropy * total_loss
+        
+        # Return components for logging
+        components = {
+            'sample_entropy': avg_sample_entropy.item(),
+            'batch_entropy': batch_entropy.item(),
+            'sample_loss': (self.lambda_sample * sample_loss).item(),
+            'batch_loss': (self.lambda_batch * batch_loss).item()
+        }
+        
+        return total_loss, components
 
 
 class EndToEndRegimeMamba(nn.Module):
     """
     End-to-End Regime Mamba model that jointly learns feature extraction
     and regime detection using Gumbel Softmax for differentiable training.
+    
+    Updated: Two-Level Entropy, No Direction Loss
     """
     
     def __init__(self, config):
@@ -626,20 +613,22 @@ class EndToEndRegimeMamba(nn.Module):
             lambda_intra=getattr(config, 'lambda_intra', 1.0)
         )
         
+        # Two-Level Entropy Regularization
         self.entropy_reg = EntropyRegularization(
-            lambda_entropy=getattr(config, 'lambda_entropy', 0.1),
-            target_entropy=getattr(config, 'target_entropy', None)
+            lambda_entropy=getattr(config, 'lambda_entropy', 1.0),
+            target_entropy=getattr(config, 'target_entropy', None),
+            lambda_sample=getattr(config, 'lambda_sample_entropy', 1.0),
+            lambda_batch=getattr(config, 'lambda_batch_entropy', 0.5)
         )
         
         # Optional: Return prediction head for auxiliary loss
         self.return_pred_head = nn.Linear(config.d_model, 1)
         
-        # Loss weights
-        self.w_return = getattr(config, 'w_return', 1.0)
-        self.w_jump = getattr(config, 'w_jump', 1.0)
-        self.w_separation = getattr(config, 'w_separation', 1.0)
-        self.w_entropy = getattr(config, 'w_entropy', 0.1)
-        self.w_direction = getattr(config, 'w_direction', 1.0)
+        # Loss weights (NO w_direction)
+        self.w_return = getattr(config, 'w_return', 0.5)
+        self.w_jump = getattr(config, 'w_jump', 0.5)
+        self.w_separation = getattr(config, 'w_separation', 2.0)
+        self.w_entropy = getattr(config, 'w_entropy', 1.0)  # Increased importance
     
     def extract_features(self, x: torch.Tensor) -> torch.Tensor:
         """
@@ -714,6 +703,13 @@ class EndToEndRegimeMamba(nn.Module):
         """
         Compute total loss for end-to-end training.
         
+        Loss = w_return * L_return 
+             + w_jump * L_jump 
+             + w_separation * L_separation 
+             + w_entropy * L_entropy_two_level
+        
+        NOTE: Direction loss has been REMOVED (no return sign assumption)
+        
         Args:
             x: Input tensor (batch, seq_len, input_dim)
             returns: Target returns (batch,) or (batch, 1)
@@ -725,8 +721,6 @@ class EndToEndRegimeMamba(nn.Module):
             Total loss (and optionally loss components dict)
         """
         # Always get BOTH soft and hard outputs
-        # Soft probs needed for jump penalty (gradient flow)
-        # Hard probs used for other losses when hard=True
         outputs_soft = self.forward(x, hard=False, return_all=True)
         soft_regime_probs = outputs_soft['regime_probs']
         hidden = outputs_soft['hidden']
@@ -735,43 +729,26 @@ class EndToEndRegimeMamba(nn.Module):
         if hard:
             outputs_hard = self.forward(x, hard=True, return_all=False)
             regime_probs = outputs_hard['regime_probs']
-            logits = outputs_hard['logits']
         else:
             regime_probs = soft_regime_probs
-            logits = outputs_soft['logits']
         
         returns = returns.view(-1)
         
         # 1. Return prediction loss (auxiliary)
         return_loss = F.mse_loss(return_pred.squeeze(), returns)
         
-        # 2. Direction prediction loss
-        # Bull regime (idx 1) probability should correlate with positive returns
-        if self.config.n_clusters == 2:
-            direction_pred = regime_probs[:, 1] - regime_probs[:, 0]  # Bull - Bear
-            direction_target = torch.sign(returns)
-            direction_loss = F.mse_loss(direction_pred, direction_target)
-        else:
-            # For multiple regimes, use softmax cross-entropy with return-based labels
-            return_labels = (returns > 0).long()  # Simple positive/negative
-            direction_loss = F.cross_entropy(
-                outputs_soft['logits'][:, :2], 
-                return_labels
-            )
-        
-        # 3. Jump penalty - ALWAYS use soft probs for gradient flow
+        # 2. Jump penalty - ALWAYS use soft probs for gradient flow
         jump_loss = self.jump_penalty(soft_regime_probs, dates=dates)
         
-        # 4. Regime separation loss (based on hidden states)
+        # 3. Regime separation loss (based on hidden states)
         separation_loss = self.separation_loss(soft_regime_probs, hidden, returns)
         
-        # 5. Entropy regularization
-        entropy_loss = self.entropy_reg(soft_regime_probs)
+        # 4. Two-Level Entropy loss
+        entropy_loss, entropy_components = self.entropy_reg(soft_regime_probs)
         
-        # Total loss
+        # Total loss (NO direction loss)
         total_loss = (
             self.w_return * return_loss +
-            self.w_direction * direction_loss +
             self.w_jump * jump_loss +
             self.w_separation * separation_loss +
             self.w_entropy * entropy_loss
@@ -780,46 +757,16 @@ class EndToEndRegimeMamba(nn.Module):
         if return_components:
             components = {
                 'return_loss': return_loss.item(),
-                'direction_loss': direction_loss.item(),
                 'jump_loss': jump_loss.item(),
                 'separation_loss': separation_loss.item(),
                 'entropy_loss': entropy_loss.item(),
+                'sample_entropy': entropy_components['sample_entropy'],
+                'batch_entropy': entropy_components['batch_entropy'],
                 'total_loss': total_loss.item()
             }
             return total_loss, components
         
         return total_loss
-    
-    def predict_regimes(self, x: torch.Tensor) -> torch.Tensor:
-        """
-        Predict regime labels for inference.
-        
-        Args:
-            x: Input tensor (batch, seq_len, input_dim)
-            
-        Returns:
-            Regime labels (batch,) - 0 for Bear, 1 for Bull
-        """
-        self.eval()
-        with torch.no_grad():
-            hidden = self.extract_features(x)
-            labels = self.regime_head.get_regime_labels(hidden)
-        return labels
-    
-    def get_regime_probabilities(self, x: torch.Tensor) -> torch.Tensor:
-        """
-        Get soft regime probabilities for inference.
-        
-        Args:
-            x: Input tensor (batch, seq_len, input_dim)
-            
-        Returns:
-            Regime probabilities (batch, n_regimes)
-        """
-        self.eval()
-        with torch.no_grad():
-            outputs = self.forward(x, hard=False)
-        return outputs['regime_probs']
     
     def predict_regimes(
         self,
@@ -888,12 +835,25 @@ class EndToEndRegimeMamba(nn.Module):
         mean_return_1 = returns[regime_1_mask].mean()
         
         # If regime 0 has higher mean return, swap labels
-        # We want: regime 1 = Bull (higher return), regime 0 = Bear (lower return)
         if mean_return_0 > mean_return_1:
-            # Swap: 0 -> 1, 1 -> 0
             regimes = 1 - regimes
         
         return regimes
+    
+    def get_regime_probabilities(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Get soft regime probabilities for inference.
+        
+        Args:
+            x: Input tensor (batch, seq_len, input_dim)
+            
+        Returns:
+            Regime probabilities (batch, n_regimes)
+        """
+        self.eval()
+        with torch.no_grad():
+            outputs = self.forward(x, hard=False)
+        return outputs['regime_probs']
 
 
 def align_regime_labels_numpy(
@@ -945,18 +905,10 @@ class SequentialJumpPenalty(nn.Module):
         lookback: int = 5,
         decay: float = 0.9
     ):
-        """
-        Args:
-            lambda_jump: Jump penalty coefficient
-            lookback: Number of previous timesteps to consider
-            decay: Exponential decay for older timesteps
-        """
         super().__init__()
         self.lambda_jump = lambda_jump
         self.lookback = lookback
         self.decay = decay
-        
-        # Register buffer for previous regime probs
         self.register_buffer('prev_regime_probs', None)
     
     def forward(
@@ -964,31 +916,18 @@ class SequentialJumpPenalty(nn.Module):
         regime_probs: torch.Tensor, 
         reset: bool = False
     ) -> torch.Tensor:
-        """
-        Compute sequential jump penalty with memory.
-        
-        Args:
-            regime_probs: (batch, n_regimes) current regime probabilities
-            reset: Whether to reset memory (e.g., at start of new sequence)
-            
-        Returns:
-            Jump penalty loss
-        """
         if reset or self.prev_regime_probs is None:
             self.prev_regime_probs = regime_probs.detach().clone()
             return torch.tensor(0.0, device=regime_probs.device)
         
-        # Compute difference from previous
         diff = regime_probs - self.prev_regime_probs
         jump_cost = torch.norm(diff, p=2, dim=-1).mean()
         
-        # Update memory
         self.prev_regime_probs = regime_probs.detach().clone()
         
         return self.lambda_jump * jump_cost
     
     def reset_memory(self):
-        """Reset the memory buffer."""
         self.prev_regime_probs = None
 
 
@@ -1008,17 +947,18 @@ def create_e2e_model_from_config(config) -> EndToEndRegimeMamba:
         'regime_hidden_dim': None,
         'jump_penalty': 1.0,
         'jump_penalty_type': 'l2',
-        'separation_margin': 1.0,
+        'separation_margin': 2.0,
         'separation_loss_type': 'centroid',
-        'lambda_inter': 1.0,
+        'lambda_inter': 1.5,
         'lambda_intra': 1.0,
-        'lambda_entropy': 0.1,
+        'lambda_entropy': 1.0,  # Increased
         'target_entropy': None,
-        'w_return': 1.0,
-        'w_jump': 1.0,
-        'w_separation': 1.0,
-        'w_entropy': 0.1,
-        'w_direction': 1.0
+        'lambda_sample_entropy': 1.0,  # NEW
+        'lambda_batch_entropy': 0.5,   # NEW
+        'w_return': 0.5,
+        'w_jump': 0.5,
+        'w_separation': 2.0,
+        'w_entropy': 1.0  # Increased
     }
     
     for key, value in default_params.items():
