@@ -1,6 +1,8 @@
 """
 End-to-End Regime Mamba Configuration
 Extended configuration class with additional parameters for E2E training.
+
+Updated: Two-Level Entropy parameters, Direction Loss removed
 """
 
 import torch
@@ -12,6 +14,8 @@ class E2ERegimeMambaConfig(RollingWindowTrainConfig):
     """
     Configuration class for End-to-End Regime Mamba training.
     Extends RollingWindowTrainConfig with Gumbel Softmax and loss parameters.
+    
+    Updated: Two-Level Entropy Regularization, No Direction Loss
     """
     
     def __init__(self):
@@ -33,13 +37,14 @@ class E2ERegimeMambaConfig(RollingWindowTrainConfig):
         self.n_clusters = 2             # Number of regimes (2 for Bull/Bear)
         
         # ============================================
-        # Loss Weights
+        # Loss Weights (Updated - NO direction loss)
         # ============================================
-        self.w_return = 0.5            # Return prediction loss weight (auxiliary, lower)
-        self.w_direction = 1.0         # Direction prediction loss weight
-        self.w_jump = 0.5              # Jump penalty loss weight (moderate)
-        self.w_separation = 2.0        # Regime separation loss weight (INCREASED)
-        self.w_entropy = 0.1           # Entropy regularization weight
+        self.w_return = 0.5            # Return prediction loss weight (auxiliary)
+        self.w_jump = 0.5              # Jump penalty loss weight
+        self.w_separation = 2.0        # Regime separation loss weight
+        self.w_entropy = 1.0           # Two-level entropy weight (INCREASED)
+        
+        # NOTE: w_direction removed - return sign assumption eliminated
         
         # ============================================
         # Jump Penalty Parameters
@@ -50,16 +55,18 @@ class E2ERegimeMambaConfig(RollingWindowTrainConfig):
         # ============================================
         # Separation Loss Parameters
         # ============================================
-        self.separation_margin = 2.0   # Margin for centroid separation (INCREASED)
+        self.separation_margin = 2.0   # Margin for centroid separation
         self.separation_loss_type = 'centroid'  # Loss type: 'centroid', 'contrastive', 'silhouette', 'return_weighted'
-        self.lambda_inter = 1.5        # Weight for inter-cluster separation (INCREASED)
+        self.lambda_inter = 1.5        # Weight for inter-cluster separation
         self.lambda_intra = 1.0        # Weight for intra-cluster compactness
         
         # ============================================
-        # Entropy Regularization Parameters
+        # Two-Level Entropy Parameters (NEW)
         # ============================================
-        self.lambda_entropy = 0.1      # Entropy regularization coefficient
-        self.target_entropy = None     # Target entropy (None = maximize entropy)
+        self.lambda_entropy = 1.0      # Overall entropy regularization coefficient
+        self.target_entropy = None     # Target entropy (None = use two-level approach)
+        self.lambda_sample_entropy = 1.0   # Sample-level: minimize (confidence)
+        self.lambda_batch_entropy = 0.5    # Batch-level: maximize (balance)
         
         # ============================================
         # Training Parameters (Override defaults)
@@ -112,10 +119,10 @@ class E2ERegimeMambaConfig(RollingWindowTrainConfig):
         sections = {
             'Gumbel Softmax': ['temperature', 'initial_temp', 'final_temp', 'temp_schedule', 'warmup_epochs'],
             'Regime Head': ['regime_hidden_dim', 'n_clusters'],
-            'Loss Weights': ['w_return', 'w_direction', 'w_jump', 'w_separation', 'w_entropy'],
+            'Loss Weights': ['w_return', 'w_jump', 'w_separation', 'w_entropy'],
             'Jump Penalty': ['jump_penalty', 'jump_penalty_type'],
-            'Separation Loss': ['separation_margin', 'separation_loss_type'],
-            'Entropy Reg': ['lambda_entropy', 'target_entropy'],
+            'Separation Loss': ['separation_margin', 'separation_loss_type', 'lambda_inter', 'lambda_intra'],
+            'Two-Level Entropy': ['lambda_entropy', 'lambda_sample_entropy', 'lambda_batch_entropy', 'target_entropy'],
             'Training': ['max_epochs', 'patience', 'learning_rate', 'weight_decay', 'batch_size'],
             'Model': ['d_model', 'd_state', 'n_layers', 'dropout', 'input_dim', 'seq_len'],
             'Rolling Window': ['total_window_years', 'train_years', 'valid_years', 'forward_months']
@@ -175,7 +182,6 @@ class E2ERegimeMambaConfig(RollingWindowTrainConfig):
         """Get loss-related configuration as dictionary."""
         return {
             'w_return': self.w_return,
-            'w_direction': self.w_direction,
             'w_jump': self.w_jump,
             'w_separation': self.w_separation,
             'w_entropy': self.w_entropy,
@@ -183,7 +189,9 @@ class E2ERegimeMambaConfig(RollingWindowTrainConfig):
             'jump_penalty_type': self.jump_penalty_type,
             'separation_margin': self.separation_margin,
             'separation_loss_type': self.separation_loss_type,
-            'lambda_entropy': self.lambda_entropy
+            'lambda_entropy': self.lambda_entropy,
+            'lambda_sample_entropy': self.lambda_sample_entropy,
+            'lambda_batch_entropy': self.lambda_batch_entropy
         }
     
     def get_temperature_config(self) -> dict:
@@ -194,11 +202,28 @@ class E2ERegimeMambaConfig(RollingWindowTrainConfig):
             'temp_schedule': self.temp_schedule,
             'warmup_epochs': self.warmup_epochs
         }
+    
+    def get_entropy_config(self) -> dict:
+        """Get entropy-related configuration as dictionary."""
+        return {
+            'lambda_entropy': self.lambda_entropy,
+            'lambda_sample_entropy': self.lambda_sample_entropy,
+            'lambda_batch_entropy': self.lambda_batch_entropy,
+            'target_entropy': self.target_entropy
+        }
 
 
 # Preset configurations for different scenarios
 class E2EConfigPresets:
     """Preset configurations for different use cases."""
+    
+    @staticmethod
+    def default() -> E2ERegimeMambaConfig:
+        """
+        Default balanced configuration with Two-Level Entropy.
+        """
+        config = E2ERegimeMambaConfig()
+        return config
     
     @staticmethod
     def aggressive_trading() -> E2ERegimeMambaConfig:
@@ -213,6 +238,9 @@ class E2EConfigPresets:
         config.separation_margin = 2.5
         config.initial_temp = 0.8
         config.final_temp = 0.2
+        # Higher sample entropy weight for more confident predictions
+        config.lambda_sample_entropy = 1.5
+        config.lambda_batch_entropy = 0.5
         return config
     
     @staticmethod
@@ -228,7 +256,10 @@ class E2EConfigPresets:
         config.separation_margin = 1.5
         config.initial_temp = 1.0
         config.final_temp = 0.5
-        config.w_entropy = 0.05  # Less entropy regularization
+        # Lower sample entropy weight for more gradual learning
+        config.lambda_sample_entropy = 0.8
+        config.lambda_batch_entropy = 0.6
+        config.w_entropy = 0.5
         return config
     
     @staticmethod
@@ -238,7 +269,6 @@ class E2EConfigPresets:
         Uses default values which are already balanced.
         """
         config = E2ERegimeMambaConfig()
-        # Use defaults
         return config
     
     @staticmethod
@@ -254,7 +284,24 @@ class E2EConfigPresets:
         config.lambda_intra = 1.0
         config.initial_temp = 0.7
         config.final_temp = 0.2
-        config.w_jump = 0.3  # Lower jump to allow more switching
+        config.w_jump = 0.3
+        # Stronger confidence push
+        config.lambda_sample_entropy = 1.5
+        config.w_entropy = 1.5
+        return config
+    
+    @staticmethod
+    def high_confidence() -> E2ERegimeMambaConfig:
+        """
+        Configuration emphasizing confident regime predictions.
+        Higher sample-level entropy weight to push away from [0.5, 0.5].
+        """
+        config = E2ERegimeMambaConfig()
+        config.lambda_sample_entropy = 2.0   # Strong confidence push
+        config.lambda_batch_entropy = 0.5    # Maintain balance
+        config.w_entropy = 1.5               # Higher overall weight
+        config.initial_temp = 0.8
+        config.final_temp = 0.2
         return config
     
     @staticmethod
@@ -282,4 +329,20 @@ class E2EConfigPresets:
         config.max_epochs = 50
         config.patience = 15
         config.batch_size = 4096
+        return config
+    
+    @staticmethod
+    def debug_symmetry_breaking() -> E2ERegimeMambaConfig:
+        """
+        Configuration for debugging symmetry breaking issues.
+        Very strong confidence push, good for diagnosing [0.5, 0.5] problems.
+        """
+        config = E2ERegimeMambaConfig()
+        config.lambda_sample_entropy = 3.0   # Very strong confidence push
+        config.lambda_batch_entropy = 0.3    # Slightly lower balance
+        config.w_entropy = 2.0               # Very high entropy weight
+        config.w_separation = 1.0            # Lower separation initially
+        config.w_jump = 0.1                  # Very low jump penalty
+        config.initial_temp = 0.5            # Start with lower temperature
+        config.final_temp = 0.1
         return config
