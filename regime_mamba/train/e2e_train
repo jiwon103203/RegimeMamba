@@ -1,6 +1,8 @@
 """
 End-to-End Regime Mamba Training Module
 Includes temperature annealing, curriculum learning, and evaluation utilities.
+
+Updated: Two-Level Entropy logging, Direction Loss removed
 """
 
 import torch
@@ -135,6 +137,8 @@ def train_e2e_regime_mamba(
     """
     Train End-to-End Regime Mamba model with temperature annealing.
     
+    Updated: No direction loss, Two-Level Entropy logging
+    
     Args:
         model: EndToEndRegimeMamba model
         train_loader: Training data loader
@@ -182,14 +186,16 @@ def train_e2e_regime_mamba(
         transition_epochs=int(config.max_epochs * 0.3)
     )
     
-    # Training history
+    # Training history (Updated: no direction_loss)
     history = {
         'train_loss': [],
         'valid_loss': [],
         'temperature': [],
         'lr': [],
         'loss_components': [],
-        'regime_distribution': []
+        'regime_distribution': [],
+        'sample_entropy': [],  # NEW: track sample-level entropy
+        'batch_entropy': []    # NEW: track batch-level entropy
     }
     
     best_val_loss = float('inf')
@@ -212,8 +218,12 @@ def train_e2e_regime_mamba(
         model.train()
         train_loss = 0
         train_components = {
-            'return_loss': 0, 'direction_loss': 0, 
-            'jump_loss': 0, 'separation_loss': 0, 'entropy_loss': 0
+            'return_loss': 0,
+            'jump_loss': 0, 
+            'separation_loss': 0, 
+            'entropy_loss': 0,
+            'sample_entropy': 0,
+            'batch_entropy': 0
         }
         regime_counts = torch.zeros(config.n_clusters, device=device)
         
@@ -228,7 +238,7 @@ def train_e2e_regime_mamba(
             # Compute loss with dates for jump penalty
             loss, components = model.compute_loss(
                 x, returns,
-                dates=dates,  # Pass dates for date-aware jump penalty
+                dates=dates,
                 hard=use_hard, 
                 return_components=True
             )
@@ -243,7 +253,8 @@ def train_e2e_regime_mamba(
             
             train_loss += loss.item()
             for key in train_components:
-                train_components[key] += components[key]
+                if key in components:
+                    train_components[key] += components[key]
             
             # Track regime distribution
             with torch.no_grad():
@@ -254,7 +265,9 @@ def train_e2e_regime_mamba(
             
             train_pbar.set_postfix({
                 'loss': f"{loss.item():.4f}",
-                'temp': f"{current_temp:.3f}"
+                'temp': f"{current_temp:.3f}",
+                'samp_ent': f"{components.get('sample_entropy', 0):.3f}",
+                'jump': f"{components.get('jump_loss', 0):.4f}"
             })
         
         avg_train_loss = train_loss / len(train_loader)
@@ -265,8 +278,12 @@ def train_e2e_regime_mamba(
         model.eval()
         val_loss = 0
         val_components = {
-            'return_loss': 0, 'direction_loss': 0, 
-            'jump_loss': 0, 'separation_loss': 0, 'entropy_loss': 0
+            'return_loss': 0,
+            'jump_loss': 0, 
+            'separation_loss': 0, 
+            'entropy_loss': 0,
+            'sample_entropy': 0,
+            'batch_entropy': 0
         }
         val_regime_counts = torch.zeros(config.n_clusters, device=device)
         
@@ -277,7 +294,7 @@ def train_e2e_regime_mamba(
                 
                 loss, components = model.compute_loss(
                     x, returns,
-                    dates=dates,  # Pass dates for date-aware jump penalty
+                    dates=dates,
                     hard=True, 
                     return_components=True
                 )
@@ -285,7 +302,8 @@ def train_e2e_regime_mamba(
                 
                 # Accumulate validation components
                 for key in val_components:
-                    val_components[key] += components[key]
+                    if key in components:
+                        val_components[key] += components[key]
                 
                 # Track regime distribution
                 outputs = model.forward(x, hard=True)
@@ -313,17 +331,34 @@ def train_e2e_regime_mamba(
         history['lr'].append(optimizer.param_groups[0]['lr'])
         history['loss_components'].append(train_components)
         history['regime_distribution'].append(regime_dist.tolist())
+        history['sample_entropy'].append(train_components['sample_entropy'])
+        history['batch_entropy'].append(train_components['batch_entropy'])
         
-        # Logging
+        # Logging (Updated: no direction_loss)
         print(f"\nEpoch {epoch+1}/{config.max_epochs}:")
         print(f"  Train Loss: {avg_train_loss:.6f}, Valid Loss: {avg_val_loss:.6f}")
         print(f"  Temperature: {current_temp:.4f}, LR: {optimizer.param_groups[0]['lr']:.2e}")
         print(f"  Train Regime Dist: {regime_dist}")
         print(f"  Valid Regime Dist: {val_regime_dist}")
-        print(f"  Train Components: ret={train_components['return_loss']:.4f}, dir={train_components['direction_loss']:.4f}, "
-              f"jump={train_components['jump_loss']:.4f}, sep={train_components['separation_loss']:.4f}, ent={train_components['entropy_loss']:.4f}")
-        print(f"  Valid Components: ret={val_components['return_loss']:.4f}, dir={val_components['direction_loss']:.4f}, "
-              f"jump={val_components['jump_loss']:.4f}, sep={val_components['separation_loss']:.4f}, ent={val_components['entropy_loss']:.4f}")
+        print(f"  Train: ret={train_components['return_loss']:.4f}, "
+              f"jump={train_components['jump_loss']:.4f}, "
+              f"sep={train_components['separation_loss']:.4f}, "
+              f"ent={train_components['entropy_loss']:.4f}")
+        print(f"  Entropy: sample={train_components['sample_entropy']:.4f} (want LOW), "
+              f"batch={train_components['batch_entropy']:.4f} (want HIGH=0.693)")
+        print(f"  Valid:  ret={val_components['return_loss']:.4f}, "
+              f"jump={val_components['jump_loss']:.4f}, "
+              f"sep={val_components['separation_loss']:.4f}, "
+              f"ent={val_components['entropy_loss']:.4f}")
+        
+        # Check for symmetry breaking
+        if train_components['sample_entropy'] > 0.6:
+            print(f"  ⚠️  Sample entropy still high! Model may be stuck at [0.5, 0.5]")
+        elif train_components['sample_entropy'] < 0.4:
+            print(f"  ✓ Sample entropy low - model is making confident predictions")
+        
+        if train_components['jump_loss'] < 0.01:
+            print(f"  ⚠️  Jump loss near zero - check if samples are differentiated")
         
         # Save best model
         if avg_val_loss < best_val_loss:
@@ -368,7 +403,7 @@ def train_e2e_regime_mamba(
 
 def plot_training_curves(history: Dict, save_dir: str):
     """Plot and save training curves."""
-    fig, axes = plt.subplots(2, 2, figsize=(14, 10))
+    fig, axes = plt.subplots(2, 3, figsize=(18, 10))
     
     # Loss curves
     ax = axes[0, 0]
@@ -389,7 +424,7 @@ def plot_training_curves(history: Dict, save_dir: str):
     ax.grid(True)
     
     # Learning rate curve
-    ax = axes[1, 0]
+    ax = axes[0, 2]
     ax.plot(history['lr'], color='green')
     ax.set_xlabel('Epoch')
     ax.set_ylabel('Learning Rate')
@@ -398,7 +433,7 @@ def plot_training_curves(history: Dict, save_dir: str):
     ax.grid(True)
     
     # Regime distribution over time
-    ax = axes[1, 1]
+    ax = axes[1, 0]
     regime_dist = np.array(history['regime_distribution'])
     for i in range(regime_dist.shape[1]):
         ax.plot(regime_dist[:, i], label=f'Regime {i}')
@@ -407,6 +442,30 @@ def plot_training_curves(history: Dict, save_dir: str):
     ax.set_title('Regime Distribution Over Training')
     ax.legend()
     ax.grid(True)
+    
+    # Two-Level Entropy curves (NEW)
+    ax = axes[1, 1]
+    ax.plot(history['sample_entropy'], label='Sample Entropy (want LOW)', color='red')
+    ax.plot(history['batch_entropy'], label='Batch Entropy (want HIGH)', color='blue')
+    ax.axhline(y=np.log(2), color='black', linestyle='--', alpha=0.5, label='Max Entropy (log 2)')
+    ax.set_xlabel('Epoch')
+    ax.set_ylabel('Entropy')
+    ax.set_title('Two-Level Entropy Over Training')
+    ax.legend()
+    ax.grid(True)
+    
+    # Loss components
+    ax = axes[1, 2]
+    if history['loss_components']:
+        epochs = range(len(history['loss_components']))
+        for key in ['return_loss', 'jump_loss', 'separation_loss', 'entropy_loss']:
+            values = [comp.get(key, 0) for comp in history['loss_components']]
+            ax.plot(epochs, values, label=key)
+        ax.set_xlabel('Epoch')
+        ax.set_ylabel('Loss Component')
+        ax.set_title('Loss Components Over Training')
+        ax.legend()
+        ax.grid(True)
     
     plt.tight_layout()
     plt.savefig(os.path.join(save_dir, 'training_curves.png'), dpi=150)
@@ -716,7 +775,9 @@ def run_e2e_rolling_window(config) -> Tuple[pd.DataFrame, List[Dict], List[Dict]
             'train_end': train_end,
             'valid_start': valid_start,
             'valid_end': valid_end,
-            'best_val_loss': min(history['valid_loss']) if history['valid_loss'] else None
+            'best_val_loss': min(history['valid_loss']) if history['valid_loss'] else None,
+            'final_sample_entropy': history['sample_entropy'][-1] if history['sample_entropy'] else None,
+            'final_batch_entropy': history['batch_entropy'][-1] if history['batch_entropy'] else None
         })
         
         # Move to next window
