@@ -5,12 +5,17 @@
 Rolling Window Training Backtest with Smoothing Technique Comparison
 Supports both original 2-stage approach and End-to-End Regime Mamba.
 
+Updated: Two-Level Entropy Regularization, Direction Loss removed
+
 Usage:
     # Original 2-stage approach
     python rolling_window_train_backtest_e2e.py --config config.yaml --data_path data.csv
     
     # End-to-End Regime Mamba
     python rolling_window_train_backtest_e2e.py --config config.yaml --data_path data.csv --e2e
+    
+    # E2E with high confidence preset (strong symmetry breaking)
+    python rolling_window_train_backtest_e2e.py --data_path data.csv --e2e --e2e_preset high_confidence
 """
 
 import os
@@ -161,30 +166,38 @@ def parse_args():
     # E2E Regime Mamba specific arguments
     parser.add_argument('--e2e', action='store_true', help='Use End-to-End Regime Mamba')
     parser.add_argument('--e2e_preset', type=str, default='balanced',
-                        choices=['aggressive', 'conservative', 'balanced', 'high_capacity', 'fast'],
+                        choices=['aggressive', 'conservative', 'balanced', 'high_capacity', 'fast',
+                                 'high_confidence', 'strong_separation', 'debug_symmetry'],
                         help='E2E configuration preset')
     
     # E2E Gumbel Softmax parameters
-    parser.add_argument('--initial_temp', type=float, default=2.0, help='Initial Gumbel temperature')
-    parser.add_argument('--final_temp', type=float, default=0.5, help='Final Gumbel temperature')
+    parser.add_argument('--initial_temp', type=float, default=1.0, help='Initial Gumbel temperature')
+    parser.add_argument('--final_temp', type=float, default=0.3, help='Final Gumbel temperature')
     parser.add_argument('--temp_schedule', type=str, default='exponential',
                         choices=['linear', 'exponential', 'cosine'],
                         help='Temperature annealing schedule')
-    parser.add_argument('--warmup_epochs', type=int, default=10, help='Warmup epochs before annealing')
+    parser.add_argument('--warmup_epochs', type=int, default=5, help='Warmup epochs before annealing')
     
-    # E2E Loss weights
-    parser.add_argument('--w_return', type=float, default=1.0, help='Return prediction loss weight')
-    parser.add_argument('--w_direction', type=float, default=1.0, help='Direction prediction loss weight')
-    parser.add_argument('--w_jump', type=float, default=1.0, help='Jump penalty loss weight')
-    parser.add_argument('--w_separation', type=float, default=1.0, help='Regime separation loss weight')
-    parser.add_argument('--w_entropy', type=float, default=0.1, help='Entropy regularization weight')
+    # E2E Loss weights (Updated: NO w_direction)
+    parser.add_argument('--w_return', type=float, default=0.5, help='Return prediction loss weight')
+    parser.add_argument('--w_jump', type=float, default=0.5, help='Jump penalty loss weight')
+    parser.add_argument('--w_separation', type=float, default=2.0, help='Regime separation loss weight')
+    parser.add_argument('--w_entropy', type=float, default=1.0, help='Two-level entropy weight (INCREASED)')
+    
+    # E2E Two-Level Entropy parameters (NEW)
+    parser.add_argument('--lambda_entropy', type=float, default=1.0, 
+                        help='Overall entropy regularization coefficient')
+    parser.add_argument('--lambda_sample_entropy', type=float, default=1.0,
+                        help='Sample-level entropy weight (minimize for confidence)')
+    parser.add_argument('--lambda_batch_entropy', type=float, default=0.5,
+                        help='Batch-level entropy weight (maximize for balance)')
     
     # E2E Separation loss parameters
     parser.add_argument('--separation_loss_type', type=str, default='centroid',
                         choices=['centroid', 'contrastive', 'silhouette', 'return_weighted'],
                         help='Separation loss type')
-    parser.add_argument('--separation_margin', type=float, default=1.0, help='Centroid separation margin')
-    parser.add_argument('--lambda_inter', type=float, default=1.0, help='Inter-cluster separation weight')
+    parser.add_argument('--separation_margin', type=float, default=2.0, help='Centroid separation margin')
+    parser.add_argument('--lambda_inter', type=float, default=1.5, help='Inter-cluster separation weight')
     parser.add_argument('--lambda_intra', type=float, default=1.0, help='Intra-cluster compactness weight')
 
     # Optional parameters
@@ -271,14 +284,17 @@ def load_original_config(args) -> RollingWindowTrainConfig:
 
 
 def load_e2e_config(args) -> E2ERegimeMambaConfig:
-    """Load E2E Regime Mamba configuration"""
-    # Get preset config
+    """Load E2E Regime Mamba configuration with Two-Level Entropy support"""
+    # Get preset config (Updated preset map)
     preset_map = {
         'aggressive': E2EConfigPresets.aggressive_trading,
         'conservative': E2EConfigPresets.conservative_trading,
         'balanced': E2EConfigPresets.balanced,
         'high_capacity': E2EConfigPresets.high_capacity,
-        'fast': E2EConfigPresets.fast_training
+        'fast': E2EConfigPresets.fast_training,
+        'high_confidence': E2EConfigPresets.high_confidence,
+        'strong_separation': E2EConfigPresets.strong_separation,
+        'debug_symmetry': E2EConfigPresets.debug_symmetry_breaking
     }
     
     config = preset_map[args.e2e_preset]()
@@ -310,6 +326,7 @@ def load_e2e_config(args) -> E2ERegimeMambaConfig:
             setattr(config, key, value)
     
     # Update with command-line arguments (overrides YAML and preset)
+    # Updated: removed w_direction, added Two-Level Entropy params
     arg_dict = vars(args)
     e2e_params = [
         'data_path', 'results_dir', 'start_date', 'end_date',
@@ -317,9 +334,13 @@ def load_e2e_config(args) -> E2ERegimeMambaConfig:
         'input_dim', 'd_model', 'd_state', 'n_layers', 'dropout', 'seq_len',
         'batch_size', 'learning_rate', 'max_epochs', 'patience', 'transaction_cost',
         'seed', 'max_workers', 'gpu_id', 'enable_checkpointing', 'checkpoint_interval',
-        # E2E specific
+        # E2E Gumbel Softmax
         'initial_temp', 'final_temp', 'temp_schedule', 'warmup_epochs',
-        'w_return', 'w_direction', 'w_jump', 'w_separation', 'w_entropy',
+        # E2E Loss weights (NO w_direction)
+        'w_return', 'w_jump', 'w_separation', 'w_entropy',
+        # Two-Level Entropy (NEW)
+        'lambda_entropy', 'lambda_sample_entropy', 'lambda_batch_entropy',
+        # Separation loss
         'separation_loss_type', 'separation_margin', 'lambda_inter', 'lambda_intra',
         'jump_penalty'
     ]
@@ -380,9 +401,26 @@ def save_config(config, output_dir: str):
     
     with open(os.path.join(output_dir, 'config.txt'), 'w') as f:
         is_e2e = getattr(config, 'e2e_mode', False)
-        title = "E2E Regime Mamba" if is_e2e else "Rolling Window Train Backtest"
+        title = "E2E Regime Mamba (Two-Level Entropy)" if is_e2e else "Rolling Window Train Backtest"
         f.write(f"=== {title} Configuration ===\n\n")
+        
+        # Group E2E-specific configs
+        if is_e2e:
+            f.write("--- Two-Level Entropy Parameters ---\n")
+            entropy_params = ['lambda_entropy', 'lambda_sample_entropy', 'lambda_batch_entropy', 'w_entropy']
+            for key in entropy_params:
+                if key in config_dict:
+                    f.write(f"{key}: {config_dict[key]}\n")
+            f.write("\n--- Loss Weights (No Direction Loss) ---\n")
+            loss_params = ['w_return', 'w_jump', 'w_separation']
+            for key in loss_params:
+                if key in config_dict:
+                    f.write(f"{key}: {config_dict[key]}\n")
+            f.write("\n--- Other Parameters ---\n")
+        
         for key, value in sorted(config_dict.items()):
+            if is_e2e and key in entropy_params + loss_params:
+                continue  # Already printed above
             f.write(f"{key}: {value}\n")
 
 
@@ -466,6 +504,7 @@ def train_e2e_model_for_window(
     """
     print(f"\n[E2E] Training period: {train_start} ~ {train_end}")
     print(f"[E2E] Validation period: {valid_start} ~ {valid_end}")
+    print(f"[E2E] Two-Level Entropy: λ_sample={config.lambda_sample_entropy}, λ_batch={config.lambda_batch_entropy}")
     
     # Create datasets
     train_dataset = DateRangeRegimeMambaDataset(
@@ -522,7 +561,19 @@ def train_e2e_model_for_window(
         save_dir=window_save_dir
     )
     
-    print(f"[E2E] Training complete. Best validation loss: {min(history['valid_loss']):.6f}")
+    # Log training results with Two-Level Entropy info
+    best_val_loss = min(history['valid_loss']) if history['valid_loss'] else float('inf')
+    final_sample_entropy = history['sample_entropy'][-1] if history.get('sample_entropy') else None
+    final_batch_entropy = history['batch_entropy'][-1] if history.get('batch_entropy') else None
+    
+    print(f"[E2E] Training complete. Best validation loss: {best_val_loss:.6f}")
+    if final_sample_entropy is not None:
+        print(f"[E2E] Final sample entropy: {final_sample_entropy:.4f} (want LOW)")
+        print(f"[E2E] Final batch entropy: {final_batch_entropy:.4f} (want HIGH ≈ 0.693)")
+        
+        # Warning if model might be stuck
+        if final_sample_entropy > 0.6:
+            print(f"[E2E] ⚠️ Warning: High sample entropy suggests model may be stuck at [0.5, 0.5]")
     
     return model
 
@@ -1206,6 +1257,11 @@ def run_rolling_window_backtest(
     mode_str = "[E2E]" if is_e2e else "[2-Stage]"
     logger.info(f"{mode_str} Processing {total_windows} windows")
     
+    # Log E2E-specific configuration
+    if is_e2e:
+        logger.info(f"{mode_str} Two-Level Entropy: λ_sample={config.lambda_sample_entropy}, λ_batch={config.lambda_batch_entropy}")
+        logger.info(f"{mode_str} Loss weights: return={config.w_return}, jump={config.w_jump}, sep={config.w_separation}, ent={config.w_entropy}")
+    
     for i, window_info in enumerate(window_schedule):
         window_number = window_info['window_number']
         logger.info(f"\n=== {mode_str} Window {window_number} ({i+1}/{total_windows}) ===")
@@ -1222,7 +1278,7 @@ def run_rolling_window_backtest(
                 # =====================
                 # E2E Regime Mamba Flow
                 # =====================
-                logger.info(f"{mode_str} Training E2E model...")
+                logger.info(f"{mode_str} Training E2E model with Two-Level Entropy...")
                 model = train_e2e_model_for_window(
                     config,
                     window_info['train_period']['start'],
@@ -1384,8 +1440,15 @@ def main():
         mpl.rcParams['font.family'] = 'serif'
         
         args = parse_args()
-        print(f"\nMode: {'E2E Regime Mamba' if args.e2e else 'Original 2-Stage'}")
-        print(f"Arguments: {args}\n")
+        
+        # Print mode information
+        mode_name = 'E2E Regime Mamba (Two-Level Entropy)' if args.e2e else 'Original 2-Stage'
+        print(f"\n{'='*60}")
+        print(f"Mode: {mode_name}")
+        if args.e2e:
+            print(f"Preset: {args.e2e_preset}")
+            print(f"Two-Level Entropy: λ_sample={args.lambda_sample_entropy}, λ_batch={args.lambda_batch_entropy}")
+        print(f"{'='*60}\n")
         
         # Prepare output directory
         default_dir = './e2e_backtest_results' if args.e2e else './train_backtest_results'
@@ -1396,13 +1459,21 @@ def main():
         
         # Set up logging
         logger = setup_logging(log_file=log_file)
-        logger.info(f"Starting {'E2E' if args.e2e else '2-Stage'} rolling window backtest")
+        logger.info(f"Starting {mode_name} rolling window backtest")
         
         # Load configuration
         try:
             config = load_config(args)
             config.results_dir = result_dir
             logger.info("Configuration loaded successfully")
+            
+            # Log Two-Level Entropy config for E2E
+            if args.e2e:
+                logger.info(f"Two-Level Entropy Config:")
+                logger.info(f"  lambda_sample_entropy: {config.lambda_sample_entropy}")
+                logger.info(f"  lambda_batch_entropy: {config.lambda_batch_entropy}")
+                logger.info(f"  w_entropy: {config.w_entropy}")
+                
         except Exception as e:
             logger.error(f"Error loading configuration: {str(e)}")
             sys.exit(1)
