@@ -495,7 +495,7 @@ def train_e2e_model_for_window(
     train_loader = DataLoader(
         train_dataset,
         batch_size=config.batch_size,
-        shuffle=True,
+        shuffle=False,
         num_workers=2
     )
     
