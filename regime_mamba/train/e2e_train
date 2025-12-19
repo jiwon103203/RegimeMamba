@@ -1,0 +1,889 @@
+"""
+End-to-End Regime Mamba Training Module
+Includes temperature annealing, curriculum learning, and evaluation utilities.
+"""
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+from torch.utils.data import DataLoader
+from tqdm import tqdm
+from typing import Optional, Dict, List, Tuple
+from datetime import datetime
+from dateutil.relativedelta import relativedelta
+import json
+import os
+
+from ..models.e2e_regime_mamba import EndToEndRegimeMamba, create_e2e_model_from_config
+from ..data.dataset import DateRangeRegimeMambaDataset
+from ..utils.utils import set_seed
+
+
+class TemperatureScheduler:
+    """
+    Temperature scheduler for Gumbel Softmax annealing.
+    Gradually decreases temperature to transition from soft to hard assignments.
+    """
+    
+    def __init__(
+        self,
+        initial_temp: float = 2.0,
+        final_temp: float = 0.5,
+        total_epochs: int = 100,
+        schedule_type: str = 'exponential',
+        warmup_epochs: int = 10
+    ):
+        """
+        Args:
+            initial_temp: Starting temperature
+            final_temp: Final temperature
+            total_epochs: Total number of training epochs
+            schedule_type: 'linear', 'exponential', 'cosine'
+            warmup_epochs: Number of warmup epochs at initial temperature
+        """
+        self.initial_temp = initial_temp
+        self.final_temp = final_temp
+        self.total_epochs = total_epochs
+        self.schedule_type = schedule_type
+        self.warmup_epochs = warmup_epochs
+    
+    def get_temperature(self, epoch: int) -> float:
+        """Get temperature for current epoch."""
+        if epoch < self.warmup_epochs:
+            return self.initial_temp
+        
+        # Adjust epoch for post-warmup calculation
+        adjusted_epoch = epoch - self.warmup_epochs
+        adjusted_total = self.total_epochs - self.warmup_epochs
+        progress = min(adjusted_epoch / max(adjusted_total, 1), 1.0)
+        
+        if self.schedule_type == 'linear':
+            temp = self.initial_temp - (self.initial_temp - self.final_temp) * progress
+            
+        elif self.schedule_type == 'exponential':
+            # Exponential decay
+            decay_rate = np.log(self.final_temp / self.initial_temp) / adjusted_total
+            temp = self.initial_temp * np.exp(decay_rate * adjusted_epoch)
+            
+        elif self.schedule_type == 'cosine':
+            # Cosine annealing
+            temp = self.final_temp + 0.5 * (self.initial_temp - self.final_temp) * \
+                   (1 + np.cos(np.pi * progress))
+        else:
+            temp = self.initial_temp
+        
+        return max(temp, self.final_temp)
+
+
+class HardnessScheduler:
+    """
+    Scheduler for transitioning from soft to hard Gumbel Softmax.
+    Uses probabilistic hard assignment that increases over training.
+    """
+    
+    def __init__(
+        self,
+        start_epoch: int = 50,
+        transition_epochs: int = 50,
+        schedule_type: str = 'linear'
+    ):
+        """
+        Args:
+            start_epoch: Epoch to start using hard assignments
+            transition_epochs: Number of epochs to transition from 0% to 100% hard
+            schedule_type: 'linear', 'step', 'sigmoid'
+        """
+        self.start_epoch = start_epoch
+        self.transition_epochs = transition_epochs
+        self.schedule_type = schedule_type
+    
+    def get_hard_probability(self, epoch: int) -> float:
+        """Get probability of using hard assignment for current epoch."""
+        if epoch < self.start_epoch:
+            return 0.0
+        
+        progress = (epoch - self.start_epoch) / max(self.transition_epochs, 1)
+        progress = min(progress, 1.0)
+        
+        if self.schedule_type == 'linear':
+            return progress
+        elif self.schedule_type == 'step':
+            return 1.0 if progress >= 0.5 else 0.0
+        elif self.schedule_type == 'sigmoid':
+            # Sigmoid curve for smooth transition
+            x = (progress - 0.5) * 10  # Center at 0.5, scale for sharpness
+            return 1 / (1 + np.exp(-x))
+        else:
+            return progress
+    
+    def should_use_hard(self, epoch: int) -> bool:
+        """Probabilistically determine if hard assignment should be used."""
+        prob = self.get_hard_probability(epoch)
+        return np.random.random() < prob
+
+
+def train_e2e_regime_mamba(
+    model: EndToEndRegimeMamba,
+    train_loader: DataLoader,
+    valid_loader: DataLoader,
+    config,
+    save_dir: Optional[str] = None
+) -> Tuple[EndToEndRegimeMamba, Dict]:
+    """
+    Train End-to-End Regime Mamba model with temperature annealing.
+    
+    Args:
+        model: EndToEndRegimeMamba model
+        train_loader: Training data loader
+        valid_loader: Validation data loader
+        config: Configuration object
+        save_dir: Directory to save checkpoints and logs
+        
+    Returns:
+        Trained model and training history
+    """
+    device = config.device
+    model.to(device)
+    
+    # Optimizer
+    optimizer = torch.optim.AdamW(
+        model.parameters(),
+        lr=config.learning_rate,
+        weight_decay=getattr(config, 'weight_decay', 0.01)
+    )
+    
+    # Learning rate scheduler
+    total_steps = config.max_epochs * len(train_loader)
+    lr_scheduler = torch.optim.lr_scheduler.OneCycleLR(
+        optimizer,
+        max_lr=config.learning_rate * 5,
+        total_steps=total_steps,
+        pct_start=0.2,
+        div_factor=5,
+        final_div_factor=100,
+        anneal_strategy='cos'
+    )
+    
+    # Temperature scheduler
+    temp_scheduler = TemperatureScheduler(
+        initial_temp=getattr(config, 'initial_temp', 2.0),
+        final_temp=getattr(config, 'final_temp', 0.5),
+        total_epochs=config.max_epochs,
+        schedule_type=getattr(config, 'temp_schedule', 'exponential'),
+        warmup_epochs=getattr(config, 'warmup_epochs', 10)
+    )
+    
+    # Hardness scheduler
+    hardness_scheduler = HardnessScheduler(
+        start_epoch=int(config.max_epochs * 0.5),
+        transition_epochs=int(config.max_epochs * 0.3)
+    )
+    
+    # Training history
+    history = {
+        'train_loss': [],
+        'valid_loss': [],
+        'temperature': [],
+        'lr': [],
+        'loss_components': [],
+        'regime_distribution': []
+    }
+    
+    best_val_loss = float('inf')
+    best_epoch = 0
+    best_model_state = None
+    patience_counter = 0
+    
+    if save_dir:
+        os.makedirs(save_dir, exist_ok=True)
+    
+    for epoch in range(config.max_epochs):
+        # Update temperature
+        current_temp = temp_scheduler.get_temperature(epoch)
+        model.regime_head.temperature = current_temp
+        
+        # Determine if using hard assignments
+        use_hard = hardness_scheduler.should_use_hard(epoch)
+        
+        # Training phase
+        model.train()
+        train_loss = 0
+        train_components = {
+            'return_loss': 0, 'direction_loss': 0, 
+            'jump_loss': 0, 'separation_loss': 0, 'entropy_loss': 0
+        }
+        regime_counts = torch.zeros(config.n_clusters, device=device)
+        
+        train_pbar = tqdm(train_loader, desc=f"Epoch {epoch+1}/{config.max_epochs}")
+        
+        for batch_idx, (x, y, dates, returns) in enumerate(train_pbar):
+            x = x.to(device)
+            returns = returns.to(device)
+            
+            optimizer.zero_grad()
+            
+            # Compute loss with dates for jump penalty
+            loss, components = model.compute_loss(
+                x, returns,
+                dates=dates,  # Pass dates for date-aware jump penalty
+                hard=use_hard, 
+                return_components=True
+            )
+            
+            loss.backward()
+            
+            # Gradient clipping
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+            
+            optimizer.step()
+            lr_scheduler.step()
+            
+            train_loss += loss.item()
+            for key in train_components:
+                train_components[key] += components[key]
+            
+            # Track regime distribution
+            with torch.no_grad():
+                outputs = model.forward(x, hard=True)
+                regimes = outputs['regime_probs'].argmax(dim=-1)
+                for r in range(config.n_clusters):
+                    regime_counts[r] += (regimes == r).sum()
+            
+            train_pbar.set_postfix({
+                'loss': f"{loss.item():.4f}",
+                'temp': f"{current_temp:.3f}"
+            })
+        
+        avg_train_loss = train_loss / len(train_loader)
+        for key in train_components:
+            train_components[key] /= len(train_loader)
+        
+        # Validation phase
+        model.eval()
+        val_loss = 0
+        val_components = {
+            'return_loss': 0, 'direction_loss': 0, 
+            'jump_loss': 0, 'separation_loss': 0, 'entropy_loss': 0
+        }
+        val_regime_counts = torch.zeros(config.n_clusters, device=device)
+        
+        with torch.no_grad():
+            for x, y, dates, returns in valid_loader:
+                x = x.to(device)
+                returns = returns.to(device)
+                
+                loss, components = model.compute_loss(
+                    x, returns,
+                    dates=dates,  # Pass dates for date-aware jump penalty
+                    hard=True, 
+                    return_components=True
+                )
+                val_loss += loss.item()
+                
+                # Accumulate validation components
+                for key in val_components:
+                    val_components[key] += components[key]
+                
+                # Track regime distribution
+                outputs = model.forward(x, hard=True)
+                regimes = outputs['regime_probs'].argmax(dim=-1)
+                for r in range(config.n_clusters):
+                    val_regime_counts[r] += (regimes == r).sum()
+        
+        avg_val_loss = val_loss / len(valid_loader)
+        
+        # Average validation components
+        for key in val_components:
+            val_components[key] /= len(valid_loader)
+        
+        # Calculate regime distribution
+        total_samples = regime_counts.sum()
+        regime_dist = (regime_counts / total_samples).cpu().numpy()
+        
+        val_total_samples = val_regime_counts.sum()
+        val_regime_dist = (val_regime_counts / val_total_samples).cpu().numpy() if val_total_samples > 0 else regime_dist
+        
+        # Update history
+        history['train_loss'].append(avg_train_loss)
+        history['valid_loss'].append(avg_val_loss)
+        history['temperature'].append(current_temp)
+        history['lr'].append(optimizer.param_groups[0]['lr'])
+        history['loss_components'].append(train_components)
+        history['regime_distribution'].append(regime_dist.tolist())
+        
+        # Logging
+        print(f"\nEpoch {epoch+1}/{config.max_epochs}:")
+        print(f"  Train Loss: {avg_train_loss:.6f}, Valid Loss: {avg_val_loss:.6f}")
+        print(f"  Temperature: {current_temp:.4f}, LR: {optimizer.param_groups[0]['lr']:.2e}")
+        print(f"  Train Regime Dist: {regime_dist}")
+        print(f"  Valid Regime Dist: {val_regime_dist}")
+        print(f"  Train Components: ret={train_components['return_loss']:.4f}, dir={train_components['direction_loss']:.4f}, "
+              f"jump={train_components['jump_loss']:.4f}, sep={train_components['separation_loss']:.4f}, ent={train_components['entropy_loss']:.4f}")
+        print(f"  Valid Components: ret={val_components['return_loss']:.4f}, dir={val_components['direction_loss']:.4f}, "
+              f"jump={val_components['jump_loss']:.4f}, sep={val_components['separation_loss']:.4f}, ent={val_components['entropy_loss']:.4f}")
+        
+        # Save best model
+        if avg_val_loss < best_val_loss:
+            best_val_loss = avg_val_loss
+            best_epoch = epoch
+            best_model_state = model.state_dict().copy()
+            patience_counter = 0
+            print(f"  ✓ New best model saved!")
+            
+            if save_dir:
+                torch.save({
+                    'epoch': epoch,
+                    'model_state_dict': best_model_state,
+                    'optimizer_state_dict': optimizer.state_dict(),
+                    'val_loss': best_val_loss,
+                    'config': config.__dict__
+                }, os.path.join(save_dir, 'best_model.pth'))
+        else:
+            patience_counter += 1
+            print(f"  No improvement: {patience_counter}/{config.patience}")
+        
+        # Early stopping
+        if patience_counter >= config.patience:
+            print(f"\nEarly stopping at epoch {epoch+1}")
+            break
+    
+    # Restore best model
+    if best_model_state is not None:
+        model.load_state_dict(best_model_state)
+        print(f"\nBest model restored from epoch {best_epoch+1} (Val Loss: {best_val_loss:.6f})")
+    
+    # Save training history
+    if save_dir:
+        with open(os.path.join(save_dir, 'training_history.json'), 'w') as f:
+            json.dump(history, f, indent=2)
+        
+        # Plot training curves
+        plot_training_curves(history, save_dir)
+    
+    return model, history
+
+
+def plot_training_curves(history: Dict, save_dir: str):
+    """Plot and save training curves."""
+    fig, axes = plt.subplots(2, 2, figsize=(14, 10))
+    
+    # Loss curves
+    ax = axes[0, 0]
+    ax.plot(history['train_loss'], label='Train Loss')
+    ax.plot(history['valid_loss'], label='Valid Loss')
+    ax.set_xlabel('Epoch')
+    ax.set_ylabel('Loss')
+    ax.set_title('Training and Validation Loss')
+    ax.legend()
+    ax.grid(True)
+    
+    # Temperature curve
+    ax = axes[0, 1]
+    ax.plot(history['temperature'], color='orange')
+    ax.set_xlabel('Epoch')
+    ax.set_ylabel('Temperature')
+    ax.set_title('Gumbel Softmax Temperature')
+    ax.grid(True)
+    
+    # Learning rate curve
+    ax = axes[1, 0]
+    ax.plot(history['lr'], color='green')
+    ax.set_xlabel('Epoch')
+    ax.set_ylabel('Learning Rate')
+    ax.set_title('Learning Rate Schedule')
+    ax.set_yscale('log')
+    ax.grid(True)
+    
+    # Regime distribution over time
+    ax = axes[1, 1]
+    regime_dist = np.array(history['regime_distribution'])
+    for i in range(regime_dist.shape[1]):
+        ax.plot(regime_dist[:, i], label=f'Regime {i}')
+    ax.set_xlabel('Epoch')
+    ax.set_ylabel('Proportion')
+    ax.set_title('Regime Distribution Over Training')
+    ax.legend()
+    ax.grid(True)
+    
+    plt.tight_layout()
+    plt.savefig(os.path.join(save_dir, 'training_curves.png'), dpi=150)
+    plt.close()
+
+
+def evaluate_e2e_regime_strategy(
+    model: EndToEndRegimeMamba,
+    dataloader: DataLoader,
+    config,
+    transaction_cost: float = 0.001
+) -> Tuple[pd.DataFrame, Dict]:
+    """
+    Evaluate regime-based trading strategy.
+    
+    Args:
+        model: Trained EndToEndRegimeMamba model
+        dataloader: Data loader for evaluation
+        config: Configuration object
+        transaction_cost: Transaction cost per trade
+        
+    Returns:
+        Results dataframe and performance metrics
+    """
+    device = config.device
+    model.eval()
+    
+    all_dates = []
+    all_returns = []
+    all_regimes = []
+    all_regime_probs = []
+    
+    with torch.no_grad():
+        for x, y, dates, returns in dataloader:
+            x = x.to(device)
+            
+            # Get regime predictions
+            outputs = model.forward(x, hard=True)
+            regime_probs = outputs['regime_probs'].cpu().numpy()
+            regimes = regime_probs.argmax(axis=-1)
+            
+            all_dates.extend(dates)
+            all_returns.extend(returns.numpy().flatten())
+            all_regimes.extend(regimes.flatten())
+            all_regime_probs.extend(regime_probs)
+    
+    # Create results dataframe
+    df = pd.DataFrame({
+        'Date': all_dates,
+        'Return': all_returns,
+        'Regime': all_regimes
+    })
+    
+    # Sort by date
+    df = df.sort_values('Date').reset_index(drop=True)
+    
+    # Add regime probabilities
+    regime_probs_array = np.array(all_regime_probs)
+    for i in range(config.n_clusters):
+        df[f'Regime_{i}_Prob'] = regime_probs_array[:, i]
+    
+    # Detect regime changes
+    df['Regime_Change'] = df['Regime'].diff().fillna(0) != 0
+    df.loc[0, 'Regime_Change'] = df.loc[0, 'Regime'] == 1  # First entry
+    
+    # Calculate transaction costs
+    df['Transaction_Cost'] = np.where(df['Regime_Change'], transaction_cost * 100, 0)
+    
+    # Strategy returns (use previous day's regime for next day's return)
+    df['Strategy_Regime'] = df['Regime'].shift(1).fillna(0)
+    
+    # For 2-cluster: Regime 1 = Bull (long), Regime 0 = Bear (cash)
+    if config.n_clusters == 2:
+        df['Strategy_Return'] = df['Strategy_Regime'] * df['Return'] - df['Transaction_Cost']
+    else:
+        # For multiple clusters, assign weights
+        df['Strategy_Return'] = df['Strategy_Regime'] * df['Return'] / (config.n_clusters - 1) - df['Transaction_Cost']
+    
+    # Cumulative returns
+    df['Cum_Market'] = (1 + df['Return'] / 100).cumprod() - 1
+    df['Cum_Strategy'] = (1 + df['Strategy_Return'] / 100).cumprod() - 1
+    
+    # Calculate performance metrics
+    days = len(df)
+    years = days / 252
+    
+    market_return = df['Cum_Market'].iloc[-1] * 100
+    strategy_return = df['Cum_Strategy'].iloc[-1] * 100
+    
+    # Annualized returns
+    market_annual = ((1 + market_return / 100) ** (1 / years) - 1) * 100
+    strategy_annual = ((1 + strategy_return / 100) ** (1 / years) - 1) * 100
+    
+    # Maximum drawdown
+    df['Market_Peak'] = df['Cum_Market'].cummax()
+    df['Strategy_Peak'] = df['Cum_Strategy'].cummax()
+    df['Market_DD'] = (df['Cum_Market'] - df['Market_Peak']) / (1 + df['Market_Peak']) * 100
+    df['Strategy_DD'] = (df['Cum_Strategy'] - df['Strategy_Peak']) / (1 + df['Strategy_Peak']) * 100
+    
+    market_max_dd = df['Market_DD'].min()
+    strategy_max_dd = df['Strategy_DD'].min()
+    
+    # Sharpe ratio
+    risk_free = 0.02
+    market_vol = (df['Return'] / 100).std() * np.sqrt(252)
+    strategy_vol = (df['Strategy_Return'] / 100).std() * np.sqrt(252)
+    
+    market_sharpe = (market_annual / 100 - risk_free) / market_vol
+    strategy_sharpe = (strategy_annual / 100 - risk_free) / strategy_vol
+    
+    # Trading statistics
+    n_trades = df['Regime_Change'].sum()
+    long_ratio = df['Regime'].mean() * 100
+    total_cost = df['Transaction_Cost'].sum()
+    
+    performance = {
+        'cumulative_returns': {
+            'market': market_return,
+            'strategy': strategy_return
+        },
+        'annual_returns': {
+            'market': market_annual,
+            'strategy': strategy_annual
+        },
+        'max_drawdown': {
+            'market': market_max_dd,
+            'strategy': strategy_max_dd
+        },
+        'volatility': {
+            'market': market_vol * 100,
+            'strategy': strategy_vol * 100
+        },
+        'sharpe_ratio': {
+            'market': market_sharpe,
+            'strategy': strategy_sharpe
+        },
+        'trading_metrics': {
+            'long_ratio': long_ratio,
+            'n_trades': int(n_trades),
+            'total_cost': total_cost
+        }
+    }
+    
+    return df, performance
+
+
+def run_e2e_rolling_window(config) -> Tuple[pd.DataFrame, List[Dict], List[Dict]]:
+    """
+    Run rolling window training and evaluation for End-to-End Regime Mamba.
+    
+    Args:
+        config: Configuration object
+        
+    Returns:
+        Combined results dataframe, all performances, and model histories
+    """
+    # Load data
+    print("Loading data...")
+    data = pd.read_csv(config.data_path)
+    
+    # Results storage
+    all_results = []
+    all_performances = []
+    model_histories = []
+    
+    # Parse dates
+    current_date = datetime.strptime(config.start_date, '%Y-%m-%d')
+    end_date = datetime.strptime(config.end_date, '%Y-%m-%d')
+    
+    window_number = 1
+    
+    while current_date <= end_date:
+        print(f"\n{'='*60}")
+        print(f"Processing Window {window_number}")
+        print(f"{'='*60}")
+        
+        # Calculate date ranges
+        train_start = (current_date - relativedelta(years=config.total_window_years)).strftime('%Y-%m-%d')
+        train_end = (current_date - relativedelta(years=config.valid_years)).strftime('%Y-%m-%d')
+        valid_start = train_end
+        valid_end = current_date.strftime('%Y-%m-%d')
+        forward_start = valid_end
+        forward_end = (current_date + relativedelta(months=config.forward_months)).strftime('%Y-%m-%d')
+        
+        print(f"Training: {train_start} ~ {train_end}")
+        print(f"Validation: {valid_start} ~ {valid_end}")
+        print(f"Forward: {forward_start} ~ {forward_end}")
+        
+        # Create datasets
+        train_dataset = DateRangeRegimeMambaDataset(
+            data=data,
+            seq_len=config.seq_len,
+            start_date=train_start,
+            end_date=train_end,
+            config=config
+        )
+        
+        valid_dataset = DateRangeRegimeMambaDataset(
+            data=data,
+            seq_len=config.seq_len,
+            start_date=valid_start,
+            end_date=valid_end,
+            config=config
+        )
+        
+        forward_dataset = DateRangeRegimeMambaDataset(
+            data=data,
+            seq_len=config.seq_len,
+            start_date=forward_start,
+            end_date=forward_end,
+            config=config
+        )
+        
+        # Check data availability
+        if len(train_dataset) < 100 or len(valid_dataset) < 50:
+            print(f"Insufficient data, skipping window {window_number}")
+            current_date += relativedelta(months=config.forward_months)
+            window_number += 1
+            continue
+        
+        # Create data loaders
+        train_loader = DataLoader(
+            train_dataset,
+            batch_size=config.batch_size,
+            shuffle=True,
+            num_workers=2
+        )
+        
+        valid_loader = DataLoader(
+            valid_dataset,
+            batch_size=config.batch_size,
+            shuffle=False,
+            num_workers=2
+        )
+        
+        forward_loader = DataLoader(
+            forward_dataset,
+            batch_size=config.batch_size,
+            shuffle=False,
+            num_workers=2
+        )
+        
+        # Create window save directory
+        window_save_dir = os.path.join(config.results_dir, f'window_{window_number}')
+        os.makedirs(window_save_dir, exist_ok=True)
+        
+        # Create and train model
+        set_seed(config.seed)
+        model = create_e2e_model_from_config(config)
+        
+        model, history = train_e2e_regime_mamba(
+            model,
+            train_loader,
+            valid_loader,
+            config,
+            save_dir=window_save_dir
+        )
+        
+        # Evaluate on forward period
+        if len(forward_dataset) >= 10:
+            results_df, performance = evaluate_e2e_regime_strategy(
+                model,
+                forward_loader,
+                config,
+                transaction_cost=config.transaction_cost
+            )
+            
+            # Add metadata
+            results_df['window'] = window_number
+            results_df['forward_start'] = forward_start
+            results_df['forward_end'] = forward_end
+            
+            performance['window'] = window_number
+            performance['forward_start'] = forward_start
+            performance['forward_end'] = forward_end
+            
+            all_results.append(results_df)
+            all_performances.append(performance)
+            
+            # Save window results
+            results_df.to_csv(
+                os.path.join(window_save_dir, 'forward_results.csv'),
+                index=False
+            )
+            
+            with open(os.path.join(window_save_dir, 'performance.json'), 'w') as f:
+                json.dump(performance, f, indent=2, default=str)
+            
+            # Visualize
+            visualize_e2e_performance(
+                results_df,
+                f"Window {window_number}: {forward_start} ~ {forward_end}",
+                os.path.join(window_save_dir, 'performance.png')
+            )
+            
+            # Print performance summary
+            print(f"\nWindow {window_number} Performance:")
+            print(f"  Market Return: {performance['cumulative_returns']['market']:.2f}%")
+            print(f"  Strategy Return: {performance['cumulative_returns']['strategy']:.2f}%")
+            print(f"  Market Sharpe: {performance['sharpe_ratio']['market']:.2f}")
+            print(f"  Strategy Sharpe: {performance['sharpe_ratio']['strategy']:.2f}")
+        
+        # Save model history
+        model_histories.append({
+            'window': window_number,
+            'train_start': train_start,
+            'train_end': train_end,
+            'valid_start': valid_start,
+            'valid_end': valid_end,
+            'best_val_loss': min(history['valid_loss']) if history['valid_loss'] else None
+        })
+        
+        # Move to next window
+        current_date += relativedelta(months=config.forward_months)
+        window_number += 1
+    
+    # Combine and save all results
+    if all_results:
+        combined_results = pd.concat(all_results, ignore_index=True)
+        combined_results.to_csv(
+            os.path.join(config.results_dir, 'all_windows_results.csv'),
+            index=False
+        )
+        
+        with open(os.path.join(config.results_dir, 'all_performances.json'), 'w') as f:
+            json.dump(all_performances, f, indent=2, default=str)
+        
+        with open(os.path.join(config.results_dir, 'model_histories.json'), 'w') as f:
+            json.dump(model_histories, f, indent=2)
+        
+        # Visualize overall performance
+        visualize_all_windows(all_performances, config.results_dir)
+        
+        print(f"\n{'='*60}")
+        print(f"Rolling Window Training Complete!")
+        print(f"Processed {len(all_performances)} windows")
+        print(f"Results saved to: {config.results_dir}")
+        print(f"{'='*60}")
+        
+        return combined_results, all_performances, model_histories
+    
+    return None, None, None
+
+
+def visualize_e2e_performance(
+    results_df: pd.DataFrame,
+    title: str,
+    save_path: str
+):
+    """Visualize single window performance."""
+    fig, axes = plt.subplots(3, 1, figsize=(14, 12))
+    
+    # Cumulative returns
+    ax = axes[0]
+    ax.plot(results_df['Cum_Market'] * 100, label='Market', color='gray', linewidth=2)
+    ax.plot(results_df['Cum_Strategy'] * 100, label='Strategy', color='blue', linewidth=2)
+    ax.fill_between(
+        range(len(results_df)),
+        0,
+        results_df['Cum_Strategy'] * 100,
+        alpha=0.3,
+        color='blue'
+    )
+    ax.set_ylabel('Cumulative Return (%)')
+    ax.set_title(title)
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+    
+    # Regime signal
+    ax = axes[1]
+    ax.fill_between(
+        range(len(results_df)),
+        0,
+        results_df['Regime'],
+        alpha=0.7,
+        color='green',
+        label='Bull Regime'
+    )
+    ax.set_ylabel('Regime')
+    ax.set_title('Regime Signal (1=Bull, 0=Bear)')
+    ax.set_ylim(-0.1, 1.1)
+    ax.grid(True, alpha=0.3)
+    
+    # Regime probabilities (if available)
+    if 'Regime_1_Prob' in results_df.columns:
+        ax = axes[2]
+        ax.plot(results_df['Regime_1_Prob'], label='Bull Prob', color='green', alpha=0.7)
+        ax.plot(results_df['Regime_0_Prob'], label='Bear Prob', color='red', alpha=0.7)
+        ax.axhline(y=0.5, color='black', linestyle='--', alpha=0.5)
+        ax.set_ylabel('Probability')
+        ax.set_xlabel('Trading Days')
+        ax.set_title('Regime Probabilities')
+        ax.legend()
+        ax.grid(True, alpha=0.3)
+    else:
+        ax = axes[2]
+        ax.bar(range(len(results_df)), results_df['Transaction_Cost'], color='orange', alpha=0.7)
+        ax.set_ylabel('Cost (%)')
+        ax.set_xlabel('Trading Days')
+        ax.set_title('Transaction Costs')
+        ax.grid(True, alpha=0.3)
+    
+    plt.tight_layout()
+    plt.savefig(save_path, dpi=150)
+    plt.close()
+
+
+def visualize_all_windows(all_performances: List[Dict], save_dir: str):
+    """Visualize performance across all windows."""
+    windows = [p['window'] for p in all_performances]
+    market_returns = [p['cumulative_returns']['market'] for p in all_performances]
+    strategy_returns = [p['cumulative_returns']['strategy'] for p in all_performances]
+    market_sharpes = [p['sharpe_ratio']['market'] for p in all_performances]
+    strategy_sharpes = [p['sharpe_ratio']['strategy'] for p in all_performances]
+    
+    fig, axes = plt.subplots(2, 2, figsize=(14, 10))
+    
+    # Returns comparison
+    ax = axes[0, 0]
+    x = np.arange(len(windows))
+    width = 0.35
+    ax.bar(x - width/2, market_returns, width, label='Market', color='gray')
+    ax.bar(x + width/2, strategy_returns, width, label='Strategy', color='blue')
+    ax.set_xlabel('Window')
+    ax.set_ylabel('Cumulative Return (%)')
+    ax.set_title('Returns by Window')
+    ax.set_xticks(x)
+    ax.set_xticklabels(windows)
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+    
+    # Sharpe comparison
+    ax = axes[0, 1]
+    ax.bar(x - width/2, market_sharpes, width, label='Market', color='gray')
+    ax.bar(x + width/2, strategy_sharpes, width, label='Strategy', color='blue')
+    ax.set_xlabel('Window')
+    ax.set_ylabel('Sharpe Ratio')
+    ax.set_title('Sharpe Ratios by Window')
+    ax.set_xticks(x)
+    ax.set_xticklabels(windows)
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+    
+    # Cumulative performance
+    ax = axes[1, 0]
+    cum_market = np.cumprod([1 + r/100 for r in market_returns]) - 1
+    cum_strategy = np.cumprod([1 + r/100 for r in strategy_returns]) - 1
+    ax.plot(windows, cum_market * 100, 'o-', label='Market', color='gray')
+    ax.plot(windows, cum_strategy * 100, 'o-', label='Strategy', color='blue')
+    ax.set_xlabel('Window')
+    ax.set_ylabel('Cumulative Return (%)')
+    ax.set_title('Total Cumulative Performance')
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+    
+    # Win rate
+    ax = axes[1, 1]
+    wins = np.array(strategy_returns) > np.array(market_returns)
+    ax.bar(x, wins.astype(int), color=['green' if w else 'red' for w in wins])
+    ax.set_xlabel('Window')
+    ax.set_ylabel('Win (1) / Lose (0)')
+    ax.set_title(f'Win Rate: {wins.mean()*100:.1f}%')
+    ax.set_xticks(x)
+    ax.set_xticklabels(windows)
+    ax.grid(True, alpha=0.3)
+    
+    plt.tight_layout()
+    plt.savefig(os.path.join(save_dir, 'all_windows_comparison.png'), dpi=150)
+    plt.close()
+    
+    # Print summary
+    print("\n" + "="*60)
+    print("Overall Performance Summary")
+    print("="*60)
+    print(f"Total Windows: {len(windows)}")
+    print(f"Total Market Return: {cum_market[-1]*100:.2f}%")
+    print(f"Total Strategy Return: {cum_strategy[-1]*100:.2f}%")
+    print(f"Win Rate: {wins.mean()*100:.1f}%")
+    print(f"Avg Market Sharpe: {np.mean(market_sharpes):.2f}")
+    print(f"Avg Strategy Sharpe: {np.mean(strategy_sharpes):.2f}")
