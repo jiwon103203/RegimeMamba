@@ -1,0 +1,940 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
+"""
+Rolling Window Training Backtest with RL Regime Mamba
+
+Uses Reinforcement Learning (Actor-Critic) for end-to-end regime detection.
+Replaces Jump Model's Dynamic Programming with deep RL.
+
+Usage:
+    # Default PPO configuration
+    python rolling_window_train_backtest_rl.py --data_path data.csv
+    
+    # Conservative trading preset
+    python rolling_window_train_backtest_rl.py --data_path data.csv --rl_preset conservative
+    
+    # A2C algorithm
+    python rolling_window_train_backtest_rl.py --data_path data.csv --rl_algorithm a2c
+    
+    # Custom reward design
+    python rolling_window_train_backtest_rl.py --data_path data.csv --reward_type sharpe --transaction_penalty 0.002
+"""
+
+import os
+import sys
+import json
+import yaml
+import logging
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import torch
+from torch.utils.data import DataLoader
+from datetime import datetime
+from dateutil.relativedelta import relativedelta
+from tqdm import tqdm
+import argparse
+from collections import defaultdict
+from typing import Dict, List, Tuple, Any, Optional
+import traceback
+import copy
+
+from regime_mamba.utils.utils import set_seed
+from regime_mamba.config.rl_config import RLRegimeMambaConfig, RLConfigPresets
+from regime_mamba.data.dataset import DateRangeRegimeMambaDataset
+from regime_mamba.models.rl_regime_mamba import (
+    RLRegimeMamba, 
+    create_rl_model_from_config
+)
+from regime_mamba.train.rl_train import (
+    train_rl_regime_mamba,
+    evaluate_rl_regime_strategy,
+    run_rl_rolling_window
+)
+from regime_mamba.evaluate.smoothing import (
+    apply_regime_smoothing,
+    apply_confirmation_rule,
+    apply_minimum_holding_period
+)
+from regime_mamba.evaluate.strategy import evaluate_regime_strategy
+
+
+def json_serializer(obj):
+    """JSON serialization helper."""
+    if isinstance(obj, np.ndarray):
+        if obj.ndim == 0:
+            return obj.item()
+        return obj.tolist()
+    elif isinstance(obj, datetime):
+        return obj.isoformat()
+    elif isinstance(obj, pd.DataFrame) or isinstance(obj, pd.Series):
+        return obj.to_dict()
+    elif hasattr(obj, 'to_dict'):
+        return obj.to_dict()
+    elif isinstance(obj, (int, float, str, bool, type(None))):
+        return obj
+    else:
+        try:
+            return str(obj)
+        except:
+            return None
+
+
+def setup_logging(log_file=None, log_level=logging.INFO):
+    """Set up logging configuration."""
+    handlers = [logging.StreamHandler()]
+    if log_file:
+        handlers.append(logging.FileHandler(log_file))
+    
+    logging.basicConfig(
+        level=log_level,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        handlers=handlers
+    )
+    return logging.getLogger(__name__)
+
+
+def parse_args():
+    """Parse command-line arguments."""
+    parser = argparse.ArgumentParser(
+        description='Rolling Window Training Backtest with RL Regime Mamba'
+    )
+    
+    # Configuration
+    parser.add_argument('--config', type=str, help='Path to YAML config file')
+    parser.add_argument('--data_path', type=str, required=True, help='Data file path')
+    parser.add_argument('--results_dir', type=str, default='./rl_backtest_results',
+                        help='Results directory')
+    
+    # Date parameters
+    parser.add_argument('--start_date', type=str, default='1990-04-20',
+                        help='Backtest start date')
+    parser.add_argument('--end_date', type=str, default='2023-12-31',
+                        help='Backtest end date')
+    
+    # Period parameters
+    parser.add_argument('--total_window_years', type=int, default=20,
+                        help='Total data period (years)')
+    parser.add_argument('--train_years', type=int, default=16,
+                        help='Training period (years)')
+    parser.add_argument('--valid_years', type=int, default=4,
+                        help='Validation period (years)')
+    parser.add_argument('--forward_months', type=int, default=24,
+                        help='Forward testing period (months)')
+    
+    # Model parameters
+    parser.add_argument('--input_dim', type=int, default=4, help='Input dimension')
+    parser.add_argument('--d_model', type=int, default=8, help='Model dimension')
+    parser.add_argument('--d_state', type=int, default=32, help='State dimension')
+    parser.add_argument('--n_layers', type=int, default=4, help='Number of Mamba layers')
+    parser.add_argument('--dropout', type=float, default=0.1, help='Dropout rate')
+    parser.add_argument('--seq_len', type=int, default=60, help='Sequence length')
+    parser.add_argument('--batch_size', type=int, default=1024, help='Batch size')
+    
+    # RL algorithm selection
+    parser.add_argument('--rl_algorithm', type=str, default='ppo',
+                        choices=['ppo', 'a2c'],
+                        help='RL algorithm to use')
+    parser.add_argument('--rl_preset', type=str, default='default',
+                        choices=['default', 'aggressive', 'conservative', 'risk_adjusted',
+                                 'a2c', 'high_capacity', 'fast'],
+                        help='RL configuration preset')
+    
+    # Actor-Critic parameters
+    parser.add_argument('--actor_hidden_dims', type=int, nargs='+', default=[64, 32],
+                        help='Actor hidden dimensions')
+    parser.add_argument('--critic_hidden_dims', type=int, nargs='+', default=[64, 32],
+                        help='Critic hidden dimensions')
+    parser.add_argument('--actor_lr', type=float, default=3e-4, help='Actor learning rate')
+    parser.add_argument('--critic_lr', type=float, default=1e-3, help='Critic learning rate')
+    
+    # PPO parameters
+    parser.add_argument('--ppo_clip_epsilon', type=float, default=0.2,
+                        help='PPO clipping parameter')
+    parser.add_argument('--ppo_epochs', type=int, default=4,
+                        help='PPO update epochs')
+    parser.add_argument('--target_kl', type=float, default=0.01,
+                        help='Target KL divergence')
+    parser.add_argument('--gae_lambda', type=float, default=0.95,
+                        help='GAE lambda parameter')
+    
+    # Reward design
+    parser.add_argument('--reward_type', type=str, default='return',
+                        choices=['return', 'sharpe', 'sortino', 'calmar'],
+                        help='Reward calculation type')
+    parser.add_argument('--reward_scale', type=float, default=100.0,
+                        help='Reward scaling factor')
+    parser.add_argument('--transaction_penalty', type=float, default=0.001,
+                        help='Transaction cost penalty')
+    parser.add_argument('--holding_bonus', type=float, default=0.0001,
+                        help='Holding position bonus')
+    parser.add_argument('--drawdown_penalty', type=float, default=0.5,
+                        help='Drawdown penalty')
+    
+    # Exploration parameters
+    parser.add_argument('--entropy_coef', type=float, default=0.01,
+                        help='Entropy coefficient')
+    parser.add_argument('--gamma', type=float, default=0.99,
+                        help='Discount factor')
+    
+    # Training parameters
+    parser.add_argument('--max_epochs', type=int, default=100, help='Maximum epochs')
+    parser.add_argument('--patience', type=int, default=30, help='Early stopping patience')
+    parser.add_argument('--rollout_length', type=int, default=2048,
+                        help='Rollout length for PPO')
+    parser.add_argument('--transaction_cost', type=float, default=0.001,
+                        help='Transaction cost for evaluation')
+    
+    # Other parameters
+    parser.add_argument('--seed', type=int, default=42, help='Random seed')
+    parser.add_argument('--gpu_id', type=int, default=0, help='GPU ID (-1 for CPU)')
+    parser.add_argument('--direct_train', action='store_true',
+                        help='Direct training flag')
+    parser.add_argument('--scale', type=int, default=1, help='Dollar index scaling')
+    
+    return parser.parse_args()
+
+
+def load_config(args) -> RLRegimeMambaConfig:
+    """Load RL configuration from preset and command-line arguments."""
+    # Get preset config
+    preset_map = {
+        'default': RLConfigPresets.default,
+        'aggressive': RLConfigPresets.aggressive_trading,
+        'conservative': RLConfigPresets.conservative_trading,
+        'risk_adjusted': RLConfigPresets.risk_adjusted,
+        'a2c': RLConfigPresets.a2c_config,
+        'high_capacity': RLConfigPresets.high_capacity,
+        'fast': RLConfigPresets.fast_training
+    }
+    
+    config = preset_map[args.rl_preset]()
+    
+    # Load from YAML file if provided
+    if args.config and os.path.exists(args.config):
+        with open(args.config, 'r') as f:
+            yaml_config = yaml.safe_load(f)
+        for key, value in yaml_config.items():
+            if hasattr(config, key):
+                setattr(config, key, value)
+    
+    # Override with command-line arguments
+    arg_dict = vars(args)
+    for key, value in arg_dict.items():
+        if value is not None and hasattr(config, key):
+            setattr(config, key, value)
+    
+    # Set device
+    if args.gpu_id >= 0 and torch.cuda.is_available():
+        config.device = torch.device(f'cuda:{args.gpu_id}')
+    else:
+        config.device = torch.device('cpu')
+    
+    return config
+
+
+def prepare_output_directory(output_dir: str) -> tuple:
+    """Create output directory structure."""
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    result_dir = os.path.join(output_dir, f"rl_backtest_{timestamp}")
+    os.makedirs(result_dir, exist_ok=True)
+    
+    log_file = os.path.join(result_dir, "rl_backtest.log")
+    
+    return result_dir, log_file
+
+
+def save_config(config, output_dir: str):
+    """Save configuration to file."""
+    config_dict = {key: getattr(config, key) for key in dir(config) 
+                   if not key.startswith('__') and not callable(getattr(config, key))}
+    
+    if 'device' in config_dict:
+        config_dict['device'] = str(config_dict['device'])
+    
+    with open(os.path.join(output_dir, 'config.yaml'), 'w') as f:
+        yaml.dump(config_dict, f, default_flow_style=False)
+    
+    with open(os.path.join(output_dir, 'config.txt'), 'w') as f:
+        f.write("=== RL Regime Mamba Configuration ===\n\n")
+        
+        f.write("--- RL Algorithm ---\n")
+        f.write(f"algorithm: {config_dict.get('rl_algorithm', 'ppo')}\n\n")
+        
+        f.write("--- Reward Design ---\n")
+        reward_params = ['reward_type', 'reward_scale', 'transaction_penalty', 
+                        'holding_bonus', 'drawdown_penalty']
+        for key in reward_params:
+            if key in config_dict:
+                f.write(f"{key}: {config_dict[key]}\n")
+        f.write("\n")
+        
+        f.write("--- Other Parameters ---\n")
+        for key, value in sorted(config_dict.items()):
+            if key not in reward_params + ['device']:
+                f.write(f"{key}: {value}\n")
+
+
+def get_smoothing_methods() -> List[Tuple[str, Dict[str, Any]]]:
+    """Get list of smoothing methods to evaluate."""
+    return [
+        ('none', {}),
+        ('ma', {'window': 3}),
+        ('ma', {'window': 5}),
+        ('exp', {'window': 5}),
+        ('confirmation', {'days': 1}),
+        ('confirmation', {'days': 2}),
+        ('confirmation', {'days': 3}),
+        ('min_holding', {'days': 10}),
+        ('min_holding', {'days': 20}),
+        ('min_holding', {'days': 30}),
+        ('min_holding', {'days': 60}),
+    ]
+
+
+def apply_smoothing_method(
+    raw_predictions: np.ndarray, 
+    method_name: str, 
+    params: Dict[str, Any]
+) -> np.ndarray:
+    """Apply a specific smoothing method to raw predictions."""
+    if method_name == 'none':
+        return raw_predictions
+    elif method_name == 'ma':
+        window = params.get('window', 10)
+        return apply_regime_smoothing(
+            raw_predictions, method='ma', window=window
+        ).reshape(-1, 1)
+    elif method_name == 'exp':
+        window = params.get('window', 10)
+        return apply_regime_smoothing(
+            raw_predictions, method='exp', window=window
+        ).reshape(-1, 1)
+    elif method_name == 'confirmation':
+        days = params.get('days', 3)
+        return apply_confirmation_rule(
+            raw_predictions, confirmation_days=days
+        ).reshape(-1, 1)
+    elif method_name == 'min_holding':
+        days = params.get('days', 20)
+        return apply_minimum_holding_period(
+            raw_predictions, min_holding_days=days
+        ).reshape(-1, 1)
+    else:
+        return raw_predictions
+
+
+def predict_rl_regimes(
+    model: RLRegimeMamba,
+    dataloader: DataLoader,
+    config
+) -> Tuple[np.ndarray, np.ndarray, List]:
+    """Predict regimes using RL model."""
+    from collections import deque
+    
+    device = config.device
+    model.eval()
+    
+    all_predictions = []
+    all_returns = []
+    all_dates = []
+    
+    prev_action = None
+    return_history = deque(maxlen=getattr(config, 'return_history_len', 5))
+    
+    with torch.no_grad():
+        for x, y, dates, returns in dataloader:
+            x = x.to(device)
+            batch_size = x.size(0)
+            
+            if prev_action is None:
+                current_position = torch.zeros(batch_size, device=device)
+            else:
+                current_position = torch.full((batch_size,), prev_action, device=device, dtype=torch.float)
+            
+            if len(return_history) > 0:
+                return_hist_tensor = torch.tensor(
+                    list(return_history), device=device
+                ).unsqueeze(0).repeat(batch_size, 1)
+                if return_hist_tensor.size(1) < getattr(config, 'return_history_len', 5):
+                    padding = torch.zeros(
+                        batch_size,
+                        getattr(config, 'return_history_len', 5) - return_hist_tensor.size(1),
+                        device=device
+                    )
+                    return_hist_tensor = torch.cat([padding, return_hist_tensor], dim=1)
+            else:
+                return_hist_tensor = torch.zeros(
+                    batch_size, getattr(config, 'return_history_len', 5), device=device
+                )
+            
+            predictions = model.predict_regimes(
+                x, current_position, return_hist_tensor, deterministic=True
+            )
+            
+            all_predictions.extend(predictions.cpu().numpy().flatten())
+            all_returns.extend(returns.numpy().flatten())
+            all_dates.extend(dates)
+            
+            for r in returns.numpy():
+                return_history.append(r)
+            
+            prev_action = int(np.bincount(predictions.cpu().numpy().flatten()).argmax())
+    
+    return np.array(all_predictions), np.array(all_returns), all_dates
+
+
+def evaluate_rl_method(
+    model: RLRegimeMamba,
+    data: pd.DataFrame,
+    method_info: Tuple[str, Dict[str, Any]],
+    config,
+    forward_period: Dict[str, str]
+) -> Optional[Dict[str, Any]]:
+    """Evaluate a single smoothing method for RL model."""
+    method_name, params = method_info
+    forward_start, forward_end = forward_period['start'], forward_period['end']
+    
+    try:
+        forward_dataset = DateRangeRegimeMambaDataset(
+            data=data,
+            seq_len=config.seq_len,
+            start_date=forward_start,
+            end_date=forward_end,
+            config=config
+        )
+        
+        if len(forward_dataset) < 10:
+            return None
+        
+        forward_loader = DataLoader(
+            forward_dataset,
+            batch_size=config.batch_size,
+            shuffle=False,
+            num_workers=2
+        )
+        
+        # Get RL regime predictions
+        raw_predictions, true_returns, dates = predict_rl_regimes(
+            model, forward_loader, config
+        )
+        
+        # Apply smoothing
+        smoothed_predictions = apply_smoothing_method(raw_predictions, method_name, params)
+        
+        # Evaluate strategy
+        results_df, performance = evaluate_regime_strategy(
+            smoothed_predictions,
+            true_returns,
+            dates,
+            transaction_cost=config.transaction_cost,
+            config=config
+        )
+        
+        if results_df is not None and performance is not None:
+            results_df['smoothing_method'] = method_name
+            for param_name, param_value in params.items():
+                results_df[f'smoothing_{param_name}'] = param_value
+            
+            results_df['raw_regime'] = raw_predictions.flatten()
+            
+            raw_trades = (np.diff(raw_predictions.flatten()) != 0).sum() + (raw_predictions[0] == 1)
+            smoothed_trades = (np.diff(smoothed_predictions.flatten()) != 0).sum() + (smoothed_predictions[0] == 1)
+            
+            performance['smoothing_method'] = method_name
+            for param_name, param_value in params.items():
+                performance[f'smoothing_{param_name}'] = param_value
+            performance['raw_trades'] = int(raw_trades)
+            performance['smoothed_trades'] = int(smoothed_trades)
+            performance['trade_reduction'] = int(raw_trades - smoothed_trades)
+            performance['trade_reduction_pct'] = ((raw_trades - smoothed_trades) / raw_trades * 100) if raw_trades > 0 else 0
+            
+            param_str = '_'.join([f"{k}={v}" for k, v in params.items()]) if params else "default"
+            method_id = f"{method_name}_{param_str}" if params else method_name
+            
+            return {
+                'method_id': method_id,
+                'method_name': method_name,
+                'params': params,
+                'df': results_df,
+                'performance': performance,
+                'cum_return': performance['cumulative_returns']['strategy'],
+                'n_trades': performance['trading_metrics']['number_of_trades'],
+                'sharpe': performance['sharpe_ratio']['strategy']
+            }
+        
+        return None
+        
+    except Exception as e:
+        logging.error(f"[RL] Error evaluating method {method_name}: {str(e)}")
+        traceback.print_exc()
+        return None
+
+
+def evaluate_rl_smoothing_methods(
+    model: RLRegimeMamba,
+    data: pd.DataFrame,
+    config,
+    forward_period: Dict[str, str],
+    window_results_dir: str
+) -> Dict[str, Dict[str, Any]]:
+    """Evaluate multiple smoothing methods for RL model."""
+    smoothing_methods = get_smoothing_methods()
+    all_methods_results = {}
+    
+    for method_info in tqdm(smoothing_methods, desc="[RL] Evaluating methods"):
+        result = evaluate_rl_method(model, data, method_info, config, forward_period)
+        
+        if result:
+            all_methods_results[result['method_id']] = result
+            
+            method_dir = os.path.join(window_results_dir, result['method_id'])
+            os.makedirs(method_dir, exist_ok=True)
+            result['df'].to_csv(os.path.join(method_dir, 'results.csv'), index=False)
+            
+            with open(os.path.join(method_dir, 'performance.json'), 'w') as f:
+                json.dump(result['performance'], f, default=json_serializer, indent=4)
+    
+    # Create comparison visualization
+    if all_methods_results:
+        visualize_methods_comparison(
+            all_methods_results,
+            os.path.join(window_results_dir, 'methods_comparison.png'),
+            forward_period
+        )
+    
+    return all_methods_results
+
+
+def visualize_methods_comparison(
+    methods_results: Dict[str, Dict[str, Any]],
+    save_path: str,
+    forward_period: Dict[str, str]
+):
+    """Visualize comparison of smoothing methods."""
+    plt.figure(figsize=(15, 10))
+    
+    plt.subplot(2, 1, 1)
+    
+    first_method = list(methods_results.keys())[0]
+    plt.plot(
+        methods_results[first_method]['df']['Cum_Market'] * 100, 
+        label='Market', 
+        color='gray', 
+        linestyle='--'
+    )
+    
+    for method_id, result in methods_results.items():
+        plt.plot(result['df']['Cum_Strategy'] * 100, label=method_id)
+    
+    plt.title(f"[RL] Comparison of Smoothing Methods ({forward_period['start']} to {forward_period['end']})")
+    plt.ylabel('Cumulative Returns (%)')
+    plt.grid(True, alpha=0.3)
+    plt.legend()
+    
+    plt.subplot(2, 1, 2)
+    
+    method_ids = list(methods_results.keys())
+    returns = [methods_results[method_id]['cum_return'] for method_id in method_ids]
+    trades = [methods_results[method_id]['n_trades'] for method_id in method_ids]
+    
+    ax1 = plt.gca()
+    ax2 = ax1.twinx()
+    
+    bars1 = ax1.bar(np.arange(len(method_ids)) - 0.2, returns, width=0.4, color='blue', alpha=0.7)
+    ax1.set_ylabel('Returns (%)', color='blue')
+    ax1.tick_params(axis='y', colors='blue')
+    
+    bars2 = ax2.bar(np.arange(len(method_ids)) + 0.2, trades, width=0.4, color='red', alpha=0.7)
+    ax2.set_ylabel('Number of Trades', color='red')
+    ax2.tick_params(axis='y', colors='red')
+    
+    plt.xticks(np.arange(len(method_ids)), method_ids, rotation=45, ha='right')
+    plt.title('Returns vs. Number of Trades by Method')
+    plt.grid(True, alpha=0.3)
+    
+    plt.tight_layout()
+    plt.savefig(save_path)
+    plt.close()
+
+
+def visualize_final_comparison(
+    combined_results: Dict[str, Dict[str, Any]],
+    save_dir: str
+) -> Dict[str, Any]:
+    """Visualize final comparison across all windows."""
+    all_methods = sorted(list(combined_results.keys()))
+    all_windows = sorted(list(set(combined_results[all_methods[0]]['window'])))
+    
+    method_metrics = {}
+    for method in all_methods:
+        returns = [combined_results[method]['returns'][window] for window in all_windows]
+        trades = [combined_results[method]['trades'][window] for window in all_windows]
+        sharpes = [combined_results[method]['sharpes'][window] for window in all_windows]
+        
+        method_metrics[method] = {
+            'avg_return': np.mean(returns),
+            'avg_trades': np.mean(trades),
+            'avg_sharpe': np.mean(sharpes),
+            'returns': returns,
+            'cum_returns': np.cumsum(returns),
+            'windows': all_windows
+        }
+    
+    sorted_methods = sorted(all_methods, key=lambda x: method_metrics[x]['avg_return'], reverse=True)
+    
+    # Visualization
+    plt.figure(figsize=(15, 12))
+    
+    plt.subplot(2, 2, 1)
+    plt.bar(
+        range(len(sorted_methods)), 
+        [method_metrics[method]['avg_return'] for method in sorted_methods], 
+        color='blue', 
+        alpha=0.7
+    )
+    plt.xticks(range(len(sorted_methods)), sorted_methods, rotation=45, ha='right')
+    plt.title('[RL] Average Returns by Method (%)')
+    plt.ylabel('Average Return (%)')
+    plt.grid(True, alpha=0.3)
+    
+    plt.subplot(2, 2, 2)
+    plt.bar(
+        range(len(sorted_methods)), 
+        [method_metrics[method]['avg_trades'] for method in sorted_methods], 
+        color='red', 
+        alpha=0.7
+    )
+    plt.xticks(range(len(sorted_methods)), sorted_methods, rotation=45, ha='right')
+    plt.title('[RL] Average Trades by Method')
+    plt.ylabel('Average Trades')
+    plt.grid(True, alpha=0.3)
+    
+    plt.subplot(2, 2, 3)
+    plt.bar(
+        range(len(sorted_methods)), 
+        [method_metrics[method]['avg_sharpe'] for method in sorted_methods], 
+        color='green', 
+        alpha=0.7
+    )
+    plt.xticks(range(len(sorted_methods)), sorted_methods, rotation=45, ha='right')
+    plt.title('[RL] Average Sharpe Ratio by Method')
+    plt.ylabel('Average Sharpe Ratio')
+    plt.grid(True, alpha=0.3)
+    
+    plt.subplot(2, 2, 4)
+    for method in sorted_methods[:5]:  # Top 5 methods
+        plt.plot(
+            all_windows, 
+            method_metrics[method]['cum_returns'], 
+            marker='o', 
+            markersize=4, 
+            label=method
+        )
+    plt.title('[RL] Cumulative Returns (Top 5 Methods)')
+    plt.xlabel('Window')
+    plt.ylabel('Cumulative Return (%)')
+    plt.legend()
+    plt.grid(True)
+    
+    plt.tight_layout()
+    plt.savefig(os.path.join(save_dir, 'overall_metrics_comparison.png'))
+    plt.close()
+    
+    # Create summary
+    summary = {
+        'methods': {},
+        'best_methods': {
+            'by_return': sorted_methods[0],
+            'by_sharpe': sorted(all_methods, key=lambda x: method_metrics[x]['avg_sharpe'], reverse=True)[0],
+        },
+        'windows': len(all_windows),
+        'total_methods': len(all_methods)
+    }
+    
+    for method in all_methods:
+        summary['methods'][method] = {
+            'avg_return': float(method_metrics[method]['avg_return']),
+            'avg_trades': float(method_metrics[method]['avg_trades']),
+            'avg_sharpe': float(method_metrics[method]['avg_sharpe']),
+        }
+    
+    with open(os.path.join(save_dir, 'methods_summary.json'), 'w') as f:
+        json.dump(summary, f, default=json_serializer, indent=4)
+    
+    logging.info("\n===== [RL] Smoothing Method Performance Summary =====")
+    logging.info("Top methods by average return:")
+    for i, method in enumerate(sorted_methods[:3]):
+        logging.info(f"  {i+1}. {method}: {method_metrics[method]['avg_return']:.2f}%")
+    
+    return summary
+
+
+def create_window_schedule(config, start_from_window: int = 1) -> List[Dict[str, Any]]:
+    """Create window schedule for rolling window backtest."""
+    window_schedule = []
+    
+    current_date = datetime.strptime(config.start_date, '%Y-%m-%d')
+    end_date = datetime.strptime(config.end_date, '%Y-%m-%d')
+    
+    window_number = 1
+    
+    while current_date <= end_date:
+        train_start = (current_date - relativedelta(years=config.total_window_years)).strftime('%Y-%m-%d')
+        train_end = (current_date - relativedelta(years=config.valid_years)).strftime('%Y-%m-%d')
+        
+        valid_start = train_end
+        valid_end = current_date.strftime('%Y-%m-%d')
+        
+        forward_start = current_date.strftime('%Y-%m-%d')
+        forward_end = (current_date + relativedelta(months=config.forward_months)).strftime('%Y-%m-%d')
+        
+        if window_number >= start_from_window:
+            window_schedule.append({
+                'window_number': window_number,
+                'train_period': {'start': train_start, 'end': train_end},
+                'valid_period': {'start': valid_start, 'end': valid_end},
+                'forward_period': {'start': forward_start, 'end': forward_end},
+                'current_date': current_date.strftime('%Y-%m-%d')
+            })
+        
+        current_date += relativedelta(months=config.forward_months)
+        window_number += 1
+    
+    return window_schedule
+
+
+def train_rl_model_for_window(
+    config,
+    train_start: str,
+    train_end: str,
+    valid_start: str,
+    valid_end: str,
+    data: pd.DataFrame,
+    window_number: int = 1
+) -> Optional[RLRegimeMamba]:
+    """Train RL model for a specific window."""
+    print(f"\n[RL] Training period: {train_start} ~ {train_end}")
+    print(f"[RL] Validation period: {valid_start} ~ {valid_end}")
+    print(f"[RL] Algorithm: {config.rl_algorithm}, Reward: {config.reward_type}")
+    
+    # Create datasets
+    train_dataset = DateRangeRegimeMambaDataset(
+        data=data,
+        seq_len=config.seq_len,
+        start_date=train_start,
+        end_date=train_end,
+        config=config
+    )
+    
+    valid_dataset = DateRangeRegimeMambaDataset(
+        data=data,
+        seq_len=config.seq_len,
+        start_date=valid_start,
+        end_date=valid_end,
+        config=config
+    )
+    
+    if len(train_dataset) < 100 or len(valid_dataset) < 50:
+        print(f"[RL] Warning: Insufficient data. Train: {len(train_dataset)}, Valid: {len(valid_dataset)}")
+        return None
+    
+    print(f"[RL] Train samples: {len(train_dataset)}, Valid samples: {len(valid_dataset)}")
+    
+    train_loader = DataLoader(
+        train_dataset,
+        batch_size=config.batch_size,
+        shuffle=False,
+        num_workers=2
+    )
+    
+    valid_loader = DataLoader(
+        valid_dataset,
+        batch_size=config.batch_size,
+        shuffle=False,
+        num_workers=2
+    )
+    
+    window_save_dir = os.path.join(config.results_dir, f'window_{window_number}', 'model')
+    os.makedirs(window_save_dir, exist_ok=True)
+    
+    model = create_rl_model_from_config(config)
+    
+    model, history = train_rl_regime_mamba(
+        model,
+        train_loader,
+        valid_loader,
+        config,
+        save_dir=window_save_dir
+    )
+    
+    best_valid_reward = max(history['valid_rewards']) if history['valid_rewards'] else float('-inf')
+    print(f"[RL] Training complete. Best validation reward: {best_valid_reward:.4f}")
+    
+    return model
+
+
+def run_rl_rolling_window_backtest(
+    config,
+    data: pd.DataFrame,
+    logger: logging.Logger
+) -> Dict[str, Any]:
+    """Run rolling window backtest with RL model."""
+    
+    combined_results = defaultdict(lambda: {
+        'window': [],
+        'returns': {},
+        'trades': {},
+        'sharpes': {},
+        'performances': []
+    })
+    
+    window_schedule = create_window_schedule(config)
+    
+    if not window_schedule:
+        logger.info("No windows to process")
+        return {'combined_results': combined_results, 'summary': None}
+    
+    total_windows = len(window_schedule)
+    logger.info(f"[RL] Processing {total_windows} windows")
+    logger.info(f"[RL] Algorithm: {config.rl_algorithm}, Reward: {config.reward_type}")
+    
+    for i, window_info in enumerate(window_schedule):
+        window_number = window_info['window_number']
+        logger.info(f"\n=== [RL] Window {window_number} ({i+1}/{total_windows}) ===")
+        
+        window_dir = os.path.join(config.results_dir, f"window_{window_number}")
+        os.makedirs(window_dir, exist_ok=True)
+        
+        logger.info(f"Training: {window_info['train_period']['start']} ~ {window_info['train_period']['end']}")
+        logger.info(f"Validation: {window_info['valid_period']['start']} ~ {window_info['valid_period']['end']}")
+        logger.info(f"Forward: {window_info['forward_period']['start']} ~ {window_info['forward_period']['end']}")
+        
+        try:
+            # Train RL model
+            logger.info("[RL] Training model...")
+            model = train_rl_model_for_window(
+                config,
+                window_info['train_period']['start'],
+                window_info['train_period']['end'],
+                window_info['valid_period']['start'],
+                window_info['valid_period']['end'],
+                data,
+                window_number=window_number
+            )
+            
+            if model is None:
+                logger.warning("[RL] Model training failed, skipping window")
+                continue
+            
+            # Evaluate smoothing methods
+            logger.info("[RL] Evaluating smoothing methods...")
+            methods_results = evaluate_rl_smoothing_methods(
+                model,
+                data,
+                config,
+                window_info['forward_period'],
+                window_dir
+            )
+            
+            # Save results
+            if methods_results:
+                logger.info(f"[RL] Found {len(methods_results)} valid results")
+                for method_id, result in methods_results.items():
+                    combined_results[method_id]['window'].append(window_number)
+                    combined_results[method_id]['returns'][window_number] = result['cum_return']
+                    combined_results[method_id]['trades'][window_number] = result['n_trades']
+                    combined_results[method_id]['sharpes'][window_number] = result['sharpe']
+                    combined_results[method_id]['performances'].append(copy.deepcopy(result['performance']))
+            
+        except Exception as e:
+            logger.error(f"[RL] Error processing window {window_number}: {str(e)}")
+            logger.error(traceback.format_exc())
+    
+    # Create final comparison
+    logger.info("[RL] Creating final comparison...")
+    if combined_results:
+        summary = visualize_final_comparison(combined_results, config.results_dir)
+        
+        result_data = {}
+        for method, result in combined_results.items():
+            result_data[method] = {
+                'window': result['window'],
+                'returns': {str(k): v for k, v in result['returns'].items()},
+                'trades': {str(k): v for k, v in result['trades'].items()},
+                'sharpes': {str(k): v for k, v in result['sharpes'].items()}
+            }
+        
+        with open(os.path.join(config.results_dir, 'combined_results.json'), 'w') as f:
+            json.dump(result_data, f, default=json_serializer, indent=4)
+        
+        logger.info(f"[RL] Backtest complete with {len(result_data)} methods across {len(window_schedule)} windows")
+        return {'combined_results': combined_results, 'summary': summary}
+    else:
+        logger.warning("[RL] No results to compare")
+        return {'combined_results': combined_results, 'summary': None}
+
+
+def main():
+    """Main execution function."""
+    try:
+        import matplotlib as mpl
+        mpl.rcParams['font.family'] = 'serif'
+        
+        args = parse_args()
+        
+        print(f"\n{'='*60}")
+        print(f"Mode: RL Regime Mamba ({args.rl_algorithm.upper()})")
+        print(f"Preset: {args.rl_preset}")
+        print(f"Reward Type: {args.reward_type}")
+        print(f"{'='*60}\n")
+        
+        # Prepare output directory
+        result_dir, log_file = prepare_output_directory(args.results_dir)
+        
+        # Set up logging
+        logger = setup_logging(log_file=log_file)
+        logger.info(f"[RL] Starting rolling window backtest")
+        
+        # Load configuration
+        try:
+            config = load_config(args)
+            config.results_dir = result_dir
+            logger.info("[RL] Configuration loaded successfully")
+            logger.info(f"[RL] Algorithm: {config.rl_algorithm}")
+            logger.info(f"[RL] Reward: {config.reward_type}, Scale: {config.reward_scale}")
+            logger.info(f"[RL] Transaction Penalty: {config.transaction_penalty}")
+        except Exception as e:
+            logger.error(f"[RL] Error loading configuration: {str(e)}")
+            sys.exit(1)
+        
+        # Save configuration
+        save_config(config, result_dir)
+        logger.info(f"[RL] Configuration saved to {result_dir}")
+        
+        # Set random seed
+        set_seed(config.seed)
+        logger.info(f"[RL] Random seed set to {config.seed}")
+        
+        # Load data
+        try:
+            logger.info(f"[RL] Loading data from {config.data_path}")
+            data = pd.read_csv(config.data_path)
+            logger.info(f"[RL] Loaded data with {len(data)} rows")
+        except Exception as e:
+            logger.error(f"[RL] Error loading data: {str(e)}")
+            sys.exit(1)
+        
+        # Run backtest
+        results = run_rl_rolling_window_backtest(config, data, logger)
+        
+        logger.info(f"[RL] Backtest complete! Results saved to {result_dir}")
+        
+    except Exception as e:
+        logging.error(f"[RL] Unexpected error: {str(e)}", exc_info=True)
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()
