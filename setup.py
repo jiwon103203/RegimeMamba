@@ -26,6 +26,14 @@ setup(
         "bayesian-optimization>=1.2.0",
         "scipy>=1.5.0",
         "mamba-ssm>=1.0.1",
-        "causal-conv1d>=1.4.0"
+        "causal-conv1d>=1.4.0",
+        "jumpmodels>=0.1.1",
+        "pyyaml>=5.1",
+        "python-dateutil>=2.8"
     ],
+    extras_require={
+        # Jump Model regime pipeline (regime_jm, run_pipeline.py); see requirements-jm.txt
+        "jm": ["jumpmodels>=0.1.1", "hmmlearn>=0.3", "openpyxl>=3.1"],
+    },
+    py_modules=["run_pipeline"],
 )
