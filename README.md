@@ -57,6 +57,43 @@ tests/test_pipeline.py         # regime_jm tests (causality rules)
 Mamba scripts are run from the repository root, e.g.
 `python scripts/rolling_window_train_backtest.py --config regime_mamba/config/paper_config.yaml`.
 
+## Installation (Regime Mamba)
+
+The Mamba part (`regime_mamba/`, `scripts/`) depends on [`mamba-ssm`](https://github.com/state-spaces/mamba) and
+[`causal-conv1d`](https://github.com/Dao-AILab/causal-conv1d), which ship custom CUDA kernels and officially
+support **Linux + NVIDIA GPU** only. There is no CPU fallback for the Mamba layers.
+
+### Linux
+
+Requires an NVIDIA GPU, a CUDA toolkit (`nvcc`) matching your PyTorch build, and Python 3.10–3.12.
+
+```bash
+pip install torch==2.5.1 --index-url https://download.pytorch.org/whl/cu124
+pip install packaging ninja wheel setuptools
+pip install causal-conv1d==1.5.0.post8 --no-build-isolation
+pip install mamba-ssm==2.2.4 --no-build-isolation
+pip install -e .
+# LaTeX is used by jumpmodels' matplotlib settings
+sudo apt-get install -y texlive-latex-base texlive-latex-extra texlive-fonts-recommended dvipng cm-super
+```
+
+### Windows
+
+`mamba-ssm` has no official Windows builds, but there are several ways to run this project on a Windows PC:
+
+| Option | Difficulty | Notes |
+|--------|-----------|-------|
+| **WSL2 + Ubuntu** (recommended) | Easy | Uses the Linux steps above on your Windows NVIDIA GPU, no code changes |
+| **Docker Desktop** (WSL2 backend) | Easy–medium | Reproducible container with `--gpus all` |
+| **Native Windows build** | Hard | Needs MSVC, the CUDA toolkit and `triton-windows`, plus building `causal-conv1d`/`mamba-ssm` from source with a small patch |
+| **Remote Linux / Colab** | Easy | For machines without an NVIDIA GPU |
+
+See **[docs/WINDOWS_SETUP.md](./docs/WINDOWS_SETUP.md)** for step-by-step instructions, version pinning,
+Windows-specific runtime notes (LaTeX, multiprocessing) and troubleshooting.
+
+The Jump Model pipeline below (`regime_jm`, `run_pipeline.py`) needs neither torch nor `mamba-ssm`,
+so it runs natively on Windows with `pip install -r requirements-jm.txt`.
+
 ## Jump Model 국면 파이프라인 (`regime_jm`)
 
 입구는 `run_pipeline.py`의 `run_pipeline()`이고, `main()`이 CLI를 처리합니다.

@@ -6,7 +6,7 @@ setup(
     author="Anonymous",
     author_email="Anonymous@gmail.com",
     description="Regime Mamba: Regime Switch Detection in Financial Time Series via Mamba–Jump Hybrid Deep Model",
-    long_description=open("README.md").read(),
+    long_description=open("README.md", encoding="utf-8").read(),
     long_description_content_type="text/markdown",
     url="https://anonymous.4open.science/r/RegimeMamba-998F",
     packages=find_packages(),
