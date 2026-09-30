@@ -123,6 +123,16 @@ class RollingWindowTrainConfig(RollingWindowConfig):
         self.filter_method = 'minimum_holding'
         self.min_holding_days = 20
 
+        # Jump model feature extractor options (read by ModifiedJumpModel)
+        self.vae = False
+        self.freeze_feature_extractor = True
+
+        # Runtime options (set from the command line by the scripts)
+        self.max_workers = None
+        self.gpu_id = 0
+        self.enable_checkpointing = False
+        self.checkpoint_interval = 1
+
         self.results_dir = './rolling_window_train_results'
         os.makedirs(self.results_dir, exist_ok=True)
 
