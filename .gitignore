@@ -1,0 +1,15 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+*.egg-info/
+build/
+dist/
+
+# pipeline / backtest outputs
+out/
+train_backtest_results/
+e2e_backtest_results/
+rl_backtest_results/
+rolling_window_results/
+rolling_window_train_results/
+train_results/

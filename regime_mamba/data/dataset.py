@@ -226,7 +226,8 @@ def create_dataloaders(config):
     return train_loader, valid_loader, test_loader
 
 def create_date_range_dataloader(data=None, path=None, seq_len=128, batch_size=64, 
-                                start_date=None, end_date=None, shuffle=False, num_workers=2):
+                                start_date=None, end_date=None, shuffle=False, num_workers=2,
+                                config=None):
     """
     Utility function to create dataloader based on date range
     
@@ -239,6 +240,7 @@ def create_date_range_dataloader(data=None, path=None, seq_len=128, batch_size=6
         end_date: End date
         shuffle: Whether to shuffle data
         num_workers: Number of data loading workers
+        config: Configuration object (required by DateRangeRegimeMambaDataset)
         
     Returns:
         dataloader: Created dataloader
@@ -248,7 +250,8 @@ def create_date_range_dataloader(data=None, path=None, seq_len=128, batch_size=6
         path=path,
         seq_len=seq_len,
         start_date=start_date,
-        end_date=end_date
+        end_date=end_date,
+        config=config
     )
     
     dataloader = DataLoader(
