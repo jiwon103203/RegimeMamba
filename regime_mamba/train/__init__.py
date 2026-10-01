@@ -1,3 +1,3 @@
-from .train import train_with_early_stopping, train_regime_mamba
+from .e2e_train import train_e2e_regime_mamba
 
-__all__ = ['train_with_early_stopping', 'train_regime_mamba']
+__all__ = ['train_e2e_regime_mamba']

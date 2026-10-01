@@ -22,7 +22,7 @@ from regime_mamba.features import (FEATURE_PREFIX, get_feature_columns, prepare_
 
 def make_config(**kw):
     base = dict(input_dim=4, feature_set=None, extra_feature_cols=[], feature_return_col="returns",
-                feature_warmup=252, standardize_features=True, returns_pct=None, feature_cols=None, lstm=False)
+                feature_warmup=252, standardize_features=True, returns_pct=None, feature_cols=None)
     base.update(kw)
     return SimpleNamespace(**base)
 
@@ -99,8 +99,6 @@ def test_invalid_settings_raise():
         prepare_feature_set(make_data(), make_config(feature_set="none"))
     with pytest.raises(ValueError):
         prepare_feature_set(make_data(), make_config(feature_set="paper", extra_feature_cols=["VIX"]))
-    with pytest.raises(ValueError):
-        prepare_feature_set(make_data(), make_config(feature_set="paper", lstm=True))
     with pytest.raises(ValueError):
         get_feature_columns(make_config(feature_set="paper"))
 

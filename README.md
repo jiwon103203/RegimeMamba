@@ -19,8 +19,12 @@ regime_jm/
   weights.py             6) sjm 피처 가중 비중
   regime_episodes.py        bear 에피소드 · 유사 국면 · 종료 시나리오
   plotting.py            7) 그림
-regime_mamba/            Mamba 모델(models/mamba_model.py)과 연구용 변형 (K-Means, E2E, RL)
-scripts/                 regime_mamba 연구용 롤링 백테스트 스크립트
+regime_mamba/
+  models/mamba_model.py  Mamba 백본 (TimeSeriesMamba, --encoder mamba 가 사용)
+  models/e2e_regime_mamba.py, train/e2e_train.py, config/e2e_config.py
+                         End-to-End Regime Mamba (Mamba + 미분 가능한 jump penalty 로 국면을 직접 학습)
+  data/, evaluate/       E2E 용 데이터셋 · 롤링 윈도우 · 스무딩 비교
+scripts/e2e_backtest.py  E2E 롤링 백테스트 진입점
 tests/                   인과성·파이프라인 테스트
 ```
 
@@ -68,6 +72,14 @@ python run_pipeline.py data.csv --inference                            # 현재 
 | `current_state.json`, `run_config.json`, `*.png` | 현재 국면, 실행 설정, 그림 |
 
 `--inference`는 최근 반기 시작점 직전 학습창으로 한 번만 학습하고 현재 반기만 추론합니다 (`inference_*.csv`).
+
+## End-to-End Regime Mamba (`scripts/e2e_backtest.py`)
+
+Jump Model 없이 Mamba가 국면 확률을 직접 출력하도록 학습하는 실험용 모델입니다 (Gumbel-Softmax, jump penalty · 분리 · 2단계 엔트로피 손실). `[학습 train_years][검증 valid_years]` 창을 `forward_months`씩 옮기며 학습하고, 다음 구간에서 스무딩 방법별 전략 성과를 비교합니다.
+
+```bash
+python scripts/e2e_backtest.py --data_path data.csv --feature_set paper --e2e_preset balanced   # CSV: Date, returns, target_returns_1
+```
 
 ## 인과성 규칙 (`tests/`에서 검증)
 
