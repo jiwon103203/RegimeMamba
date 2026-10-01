@@ -6,6 +6,7 @@
   │  data_io.py         1) 로드·정제 → 초과수익률 (+ 벤치마크 차감 rel_ret)
   │  features.py        2) EWM downside deviation · Sortino (+ extra / 커스텀 변수)
   │  rolling.py         3) 6개월마다 재추정(3000일 학습창) + 사이 구간 온라인 추론
+  │  mamba_encoder.py      (--model mamba) 재추정마다 Mamba 학습 → hidden 벡터를 Jump Model 입력으로 (GPU)
   │  backtest.py        4) 0/1 전략 백테스트 · 성과표 · 거래 지연 로버스트니스
   │  hmm_benchmark.py   5) HMM 벤치마크와 비교 (--hmm)
   │  weights.py         6) 변수 유형별 가중 비중 (sjm)
@@ -18,6 +19,7 @@
     python run_pipeline.py sector.csv --relative-benchmark kospi.csv --backtest-ret relative
     python run_pipeline.py data.csv --extra-features macro.csv:VIX:log macro.csv:USDKRW:logdiff
     python run_pipeline.py data.csv --inference
+    python run_pipeline.py data.csv --model mamba --feature-set example --device cuda:0
 """
 
 from __future__ import annotations
@@ -32,7 +34,7 @@ from typing import Any, Dict, List, Optional, Sequence
 
 import pandas as pd
 
-from regime_jm import plotting
+from regime_jm import mamba_encoder, plotting
 from regime_jm.backtest import delay_robustness_table, performance_table, regime_summary, run_0_1_strategy
 from regime_jm.config import PipelineConfig
 from regime_jm.data_io import (RF_UNITS, align_to_index, load_series, parse_extra_spec, prepare_inputs,
@@ -93,13 +95,24 @@ def prepare_features(cfg: PipelineConfig):
     return data, signal_col, X
 
 
-def _fit_rolling(cfg: PipelineConfig, X: pd.DataFrame, signal: pd.Series, start=None) -> RollingJMResult:
+def _make_encoder(cfg: PipelineConfig) -> Optional[mamba_encoder.MambaEncoder]:
+    if cfg.model != "mamba":
+        return None
+    device = mamba_encoder.resolve_device(cfg.device)
+    logger.info("mamba encoder on %s (seq_len=%d, d_model=%d, layers=%d)", device, cfg.seq_len, cfg.d_model,
+                cfg.n_layers)
+    return mamba_encoder.MambaEncoder(cfg.mamba_settings(), device)
+
+
+def _fit_rolling(cfg: PipelineConfig, X: pd.DataFrame, signal: pd.Series, start=None,
+                 encoder=None) -> RollingJMResult:
     pinned = expand_feature_names(X.columns, cfg.pin_features)
-    return run_rolling_jm(X, signal, model=cfg.model, cont=cfg.cont, n_states=cfg.n_states,
+    model = "jm" if cfg.model == "mamba" else cfg.model  # mamba: hidden 벡터에 Jump Model
+    return run_rolling_jm(X, signal, model=model, cont=cfg.cont, n_states=cfg.n_states,
                           jump_penalty=cfg.jump_penalty, max_feats=cfg.max_feats, pinned=pinned or None,
                           train_window=cfg.train_window, min_train=cfg.min_train, refit_months=cfg.refit_months,
                           start=start, clip_mul=cfg.clip_mul, grid_size=cfg.grid_size, n_init=cfg.n_init,
-                          random_state=cfg.seed)
+                          random_state=cfg.seed, encoder=encoder)
 
 
 def _regime_table(res: RollingJMResult, signal: pd.Series) -> pd.DataFrame:
@@ -147,13 +160,14 @@ def run_pipeline(cfg: Optional[PipelineConfig] = None, **overrides) -> Dict[str,
     out = cfg.out_dir
     os.makedirs(out, exist_ok=True)
     _write_json(cfg.to_dict(), out, "run_config.json")
+    encoder = _make_encoder(cfg)  # GPU 가 없으면 데이터 처리 전에 실패
 
     # 1)~2) 데이터 · 피처
     data, signal_col, X = prepare_features(cfg)
     signal = data[signal_col]
 
-    # 3) 롤링 재추정 + 온라인 추론
-    res = _fit_rolling(cfg, X, signal, start=cfg.oos_start)
+    # 3) 롤링 재추정 + 온라인 추론 (mamba: 재추정마다 Mamba 학습 → hidden 벡터)
+    res = _fit_rolling(cfg, X, signal, start=cfg.oos_start, encoder=encoder)
     reg = _regime_table(res, signal)
 
     # 4) 백테스트
@@ -210,6 +224,7 @@ def run_pipeline(cfg: Optional[PipelineConfig] = None, **overrides) -> Dict[str,
     _save(scenarios, out, "length_scenarios.csv", index=False)
     _save(hmm_regimes, out, "hmm_regimes.csv")
     _save(comparison, out, "model_comparison.csv")
+    _save(encoder.history_frame() if encoder else None, out, "mamba_train_log.csv", index=False)
     current = _current_state(reg, res.n_states)
     _write_json(current, out, "current_state.json")
 
@@ -251,13 +266,14 @@ def run_inference(cfg: Optional[PipelineConfig] = None, **overrides) -> Dict[str
     out = cfg.out_dir
     os.makedirs(out, exist_ok=True)
     _write_json(cfg.to_dict(), out, "run_config.json")
+    encoder = _make_encoder(cfg)
 
     data, signal_col, X = prepare_features(cfg)
     signal = data[signal_col]
     dates = refit_schedule(X.index, cfg.refit_months, cfg.min_train)
     if not dates:
         raise ValueError("추론할 반기 시작점이 없습니다 (데이터 부족)")
-    res = _fit_rolling(cfg, X, signal, start=dates[-1])
+    res = _fit_rolling(cfg, X, signal, start=dates[-1], encoder=encoder)
     reg = _regime_table(res, signal)
 
     params = res.params
@@ -276,6 +292,7 @@ def run_inference(cfg: Optional[PipelineConfig] = None, **overrides) -> Dict[str
     _save(reg, out, "inference_regimes.csv")
     _save(params, out, "inference_params.csv", index=False)
     _save(pd.DataFrame([current]), out, "inference_summary.csv", index=False)
+    _save(encoder.history_frame() if encoder else None, out, "inference_mamba_train_log.csv", index=False)
     weights_now = None
     if res.feat_weights is not None:
         _save(res.feat_weights, out, "inference_feat_weights.csv")
@@ -332,7 +349,8 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--warmup", type=int, default=d.warmup, help="앞에서 버릴 행 수")
 
     g = p.add_argument_group("모델")
-    g.add_argument("--model", choices=("jm", "sjm"), default=d.model)
+    g.add_argument("--model", choices=("jm", "sjm", "mamba"), default=d.model,
+                   help="mamba: 재추정마다 Mamba 를 학습해 hidden 벡터를 Jump Model 에 넣음 (CUDA GPU 필요)")
     g.add_argument("--discrete", action="store_true", help="이산형 모델 (기본: 연속형 cont=True)")
     g.add_argument("--n-states", type=int, default=d.n_states)
     g.add_argument("--jump-penalty", type=float, default=d.jump_penalty)
@@ -343,6 +361,22 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--n-init", type=int, default=d.n_init, help="모델 초기값 개수")
     g.add_argument("--clip-mul", type=float, default=d.clip_mul, help="학습창 기준 클리핑 σ 배수")
     g.add_argument("--seed", type=int, default=d.seed)
+
+    g = p.add_argument_group("Mamba (--model mamba)")
+    g.add_argument("--device", default=d.device,
+                   help="GPU 장치: auto(첫 번째 GPU), cuda, cuda:N. mamba-ssm 은 CUDA 전용이라 GPU 가 없으면 에러")
+    g.add_argument("--seq-len", type=int, default=d.seq_len, help="Mamba 입력 시퀀스 길이 (거래일)")
+    g.add_argument("--d-model", type=int, default=d.d_model, help="hidden 벡터 차원 (= Jump Model 입력 차원)")
+    g.add_argument("--d-state", type=int, default=d.d_state, help="SSM 상태 차원")
+    g.add_argument("--d-conv", type=int, default=d.d_conv, help="Mamba conv 커널 크기")
+    g.add_argument("--expand", type=int, default=d.expand, help="Mamba 확장 계수")
+    g.add_argument("--n-layers", type=int, default=d.n_layers, help="Mamba 블록 수")
+    g.add_argument("--dropout", type=float, default=d.dropout)
+    g.add_argument("--epochs", type=int, default=d.epochs, help="재추정당 최대 학습 epoch")
+    g.add_argument("--patience", type=int, default=d.patience, help="early stopping patience (epoch)")
+    g.add_argument("--batch-size", type=int, default=d.batch_size)
+    g.add_argument("--lr", type=float, default=d.lr, help="AdamW 학습률")
+    g.add_argument("--valid-frac", type=float, default=d.valid_frac, help="학습창 뒤쪽 검증 비율 (early stopping)")
 
     g = p.add_argument_group("롤링 재추정")
     g.add_argument("--train-window", type=int, default=d.train_window, help="최대 학습창 (거래일)")
