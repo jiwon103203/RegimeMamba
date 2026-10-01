@@ -31,7 +31,7 @@ class PipelineConfig:
     warmup: int = 252
 
     # 모델
-    model: str = "jm"                      # jm | sjm | mamba (Mamba hidden 벡터 → Jump Model, GPU 필요)
+    model: str = "jm"                      # jm | sjm
     cont: bool = True                      # True: 연속형 (CJM / 연속형 SJM)
     n_states: int = 2
     jump_penalty: float = 50.0
@@ -42,20 +42,21 @@ class PipelineConfig:
     clip_mul: float = 3.0
     seed: int = 0
 
-    # Mamba (--model mamba)
+    # 인코더: none 이면 피처 → JM, mamba 면 피처 → Mamba hidden 벡터 → JM (GPU 필요)
+    encoder: str = "none"                  # none | mamba
     device: str = "auto"                   # auto | cuda | cuda:N (mamba-ssm 은 CUDA 전용)
-    seq_len: int = 60
-    d_model: int = 8                       # hidden 벡터 차원 = Jump Model 입력 차원
-    d_state: int = 32
-    d_conv: int = 4
-    expand: int = 2
-    n_layers: int = 4
-    dropout: float = 0.1
-    epochs: int = 100
-    patience: int = 10
-    batch_size: int = 1024
-    lr: float = 5e-4
-    valid_frac: float = 0.2
+    mamba_seq_len: int = 60
+    mamba_d_model: int = 8                 # hidden 벡터 차원 = Jump Model 입력 차원
+    mamba_d_state: int = 32
+    mamba_d_conv: int = 4
+    mamba_expand: int = 2
+    mamba_layers: int = 4
+    mamba_dropout: float = 0.1
+    mamba_epochs: int = 100
+    mamba_patience: int = 10
+    mamba_batch_size: int = 1024
+    mamba_lr: float = 5e-4
+    mamba_valid_frac: float = 0.2
 
     # 롤링 재추정
     train_window: int = 3000
@@ -86,13 +87,6 @@ class PipelineConfig:
     inference: bool = False
     plots: bool = True
 
-    def mamba_settings(self):
-        from .mamba_encoder import MambaSettings
-        return MambaSettings(seq_len=self.seq_len, d_model=self.d_model, d_state=self.d_state, d_conv=self.d_conv,
-                             expand=self.expand, n_layers=self.n_layers, dropout=self.dropout, epochs=self.epochs,
-                             patience=self.patience, batch_size=self.batch_size, lr=self.lr,
-                             valid_frac=self.valid_frac, clip_mul=self.clip_mul, seed=self.seed)
-
     @property
     def cost_buy(self) -> float:
         return (self.cost_bps if self.cost_buy_bps is None else self.cost_buy_bps) / 1e4
@@ -108,8 +102,8 @@ class PipelineConfig:
             raise ValueError("backtest_ret must be absolute or relative")
         if self.backtest_ret == "relative" and not self.relative_benchmark:
             raise ValueError("--backtest-ret relative 에는 --relative-benchmark 가 필요합니다")
-        if self.model not in ("jm", "sjm", "mamba"):
-            raise ValueError("model must be jm, sjm or mamba")
+        if self.model not in ("jm", "sjm"):
+            raise ValueError("model must be jm or sjm")
         if self.pin_features and self.model != "sjm":
             raise ValueError("--pin-features 는 --model sjm 에서만 쓸 수 있습니다")
         if not 0.0 <= self.min_cash <= self.max_cash <= 1.0:
@@ -118,15 +112,19 @@ class PipelineConfig:
             raise ValueError("n_states >= 2")
         if self.min_train < 2 or self.train_window < self.min_train:
             raise ValueError("train_window >= min_train >= 2 이어야 합니다")
-        if self.model == "mamba":
+        if self.encoder not in ("none", "mamba"):
+            raise ValueError("encoder must be none or mamba")
+        if self.encoder == "mamba":
             from .mamba_encoder import DEVICE_RE
             if not DEVICE_RE.match(str(self.device).strip().lower()):
                 raise ValueError(f"--device 는 auto, cuda, cuda:N 중 하나여야 합니다 (got {self.device!r})")
-            if min(self.seq_len, self.d_model, self.d_state, self.n_layers, self.epochs, self.patience,
-                   self.batch_size) < 1:
-                raise ValueError("seq_len, d_model, d_state, n_layers, epochs, patience, batch_size 는 1 이상이어야 합니다")
-            if not 0.0 < self.valid_frac < 1.0:
-                raise ValueError("valid_frac 은 0 과 1 사이여야 합니다")
+            if self.pin_features:
+                raise ValueError("--encoder mamba 에서는 Jump Model 입력이 hidden 벡터라 --pin-features 를 쓸 수 없습니다")
+            if min(self.mamba_seq_len, self.mamba_d_model, self.mamba_d_state, self.mamba_layers, self.mamba_epochs,
+                   self.mamba_patience, self.mamba_batch_size) < 1:
+                raise ValueError("--mamba-* 크기 옵션은 1 이상이어야 합니다")
+            if not 0.0 < self.mamba_valid_frac < 1.0:
+                raise ValueError("--mamba-valid-frac 은 0 과 1 사이여야 합니다")
         if self.delay < 0 or any(d < 0 for d in self.delays):
             raise ValueError("delay 는 0 이상이어야 합니다")
         return self

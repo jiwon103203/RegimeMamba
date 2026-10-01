@@ -1,4 +1,4 @@
-"""--model mamba 테스트 (run_pipeline.py).
+"""--encoder mamba 테스트 (run_pipeline.py).
 
 mamba-ssm 은 CUDA 전용이므로 학습·인과성 테스트는 같은 인터페이스의 작은 GRU 백본으로 CPU 에서 돌린다.
 
@@ -19,20 +19,21 @@ import run_pipeline  # noqa: E402
 from regime_jm import mamba_encoder  # noqa: E402
 from regime_jm.config import PipelineConfig  # noqa: E402
 from regime_jm.features import build_features  # noqa: E402
-from regime_jm.mamba_encoder import MambaEncoder, MambaSettings, _windows, resolve_device  # noqa: E402
+from regime_jm.mamba_encoder import MambaEncoder, _windows, resolve_device  # noqa: E402
 
 torch = pytest.importorskip("torch")
 
-SMALL = MambaSettings(seq_len=10, d_model=4, epochs=3, patience=2, batch_size=128, seed=0)
+SMALL = PipelineConfig(input="d.csv", encoder="mamba", mamba_seq_len=10, mamba_d_model=4, mamba_epochs=3,
+                       mamba_patience=2, mamba_batch_size=128)
 
 
 class GRUBackbone(torch.nn.Module):
     """TimeSeriesMamba 와 같은 forward(x, return_hidden) 인터페이스."""
 
-    def __init__(self, n_features, s):
+    def __init__(self, n_features, cfg):
         super().__init__()
-        self.rnn = torch.nn.GRU(n_features, s.d_model, batch_first=True)
-        self.head = torch.nn.Linear(s.d_model, 1)
+        self.rnn = torch.nn.GRU(n_features, cfg.mamba_d_model, batch_first=True)
+        self.head = torch.nn.Linear(cfg.mamba_d_model, 1)
 
     def forward(self, x, return_hidden=False):
         out, _ = self.rnn(x)
@@ -87,7 +88,7 @@ def test_encoder_is_causal():
     y = pd.Series(np.random.default_rng(1).normal(0, 0.01, len(X)), index=X.index)
     lo, pos, seg_end = 100, 500, 620
     H = MambaEncoder(SMALL, "cpu", GRUBackbone)(X, y, lo, pos, seg_end)
-    assert H.shape == (seg_end - lo, SMALL.d_model) and list(H.columns) == [f"h_{k}" for k in range(4)]
+    assert H.shape == (seg_end - lo, SMALL.mamba_d_model) and list(H.columns) == [f"h_{k}" for k in range(4)]
     assert H.index.equals(X.index[lo:seg_end])
 
     cut = 560
@@ -104,18 +105,17 @@ def test_encoder_is_causal():
 
 def test_config_and_cli_options():
     args = run_pipeline.build_parser().parse_args(
-        ["d.csv", "--model", "mamba", "--device", "cuda:1", "--seq-len", "30", "--d-model", "16", "--epochs", "5"])
+        ["d.csv", "--encoder", "mamba", "--model", "sjm", "--min-train", "300", "--device", "cuda:1",
+         "--mamba-seq-len", "30", "--mamba-d-model", "16", "--mamba-epochs", "5"])
     cfg = run_pipeline.config_from_args(args).validate()
-    assert (cfg.model, cfg.device, cfg.seq_len, cfg.d_model, cfg.epochs) == ("mamba", "cuda:1", 30, 16, 5)
-    s = cfg.mamba_settings()
-    assert (s.seq_len, s.d_model, s.clip_mul, s.seed) == (30, 16, cfg.clip_mul, cfg.seed)
+    assert (cfg.encoder, cfg.model, cfg.min_train, cfg.device) == ("mamba", "sjm", 300, "cuda:1")
+    assert (cfg.mamba_seq_len, cfg.mamba_d_model, cfg.mamba_epochs) == (30, 16, 5)
     with pytest.raises(ValueError, match="device"):
-        PipelineConfig(input="d.csv", model="mamba", device="tpu").validate()
-    with pytest.raises(ValueError, match="valid_frac"):
-        PipelineConfig(input="d.csv", model="mamba", valid_frac=1.0).validate()
-    with pytest.raises(ValueError, match="sjm"):
-        PipelineConfig(input="d.csv", model="mamba", pin_features=["sortino_20"]).validate()
-
+        PipelineConfig(input="d.csv", encoder="mamba", device="tpu").validate()
+    with pytest.raises(ValueError, match="valid-frac"):
+        PipelineConfig(input="d.csv", encoder="mamba", mamba_valid_frac=1.0).validate()
+    with pytest.raises(ValueError, match="pin-features"):
+        PipelineConfig(input="d.csv", encoder="mamba", model="sjm", pin_features=["sortino_20"]).validate()
 
 @pytest.fixture
 def asset_csv(tmp_path):
@@ -126,8 +126,9 @@ def asset_csv(tmp_path):
     return str(path)
 
 
-MAMBA_ARGS = ["--model", "mamba", "--discrete", "--train-window", "400", "--min-train", "250", "--n-init", "2",
-              "--seq-len", "10", "--d-model", "4", "--epochs", "2", "--patience", "1", "--no-plots", "-q"]
+MAMBA_ARGS = ["--encoder", "mamba", "--discrete", "--train-window", "400", "--min-train", "250", "--n-init", "2",
+              "--mamba-seq-len", "10", "--mamba-d-model", "4", "--mamba-epochs", "2", "--mamba-patience", "1",
+              "--no-plots", "-q"]
 
 
 def test_cli_mamba_pipeline(cpu_mamba, asset_csv, tmp_path):
@@ -142,14 +143,23 @@ def test_cli_mamba_pipeline(cpu_mamba, asset_csv, tmp_path):
     assert (out / "performance.csv").exists() and (out / "current_state.json").exists()
 
 
+def test_cli_mamba_with_sjm(cpu_mamba, asset_csv, tmp_path):
+    """Jump Model 옵션은 인코더와 무관하게 그대로 적용된다 (sjm · feature-set)."""
+    out = tmp_path / "sjm"
+    assert run_pipeline.main([asset_csv, "--out", str(out), "--model", "sjm", "--feature-set", "example",
+                              *MAMBA_ARGS]) == 0
+    fw = pd.read_csv(out / "feat_weights.csv", index_col=0)
+    assert list(fw.columns) == [f"h_{k}" for k in range(4)]
+
+
 def test_cli_mamba_inference(cpu_mamba, asset_csv, tmp_path):
     out = tmp_path / "inf"
     assert run_pipeline.main([asset_csv, "--out", str(out), "--inference", *MAMBA_ARGS]) == 0
     assert len(pd.read_csv(out / "inference_mamba_train_log.csv")) == 1
     summary = pd.read_csv(out / "inference_summary.csv")
-    assert summary["model"].iloc[0] == "mamba (discrete)"
+    assert summary["model"].iloc[0] == "jm (discrete) + mamba"
 
 
 def test_cli_mamba_without_gpu_fails_cleanly(monkeypatch, asset_csv, tmp_path):
     monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
-    assert run_pipeline.main([asset_csv, "--out", str(tmp_path), "--model", "mamba", "-q"]) == 1
+    assert run_pipeline.main([asset_csv, "--out", str(tmp_path), "--encoder", "mamba", "-q"]) == 1
