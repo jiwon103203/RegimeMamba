@@ -29,7 +29,8 @@ The Regime Mamba architecture consists of:
 
 ```
 regime_mamba/                  # Mamba-Jump hybrid (requires torch, mamba-ssm)
-├── config/                    # Configuration classes (base, E2E, RL) and paper_config.yaml
+├── config/                    # Configuration classes (base, E2E, RL), paper_config.yaml, feature_set_config.yaml
+├── features.py                # Mamba input feature sets (paper / example / extra, shared with regime_jm)
 ├── data/                      # Dataset handling
 ├── evaluate/
 │   ├── backtest_runner.py     # Generic rolling-window loop, result aggregation, 2-stage window flow
@@ -52,10 +53,41 @@ scripts/                       # Rolling-window backtest entry points
 regime_jm/                     # Statistical Jump Model regime pipeline (no torch needed)
 run_pipeline.py                # Entry point of the regime_jm pipeline
 tests/test_pipeline.py         # regime_jm tests (causality rules)
+tests/test_mamba_features.py   # Mamba input feature set tests (no torch needed)
 ```
 
 Mamba scripts are run from the repository root, e.g.
 `python scripts/rolling_window_train_backtest.py --config regime_mamba/config/paper_config.yaml`.
+
+### Mamba 입력 피처 세트 → Jump Model
+
+`feature_set`을 지정하면 Mamba 입력을 `regime_jm`과 같은 정의의 피처 세트로 만들고, `jump_model: True`면
+Mamba가 압축한 hidden 벡터(`d_model`차원)를 Jump Model이 국면으로 나눕니다.
+
+```
+returns ─(regime_mamba/features.py)─▶ paper / example / extra 피처 (+ extra_feature_cols)
+        ─(윈도우 학습 구간으로 표준화)─▶ Mamba (seq_len 시퀀스 → hidden 벡터)
+        ─(ModifiedJumpModel)─▶ bull / bear 국면
+```
+
+```bash
+python scripts/rolling_window_train_backtest.py --config regime_mamba/config/feature_set_config.yaml
+python scripts/rolling_window_train_backtest.py --config regime_mamba/config/paper_config.yaml --feature_set extra --extra_feature_cols dollar_index
+```
+
+| 옵션 | 설명 |
+|---|---|
+| `feature_set` | 없음(기본, 기존 `input_dim` 3/4 CSV 열) / `paper` (3개) / `example` (9개) / `extra` (27개) / `none` |
+| `extra_feature_cols` | 피처 세트 뒤에 붙일 CSV 열 (예: `dollar_index`) |
+| `feature_return_col` | 피처를 계산할 수익률 열 (기본 `returns`) |
+| `feature_warmup` | 앞에서 버릴 행 수 (기본 252) |
+| `standardize_features` | 윈도우마다 학습 구간 평균·표준편차로 표준화 (기본 True) |
+| `returns_pct` | 수익률이 % 단위인지 (생략하면 표준편차로 추정) |
+
+- `input_dim`은 피처 수(+ `extra_feature_cols`)로 자동 설정됩니다.
+- 계산된 피처는 CSV의 기존 열과 겹치지 않도록 `fs_` 접두어가 붙습니다 (예: `fs_sortino_20`).
+- `jump_model: True`일 때 비교용 원본 JM(λ=50)은 Mamba와 같은 입력 피처로 학습됩니다.
+- 2-stage(`rolling_window_train_backtest.py`), E2E(`rolling_window_train_backtest_e2e.py`) 스크립트에서 지원하고, LSTM은 지원하지 않습니다.
 
 ## Installation (Regime Mamba)
 

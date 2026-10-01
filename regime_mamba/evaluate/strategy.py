@@ -4,6 +4,8 @@ import matplotlib.pyplot as plt
 from scipy.interpolate import interp1d
 import json
 
+from ..features import returns_in_percent
+
 def evaluate_regime_strategy(predictions, returns, dates=None, transaction_cost=0.001, save_path=None, config=None):
     """
     Evaluate performance of regime-based strategy considering transaction costs
@@ -60,7 +62,7 @@ def evaluate_regime_strategy(predictions, returns, dates=None, transaction_cost=
 
 
     # Calculate transaction costs (applied whenever regime changes)
-    if config is not None and config.input_dim == 4:
+    if returns_in_percent(config):
         df['Transaction_Cost'] = np.where(df['Regime_Change'], transaction_cost * 100, 0)
     else:
         df['Transaction_Cost'] = np.where(df['Regime_Change'], transaction_cost, 0)
@@ -70,7 +72,7 @@ def evaluate_regime_strategy(predictions, returns, dates=None, transaction_cost=
     df['Strategy_Return'] = df['Strategy_Regime'] * df['Return'] - df['Transaction_Cost']
 
     # Calculate cumulative returns
-    if config is not None and config.input_dim == 4:
+    if returns_in_percent(config):
         df['Cum_Market'] = (1 + df['Return']/100).cumprod() - 1
         df['Cum_Strategy'] = (1 + df['Strategy_Return']/100).cumprod() - 1
     else:
@@ -150,7 +152,7 @@ def evaluate_regime_strategy(predictions, returns, dates=None, transaction_cost=
 
     # Sharpe ratio calculation (assuming 2% risk-free rate)
     risk_free_rate = 0.02
-    if config is not None and config.input_dim == 4:
+    if returns_in_percent(config):
         market_daily_returns = df['Return'] / 100
         strategy_daily_returns = df['Strategy_Return'] /100
     else:

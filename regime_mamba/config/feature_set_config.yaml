@@ -1,0 +1,41 @@
+# Mamba 입력 피처 세트 → Mamba hidden 벡터 → Jump Model
+#   python scripts/rolling_window_train_backtest.py --config regime_mamba/config/feature_set_config.yaml
+
+# 입력 피처 (regime_mamba/features.py, regime_jm 과 같은 정의)
+feature_set: example            # paper(3) | example(9) | extra(27) | none
+extra_feature_cols: [dollar_index]  # feature_set 뒤에 붙일 CSV 열 ([] 이면 없음)
+feature_return_col: returns     # 피처를 계산할 수익률 열 (초과수익률 열이 있으면 그 열)
+feature_warmup: 252             # 앞에서 버릴 행 수 (EWM·롤링 통계 안정화)
+standardize_features: True      # 윈도우마다 학습 구간 평균·표준편차로 표준화
+# returns_pct: True             # 수익률 단위가 % 인지 (생략하면 표준편차로 추정)
+# input_dim 은 feature_set 에서 자동으로 정해진다
+
+# Mamba hidden 벡터 → Jump Model
+jump_model: True
+jump_penalty: 32
+
+# 모델 관련 파라미터
+d_model: 8                      # hidden 벡터 차원 (Jump Model 입력 차원)
+d_state: 32
+n_layers: 4
+dropout: 0.1
+learning_rate: 0.0005
+batch_size: 4096
+seq_len: 60
+
+# 데이터 관련 파라미터
+data_path: ./regime_mamba/data/data_full_final.csv
+
+# 학습 관련 파라미터
+max_epochs: 400
+patience: 80
+use_onecycle: True
+
+results_dir: './train_results'
+start_date: '1990-01-01'
+total_window_years: 20
+train_years: 16
+valid_years: 4
+clustering_years: 0
+forward_months: 24
+seed: 10

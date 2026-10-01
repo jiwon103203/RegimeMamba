@@ -19,6 +19,7 @@ from typing import Any, Callable, Dict, Optional, Tuple
 
 import pandas as pd
 
+from ..features import standardize_for_window
 from ..utils.io import json_serializer, load_checkpoint, save_checkpoint
 from .clustering import predict_regimes
 from .rolling_window_w_train import identify_regimes_for_window, train_model_for_window
@@ -192,6 +193,8 @@ def run_two_stage_window(
     which writes its own per-window outputs, so ``None`` is returned.
     """
     window_number = window_info['window_number']
+    # feature_set 모드: 이 윈도우의 학습 구간 통계로 입력 피처를 표준화 (기존 모드는 그대로)
+    data = standardize_for_window(data, config, window_info['train_period']['start'], window_info['train_period']['end'])
     train_args = (
         config,
         window_info['train_period']['start'],

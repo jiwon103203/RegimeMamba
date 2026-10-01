@@ -3,6 +3,8 @@ import pandas as pd
 import torch
 from torch.utils.data import Dataset, DataLoader
 
+from ..features import get_feature_columns
+
 class RegimeMambaDataset(Dataset):
     def __init__(self, config, mode="train"):
         """
@@ -26,10 +28,7 @@ class RegimeMambaDataset(Dataset):
         self.seq_len = config.seq_len
 
         # Define feature columns
-        if config.input_dim == 3:
-            self.feature_cols = ["dd_10", "sortino_20", "sortino_60"]
-        elif config.input_dim == 4:
-            self.feature_cols = ["dd_10", "sortino_20", "sortino_60", "dollar_index"]
+        self.feature_cols = get_feature_columns(config)
 
 
         # Split data based on date
@@ -133,10 +132,7 @@ class DateRangeRegimeMambaDataset(Dataset):
             self.data = data.copy()
 
         # Define feature columns
-        if config.input_dim == 3:
-            self.feature_cols = ["dd_10", "sortino_20", "sortino_60"]
-        elif config.input_dim == 4:
-            self.feature_cols = ["dd_10", "sortino_20", "sortino_60", "dollar_index"]
+        self.feature_cols = get_feature_columns(config)
 
         # Create sequences and targets
         self.sequences = []

@@ -23,6 +23,7 @@ import torch
 
 from regime_mamba.config.config import RollingWindowTrainConfig
 from regime_mamba.evaluate.backtest_runner import run_two_stage_window, run_windowed_backtest
+from regime_mamba.features import FEATURE_SETS, prepare_feature_set
 from regime_mamba.utils.io import (
     apply_overrides,
     load_yaml_config,
@@ -69,6 +70,12 @@ def parse_args():
     parser.add_argument('--output_dim', type=int, default=1, help='Output dimension')
     parser.add_argument('--cluster_method', type=str, default='cosine_kmeans', help='Clustering method')
     parser.add_argument('--direct_train', action='store_true', help='Train model directly for clasification')
+
+    # Input feature settings (regime_mamba/features.py)
+    parser.add_argument('--feature_set', type=str, choices=FEATURE_SETS,
+                        help='Mamba input features (default: CSV columns by --input_dim; sets input_dim automatically)')
+    parser.add_argument('--extra_feature_cols', nargs='+', help='CSV columns appended to --feature_set (e.g. dollar_index)')
+    parser.add_argument('--feature_return_col', type=str, help='Return column the feature set is computed from')
 
     # Training-related settings
     parser.add_argument('--max_epochs', type=int, default=50, help='Maximum training epochs')
@@ -204,19 +211,21 @@ def main():
             logger.error(f"Error loading configuration: {str(e)}")
             sys.exit(1)
 
+        try:
+            logger.info(f"Loading data from {config.data_path}")
+            data = pd.read_csv(config.data_path)
+            logger.info(f"Loaded data with {len(data)} rows")
+            # feature_set 이 있으면 피처를 계산해 추가하고 input_dim / feature_cols 를 설정
+            data = prepare_feature_set(data, config, logger)
+        except Exception as e:
+            logger.error(f"Error loading data: {str(e)}")
+            sys.exit(1)
+
         save_config_files(config, result_dir, title="Rolling Window Train Backtest")
         logger.info(f"Configuration saved to {result_dir}")
 
         set_seed(config.seed)
         logger.info(f"Random seed set to {config.seed}")
-
-        try:
-            logger.info(f"Loading data from {config.data_path}")
-            data = pd.read_csv(config.data_path)
-            logger.info(f"Loaded data with {len(data)} rows")
-        except Exception as e:
-            logger.error(f"Error loading data: {str(e)}")
-            sys.exit(1)
 
         run_rolling_window_backtest(config, data, logger, args.checkpoint)
         logger.info(f"Train backtest complete! Results saved to {result_dir}")

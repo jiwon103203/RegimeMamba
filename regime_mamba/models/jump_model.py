@@ -9,6 +9,7 @@ from jumpmodels.preprocess import StandardScalerPD
 from jumpmodels.plot import plot_regimes_and_cumret, savefig_plt
 
 from .mamba_model import TimeSeriesMamba
+from ..features import get_feature_columns, uses_feature_set
 
 
 class ModifiedJumpModel():
@@ -59,20 +60,13 @@ class ModifiedJumpModel():
         self.config = config
         self.jm = JumpModel(n_components=n_components, jump_penalty=self.jump_penalty, cont=False)
         self.original_jm = JumpModel(n_components=2, jump_penalty=50, cont=False)
-        self.original_feature = ['dd_10', 'sortino_20', 'sortino_60']
         self.original_scaler = StandardScalerPD()
 
-        # 차원에 따른 feature 컬럼 설정 간소화
-        self.feature_col = self._get_feature_columns(config.input_dim)
+        # Mamba 입력 열 (feature_set 모드면 prepare_feature_set 이 채운 열)
+        self.feature_col = get_feature_columns(config)
+        # 비교용 원본 JM: feature_set 모드면 Mamba 와 같은 입력 피처를 그대로 쓴다
+        self.original_feature = list(self.feature_col) if uses_feature_set(config) else ['dd_10', 'sortino_20', 'sortino_60']
         self.scaler = StandardScalerPD()
-    
-    def _get_feature_columns(self, input_dim):
-        """차원에 따른 feature 컬럼 매핑"""
-        feature_cols = {
-            3: ['dd_10', 'sortino_20', 'sortino_60'],
-            4: ['dd_10', 'sortino_20', 'sortino_60', 'dollar_index']
-        }
-        return feature_cols.get(input_dim, [])
     
     def _preprocess_data(self, data):
         """데이터 전처리 통합 메소드"""
@@ -80,7 +74,8 @@ class ModifiedJumpModel():
         epsilon = 1e-10
         
         # OHLC 데이터 로그 변환
-        if 'dollar_index' in processed_data.columns:
+        # feature_set 모드는 입력이 이미 윈도우 단위로 표준화되어 있으므로 스케일링하지 않는다
+        if 'dollar_index' in processed_data.columns and not uses_feature_set(self.config):
             processed_data['dollar_index'] = processed_data['dollar_index'] / self.config.scale
         # for col in ['Open', 'Close', 'High', 'Low']:
         #     if col in processed_data.columns:

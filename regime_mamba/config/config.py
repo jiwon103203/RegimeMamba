@@ -16,7 +16,16 @@ class RegimeMambaConfig:
         self.dropout = 0.1
         self.input_dim = 4
         self.seq_len = 60
-        
+
+        # Input feature settings (see regime_mamba/features.py)
+        self.feature_set = None             # None (CSV columns by input_dim 3/4) | paper | example | extra | none
+        self.extra_feature_cols = []        # CSV columns appended to the feature set (e.g. ['dollar_index'])
+        self.feature_return_col = 'returns' # Return column the feature set is computed from
+        self.feature_warmup = 252           # Leading rows dropped after computing the features
+        self.standardize_features = True    # Standardize inputs with each window's training-period stats
+        self.returns_pct = None             # Whether returns are in % (None: input_dim == 4, or inferred)
+        self.feature_cols = None            # Filled by prepare_feature_set()
+
         # Training settings
         self.batch_size = 1024
         self.learning_rate = 5e-4

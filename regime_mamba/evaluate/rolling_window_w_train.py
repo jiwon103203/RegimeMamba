@@ -11,6 +11,7 @@ from tqdm import tqdm
 import copy
 
 from ..utils.utils import set_seed
+from ..features import prepare_feature_set, standardize_for_window
 from ..data.dataset import RegimeMambaDataset, create_dataloaders, DateRangeRegimeMambaDataset
 from ..models.mamba_model import TimeSeriesMamba, create_model_from_config
 from ..models.lstm import StackedLSTM
@@ -315,7 +316,7 @@ def run_rolling_window_train(config):
     """
     # Load data
     print("Loading data...")
-    data = pd.read_csv(config.data_path)
+    full_data = prepare_feature_set(pd.read_csv(config.data_path), config)
     
     
     # Storage for results
@@ -354,6 +355,9 @@ def run_rolling_window_train(config):
         print(f"Clustering period: {clustering_start} ~ {clustering_end} ({config.clustering_years} years)")
         print(f"Future application period: {forward_start} ~ {forward_end} ({config.forward_months/12:.1f} years)")
         
+        # feature_set 모드: 이 윈도우의 학습 구간 통계로 입력 피처를 표준화
+        data = standardize_for_window(full_data, config, train_start, train_end)
+
         # 1. Train model
         model, val_loss = train_model_for_window(
             config, train_start, train_end, valid_start, valid_end, data

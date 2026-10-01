@@ -37,6 +37,7 @@ from regime_mamba.config.config import RollingWindowTrainConfig
 from regime_mamba.config.e2e_config import E2ERegimeMambaConfig, E2EConfigPresets
 from regime_mamba.data.dataset import DateRangeRegimeMambaDataset
 from regime_mamba.evaluate.backtest_runner import run_two_stage_window, run_windowed_backtest
+from regime_mamba.features import FEATURE_SETS, prepare_feature_set, standardize_for_window
 from regime_mamba.evaluate.smoothing_eval import evaluate_smoothing_methods
 from regime_mamba.models.e2e_regime_mamba import (
     EndToEndRegimeMamba,
@@ -95,6 +96,12 @@ def parse_args():
     parser.add_argument('--output_dim', type=int, default=1, help='Output dimension')
     parser.add_argument('--cluster_method', type=str, default='cosine_kmeans', help='Clustering method')
     parser.add_argument('--direct_train', action='store_true', help='Train model directly for classification')
+
+    # Input feature settings (regime_mamba/features.py)
+    parser.add_argument('--feature_set', type=str, choices=FEATURE_SETS,
+                        help='Mamba input features (default: CSV columns by --input_dim; sets input_dim automatically)')
+    parser.add_argument('--extra_feature_cols', nargs='+', help='CSV columns appended to --feature_set (e.g. dollar_index)')
+    parser.add_argument('--feature_return_col', type=str, help='Return column the feature set is computed from')
 
     # Training-related settings
     parser.add_argument('--max_epochs', type=int, default=50, help='Maximum training epochs')
@@ -277,7 +284,9 @@ def load_e2e_config(args) -> E2ERegimeMambaConfig:
         'lambda_entropy', 'lambda_sample_entropy', 'lambda_batch_entropy',
         # Separation loss
         'separation_loss_type', 'separation_margin', 'lambda_inter', 'lambda_intra',
-        'jump_penalty'
+        'jump_penalty',
+        # Input features
+        'feature_set', 'extra_feature_cols', 'feature_return_col'
     ]
     
     for key in e2e_params:
@@ -495,6 +504,11 @@ def run_rolling_window_backtest(
         if not is_e2e:
             return run_two_stage_window(config, data, window_info, window_dir, logger)
 
+        # feature_set 모드: 이 윈도우의 학습 구간 통계로 입력 피처를 표준화 (기존 모드는 그대로)
+        window_data = standardize_for_window(
+            data, config, window_info['train_period']['start'], window_info['train_period']['end']
+        )
+
         logger.info(f"{mode_str} Training E2E model with Two-Level Entropy...")
         model = train_e2e_model_for_window(
             config,
@@ -502,7 +516,7 @@ def run_rolling_window_backtest(
             window_info['train_period']['end'],
             window_info['valid_period']['start'],
             window_info['valid_period']['end'],
-            data,
+            window_data,
             window_number=window_info['window_number']
         )
         if model is None:
@@ -513,7 +527,7 @@ def run_rolling_window_backtest(
         logger.info(f"{mode_str} Evaluating smoothing methods...")
         return evaluate_smoothing_methods(
             partial(predict_e2e_regimes, model, config=config),
-            data,
+            window_data,
             config,
             window_info['forward_period'],
             window_dir,
@@ -567,19 +581,21 @@ def main():
             logger.error(f"Error loading configuration: {str(e)}")
             sys.exit(1)
 
+        try:
+            logger.info(f"Loading data from {config.data_path}")
+            data = pd.read_csv(config.data_path)
+            logger.info(f"Loaded data with {len(data)} rows")
+            # feature_set 이 있으면 피처를 계산해 추가하고 input_dim / feature_cols 를 설정
+            data = prepare_feature_set(data, config, logger)
+        except Exception as e:
+            logger.error(f"Error loading data: {str(e)}")
+            sys.exit(1)
+
         save_config(config, result_dir)
         logger.info(f"Configuration saved to {result_dir}")
 
         set_seed(config.seed)
         logger.info(f"Random seed set to {config.seed}")
-
-        try:
-            logger.info(f"Loading data from {config.data_path}")
-            data = pd.read_csv(config.data_path)
-            logger.info(f"Loaded data with {len(data)} rows")
-        except Exception as e:
-            logger.error(f"Error loading data: {str(e)}")
-            sys.exit(1)
 
         run_rolling_window_backtest(config, data, logger, args.checkpoint)
         logger.info(f"Backtest complete! Results saved to {result_dir}")
