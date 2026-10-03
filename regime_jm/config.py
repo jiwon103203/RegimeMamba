@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 from typing import List, Optional, Tuple
 
+SEED_MODES = ("ensemble", "individual", "both")
+
 
 @dataclass
 class PipelineConfig:
@@ -41,6 +43,10 @@ class PipelineConfig:
     n_init: int = 10
     clip_mul: float = 3.0
     seed: int = 0
+    # 여러 시드: seeds 를 주면 그 목록, 아니면 seed, seed+1, ... (n_seeds 개)
+    seeds: Tuple[int, ...] = ()
+    n_seeds: int = 1
+    seed_mode: str = "both"                # ensemble | individual | both
 
     # 인코더: none 이면 피처 → JM, mamba 면 피처 → Mamba hidden 벡터 → JM (GPU 필요)
     encoder: str = "none"                  # none | mamba
@@ -88,6 +94,12 @@ class PipelineConfig:
     plots: bool = True
 
     @property
+    def seed_list(self) -> Tuple[int, ...]:
+        if self.seeds:
+            return tuple(int(s) for s in self.seeds)
+        return tuple(range(self.seed, self.seed + self.n_seeds))
+
+    @property
     def cost_buy(self) -> float:
         return (self.cost_bps if self.cost_buy_bps is None else self.cost_buy_bps) / 1e4
 
@@ -125,6 +137,12 @@ class PipelineConfig:
                 raise ValueError("--mamba-* 크기 옵션은 1 이상이어야 합니다")
             if not 0.0 < self.mamba_valid_frac < 1.0:
                 raise ValueError("--mamba-valid-frac 은 0 과 1 사이여야 합니다")
+        if self.n_seeds < 1:
+            raise ValueError("--n-seeds 는 1 이상이어야 합니다")
+        if len(set(self.seed_list)) != len(self.seed_list):
+            raise ValueError("--seeds 에 중복된 시드가 있습니다")
+        if self.seed_mode not in SEED_MODES:
+            raise ValueError(f"--seed-mode 는 {', '.join(SEED_MODES)} 중 하나여야 합니다")
         if self.delay < 0 or any(d < 0 for d in self.delays):
             raise ValueError("delay 는 0 이상이어야 합니다")
         return self

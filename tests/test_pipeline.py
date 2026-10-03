@@ -481,3 +481,87 @@ def test_cli_main(files, tmp_path):
     assert cfg["cost_buy"] == pytest.approx(0.0005) and cfg["cost_sell"] == pytest.approx(0.0025)
     assert cfg["cont"] is False
     assert run_pipeline.main([str(tmp_path / "missing.csv"), "--out", str(tmp_path), "-q"]) == 1
+
+
+# ---------------------------------------------------------------------------
+# 여러 시드
+# ---------------------------------------------------------------------------
+
+def test_ensemble_regimes_averages_probabilities():
+    idx = pd.bdate_range("2020-01-01", periods=4)
+
+    def reg(p_bear):
+        p = np.asarray(p_bear, dtype=float)
+        return pd.DataFrame({"regime": (p > 0.5).astype(int), "prob_0": 1 - p, "prob_1": p,
+                             "refit_date": idx[0], "signal_ret": 0.0}, index=idx)
+
+    ens = run_pipeline.ensemble_regimes({0: reg([0, 1, 1, 0.9]), 1: reg([0, 0, 1, 0.1]),
+                                         2: reg([0, 0, 1, 0.4])}, n_states=2)
+    np.testing.assert_allclose(ens["prob_1"], [0, 1 / 3, 1, 1.4 / 3])
+    assert list(ens["regime"]) == [0, 0, 1, 0] and list(ens["label"]) == ["bull", "bull", "bear", "bull"]
+    np.testing.assert_allclose(ens["agreement"], [1, 2 / 3, 1, 2 / 3])
+    assert list(ens["regime_seed0"]) == [0, 1, 1, 1]
+
+
+def test_multi_seed_both_modes(files, tmp_path):
+    res = run_pipeline.run_pipeline(input=files["asset"], out_dir=str(tmp_path), n_seeds=3, seed=7,
+                                    **{**PIPE_FAST, "cont": True})
+    assert res["seeds"] == [7, 8, 9]
+    for s in (7, 8, 9):
+        assert (tmp_path / f"seed_{s}" / "performance.csv").exists()
+        assert json.loads((tmp_path / f"seed_{s}" / "run_config.json").read_text(encoding="utf-8"))["seed"] == s
+    for name in ["regimes.csv", "strategy.csv", "performance.csv", "delay_robustness.csv", "current_state.json",
+                 "regimes_cumret.png"]:
+        assert (tmp_path / "ensemble" / name).exists(), name
+    assert (tmp_path / "seed_performance.csv").exists() and (tmp_path / "seed_current_state.csv").exists()
+
+    # 앙상블 국면 = 시드별 상태 확률 평균의 argmax, 전략은 그 국면으로 delay 1 체결
+    ens = res["ensemble"]["regimes"]
+    avg = np.mean([r["regimes"]["prob_1"].to_numpy() for r in res["seed_results"].values()], axis=0)
+    np.testing.assert_allclose(ens["prob_1"], avg)
+    np.testing.assert_array_equal(ens["regime"], (avg > 0.5).astype(int))
+    strat = res["ensemble"]["strategy"]
+    expected = regime_to_weight(ens["regime"], bear_state=1).shift(1).reindex(strat.index)
+    np.testing.assert_allclose(strat["weight"], expected)
+
+    # 개별 성과의 평균 · 표준편차
+    table = res["seed_performance"]
+    sharpes = [r["performance"].loc["JM strategy", "sharpe"] for r in res["seed_results"].values()]
+    assert table.loc["mean", "sharpe"] == pytest.approx(np.mean(sharpes))
+    assert table.loc["std", "sharpe"] == pytest.approx(np.std(sharpes, ddof=1))
+    assert {"seed_7", "seed_8", "seed_9", "ensemble", "Buy & Hold"} <= set(table.index)
+    assert res["current_state"]["seeds"] == [7, 8, 9]
+
+
+def test_multi_seed_ensemble_only_matches_individual(files, tmp_path):
+    kw = dict(input=files["asset"], seeds=(1, 4), plots=False, **PIPE_FAST)
+    ens_only = run_pipeline.run_pipeline(out_dir=str(tmp_path / "e"), seed_mode="ensemble", **kw)
+    both = run_pipeline.run_pipeline(out_dir=str(tmp_path / "b"), seed_mode="both", **kw)
+    assert not (tmp_path / "e" / "seed_1").exists() and not (tmp_path / "e" / "seed_performance.csv").exists()
+    assert ens_only["seed_performance"] is None
+    pd.testing.assert_frame_equal(ens_only["ensemble"]["regimes"], both["ensemble"]["regimes"])
+
+    ind = run_pipeline.run_pipeline(out_dir=str(tmp_path / "i"), seed_mode="individual", **kw)
+    assert ind["ensemble"] is None and not (tmp_path / "i" / "ensemble").exists()
+    assert "ensemble" not in ind["seed_performance"].index
+
+
+def test_multi_seed_inference(files, tmp_path):
+    res = run_pipeline.run_pipeline(input=files["asset"], out_dir=str(tmp_path), inference=True, n_seeds=2,
+                                    plots=False, **PIPE_FAST)
+    assert (tmp_path / "seed_0" / "inference_summary.csv").exists()
+    assert (tmp_path / "ensemble" / "inference_regimes.csv").exists()
+    assert not (tmp_path / "ensemble" / "strategy.csv").exists()
+    last_refit = refit_schedule(res["seed_results"][0]["features"].index, (1, 7), 250)[-1]
+    assert res["ensemble"]["regimes"].index[0] == last_refit
+
+
+def test_cli_multi_seed(files, tmp_path):
+    base = [files["asset"], "--out", str(tmp_path), "--discrete", "--train-window", "400", "--min-train", "250",
+            "--n-init", "2", "--delays", "1,2", "--no-plots", "-q"]
+    assert run_pipeline.main([*base, "--seeds", "3,5", "--seed-mode", "individual"]) == 0
+    assert (tmp_path / "seed_3").exists() and (tmp_path / "seed_5").exists()
+    cfg = json.loads((tmp_path / "run_config.json").read_text(encoding="utf-8"))
+    assert cfg["seeds"] == [3, 5] and cfg["seed_mode"] == "individual"
+    assert run_pipeline.main([*base, "--seeds", "1,1"]) == 1
+    assert run_pipeline.main([*base, "--n-seeds", "0"]) == 1

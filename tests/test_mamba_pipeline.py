@@ -163,3 +163,22 @@ def test_cli_mamba_inference(cpu_mamba, asset_csv, tmp_path):
 def test_cli_mamba_without_gpu_fails_cleanly(monkeypatch, asset_csv, tmp_path):
     monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
     assert run_pipeline.main([asset_csv, "--out", str(tmp_path), "--encoder", "mamba", "-q"]) == 1
+
+
+def test_cli_mamba_multi_seed(cpu_mamba, asset_csv, tmp_path):
+    """시드마다 Mamba 가중치가 달라지고, 앙상블 모드는 시드별 학습 로그를 모아 저장한다."""
+    out = tmp_path / "seeds"
+    assert run_pipeline.main([asset_csv, "--out", str(out), "--n-seeds", "2", "--seed-mode", "ensemble",
+                              *MAMBA_ARGS]) == 0
+    log = pd.read_csv(out / "ensemble" / "mamba_train_log.csv")
+    assert sorted(log["seed"].unique()) == [0, 1]
+    reg = pd.read_csv(out / "ensemble" / "regimes.csv", index_col=0)
+    assert {"regime_seed0", "regime_seed1", "agreement"} <= set(reg.columns)
+    assert (out / "ensemble" / "performance.csv").exists() and not (out / "seed_0").exists()
+
+    both = tmp_path / "both"
+    assert run_pipeline.main([asset_csv, "--out", str(both), "--seeds", "0,1", *MAMBA_ARGS]) == 0
+    p0 = pd.read_csv(both / "seed_0" / "refit_params.csv")
+    p1 = pd.read_csv(both / "seed_1" / "refit_params.csv")
+    assert not np.allclose(p0["center_h_0"], p1["center_h_0"])
+    pd.testing.assert_frame_equal(pd.read_csv(both / "ensemble" / "regimes.csv", index_col=0), reg)
