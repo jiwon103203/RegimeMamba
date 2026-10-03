@@ -9,10 +9,10 @@ Windows needs extra work and walks through the ways to run this project on a Win
 > Windows GPU and only takes a few commands. Build natively on Windows (Option C) only if
 > you cannot use WSL2.
 >
-> **Scope.** This guide covers the Mamba part of the repository (`regime_mamba/`,
-> `scripts/`). The statistical Jump Model pipeline (`regime_jm/`, `run_pipeline.py`) does
-> not use torch or `mamba-ssm`, so it runs natively on Windows (no GPU needed) after
-> `pip install -r requirements-jm.txt`.
+> **Scope.** This guide covers the Mamba parts of the repository
+> (`run_pipeline.py --encoder mamba`, `regime_mamba/`, `scripts/e2e_backtest.py`).
+> `run_pipeline.py` without `--encoder mamba` does not use torch or `mamba-ssm`, so it runs
+> natively on Windows (no GPU needed) after `pip install -r requirements-jm.txt`.
 
 ---
 
@@ -20,12 +20,11 @@ Windows needs extra work and walks through the ways to run this project on a Win
 
 | Component | What it needs | Windows situation |
 |-----------|---------------|-------------------|
-| `mamba_ssm.Mamba` (used in `regime_mamba/models/mamba_model.py`, `e2e_regime_mamba.py`, `rl_regime_mamba.py`) | Compiled CUDA extension `selective_scan_cuda` | Official releases only publish Linux wheels, so on Windows you have to compile it yourself |
+| `mamba_ssm.Mamba` (used in `regime_mamba/models/mamba_model.py`, `e2e_regime_mamba.py`) | Compiled CUDA extension `selective_scan_cuda` | Official releases only publish Linux wheels, so on Windows you have to compile it yourself |
 | `causal_conv1d` | Compiled CUDA extension | Same: Linux wheels only |
 | `import mamba_ssm` | [Triton](https://github.com/triton-lang/triton) (imported by `mamba_ssm/ops/triton/*`) | The official `triton` package has no Windows wheels. Use the community port [`triton-windows`](https://github.com/triton-lang/triton-windows) |
 | `Block(..., fused_add_norm=True)` in this repo | Triton fused LayerNorm kernel | Needs a working Triton (see above) |
 | Selective-scan kernels | NVIDIA GPU | There is **no CPU fallback** on any OS, so `--gpu_id -1` cannot run the Mamba models |
-| `jumpmodels` plotting (imported by `regime_mamba/models/jump_model.py`) | Sets `text.usetex=True` on import, so it needs a LaTeX install | `setup_and_run.sh` installs TeX Live with `apt-get`, which doesn't exist on Windows |
 | `setup_and_run.sh` | bash, `apt-get`, `sudo` | Not available in PowerShell/cmd |
 
 Two more details make a native install harder:
@@ -151,10 +150,6 @@ pip install mamba-ssm==2.2.4 --no-build-isolation
 
 # 4) This package and its remaining dependencies (jumpmodels, pyyaml, ...)
 pip install -e .
-
-# 5) LaTeX, needed by jumpmodels' matplotlib settings (see section 8)
-sudo apt-get install -y texlive-latex-base texlive-latex-extra \
-    texlive-fonts-recommended dvipng cm-super
 ```
 
 Then run the checks in [section 7](#7-verify-the-installation).
@@ -194,7 +189,7 @@ FROM pytorch/pytorch:2.5.1-cuda12.4-cudnn9-devel
 
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        git texlive-latex-base texlive-latex-extra texlive-fonts-recommended dvipng cm-super \
+        git \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /workspace/RegimeMamba
@@ -211,9 +206,9 @@ Build and run it from PowerShell:
 ```powershell
 docker build -t regime-mamba .
 docker run --rm -it --gpus all --shm-size=8g `
-  -v ${PWD}/train_backtest_results:/workspace/RegimeMamba/train_backtest_results `
+  -v ${PWD}/out:/workspace/RegimeMamba/out `
   regime-mamba `
-  python scripts/rolling_window_train_backtest.py --config regime_mamba/config/paper_config.yaml
+  python run_pipeline.py data.csv --encoder mamba --device cuda:0
 ```
 
 `--shm-size` matters because the `DataLoader`s in this repository use worker processes
@@ -381,28 +376,13 @@ On native Windows (cmd), save the Python part to `check_install.py` and run
 Then start a run, for example:
 
 ```bash
-python scripts/rolling_window_train_backtest.py --config regime_mamba/config/paper_config.yaml
+python run_pipeline.py data.csv --encoder mamba --device cuda:0
+python scripts/e2e_backtest.py --data_path data.csv
 ```
 
 ---
 
 ## 8. Windows-specific runtime notes for this repository
-
-* **LaTeX for plots.** `regime_mamba/models/jump_model.py` (the Mamba + Jump Model path,
-  e.g. `--jump_model True`) imports `jumpmodels.plot`, which sets `text.usetex=True`
-  globally. Saving those figures therefore needs LaTeX, `dvipng` and the Computer Modern
-  fonts. The `regime_jm` pipeline does not import `jumpmodels.plot` and needs no LaTeX.
-  * WSL / Docker / Linux: install the TeX Live packages listed in
-    [3.5](#35-install-the-project).
-  * Native Windows: install [MiKTeX](https://miktex.org/) (allow on-the-fly package
-    installation) and make sure `latex` and `dvipng` are on `PATH`.
-  * To skip LaTeX entirely, turn it off **after** the project modules are imported:
-
-    ```python
-    import matplotlib.pyplot as plt
-    from regime_mamba.models import jump_model  # jumpmodels sets usetex=True here
-    plt.rcParams["text.usetex"] = False
-    ```
 
 * **Multiprocessing.** Windows starts `DataLoader` workers (`num_workers=2`–`4` in this
   repo) and `ProcessPoolExecutor` workers by *spawning* new interpreters. The provided
@@ -433,7 +413,6 @@ python scripts/rolling_window_train_backtest.py --config regime_mamba/config/pap
 | `The detected CUDA version mismatches the version that was used to compile PyTorch` | Toolkit major version ≠ PyTorch CUDA major version | Install a matching toolkit or a matching PyTorch build |
 | Build killed / `cl.exe` or `nvcc` out of memory | Too many parallel compile jobs | `MAX_JOBS=2`–`4`; on WSL also raise `memory` in `.wslconfig` |
 | `nvidia-smi` fails inside WSL | Old Windows driver or a Linux driver installed inside WSL | Update the Windows driver, remove Linux `nvidia-*` driver packages inside WSL, `wsl --shutdown` |
-| `RuntimeError: latex was not able to process ...` / `dvipng` not found | `jumpmodels` enabled `usetex` | Install LaTeX ([8](#8-windows-specific-runtime-notes-for-this-repository)) or set `text.usetex=False` |
 | Training is slow under WSL | Project lives on `/mnt/c/...` | Move the repository into the Linux home directory |
 
 ---

@@ -1,8 +1,7 @@
 """Mamba 입력 피처 세트 (paper / example / extra / none).
 
-``regime_jm.features`` 의 피처 빌더를 그대로 써서 Jump Model 파이프라인(``run_pipeline.py``)과
-같은 정의의 피처를 Mamba 에 넣는다. Mamba 가 압축한 hidden 벡터는 이후 ``ModifiedJumpModel``
-(``jump_model: True``) 이 Jump Model 로 국면을 나눈다.
+``regime_jm.features`` 의 피처 빌더를 그대로 써서 ``run_pipeline.py`` 와 같은 정의의 피처를
+E2E 스크립트(``scripts/e2e_backtest.py``)의 Mamba 입력으로 쓴다.
 
     feature_set: None     기존 동작. input_dim 3/4 → CSV 의 dd_10, sortino_20, sortino_60[, dollar_index]
     feature_set: paper    DD-log_10, sortino_20, sortino_60                                    (3개)
@@ -77,8 +76,6 @@ def prepare_feature_set(data: pd.DataFrame, config, log: Optional[logging.Logger
         return data
     if feature_set not in FEATURE_SETS:
         raise ValueError(f"feature_set must be one of {FEATURE_SETS}, got {feature_set!r}")
-    if getattr(config, "lstm", False):
-        raise ValueError("feature_set 은 Mamba 전용입니다 (LSTM 은 입력 열이 고정되어 있습니다)")
 
     ret_col = getattr(config, "feature_return_col", None) or "returns"
     extra_cols = list(getattr(config, "extra_feature_cols", None) or [])

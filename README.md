@@ -1,215 +1,102 @@
-# Regime Mamba: Regime Switch Detection in Financial Time Series via Mamba-Jump Hybrid Deep Model
+# Regime Mamba
 
-[![License: CC BY-SA 4.0](https://img.shields.io/badge/License-CC%20BY--SA%204.0-lightgrey.svg)](https://creativecommons.org/licenses/by-sa/4.0/)
-
-## Overview
-
-Regime Mamba is a novel hybrid deep learning architecture that combines the selective state space model (Mamba) with traditional Jump Models to identify financial market regimes. This is the first study to introduce modern deep learning methods to this domain, bridging the gap between neural architectures and economic regime theory.
-
-### Key Features
-
-- **Hybrid Architecture**: Combines Mamba's selective state space mechanism with traditional Jump Models
-- **Superior Performance**: Achieves 5.5% annualized return with significantly lower volatility (11.6%) compared to buy-and-hold strategies (18.9% volatility)
-- **Enhanced Risk Management**: Maximum drawdown of only -31.8% versus -65.2% for buy-and-hold strategies
-- **Improved Sharpe Ratio**: 0.323, 10.2% higher than state-of-the-art models
-- **Cross-market Generalizability**: Effective across both developed (S&P 500) and emerging markets (KOSPI)
-- **Macro-factor Integration**: Incorporating the Dollar Index as a global macro indicator improves Sharpe ratios by 98.1% and reduces false signals by 6%
-
-## Model Architecture
+Mamba(선택적 상태공간 모델)로 시계열 피처를 압축하고 Jump Model로 bull/bear 국면을 나누는 금융 국면 탐지 모델.
 
 ![Regime Mamba Architecture](./architecture.png)
 
-The Regime Mamba architecture consists of:
-
-1. **Feature Extractor**: A Mamba-based deep learning model that processes time series data through selective state space layers
-2. **Regime Predictor**: A Jump Model framework that identifies market regimes (Bull/Bear) based on extracted features
-3. **Integrated Learning**: Combined training approach that leverages both representation learning and explicit regime identification
-
-## Project Structure
+## 구조
 
 ```
-regime_mamba/                  # Mamba-Jump hybrid (requires torch, mamba-ssm)
-├── config/                    # Configuration classes (base, E2E, RL), paper_config.yaml, feature_set_config.yaml
-├── features.py                # Mamba input feature sets (paper / example / extra, shared with regime_jm)
-├── data/                      # Dataset handling
-├── evaluate/
-│   ├── backtest_runner.py     # Generic rolling-window loop, result aggregation, 2-stage window flow
-│   ├── schedule.py            # Rolling-window schedule
-│   ├── smoothing.py           # Signal smoothing techniques
-│   ├── smoothing_eval.py      # Per-window smoothing evaluation and comparison plots
-│   ├── clustering.py          # Regime identification
-│   ├── strategy.py            # Trading strategy evaluation
-│   ├── rolling_window.py      # Rolling window backtesting (pretrained model)
-│   └── rolling_window_w_train.py
-├── models/                    # mamba_model, jump_model, lstm, e2e_regime_mamba, rl_regime_mamba
-├── train/                     # train.py, e2e_train.py
-└── utils/                     # set_seed, shared script I/O (logging, checkpoints, config dumps)
-
-scripts/                       # Rolling-window backtest entry points
-├── rolling_window_train_backtest.py        # 2-stage (Mamba + K-Means / Jump Model)
-├── rolling_window_train_backtest_e2e.py    # 2-stage or End-to-End Regime Mamba (--e2e)
-└── rolling_window_train_backtest_rl.py     # RL Regime Mamba (training loop not implemented yet)
-
-regime_jm/                     # Statistical Jump Model regime pipeline (no torch needed)
-run_pipeline.py                # Entry point of the regime_jm pipeline
-tests/test_pipeline.py         # regime_jm tests (causality rules)
-tests/test_mamba_features.py   # Mamba input feature set tests (no torch needed)
+run_pipeline.py          진입점 (CLI · run_pipeline() · run_inference())
+regime_jm/
+  data_io.py             1) 입력 로드·정제 → 초과수익률 (+ 벤치마크 상대수익률 rel_ret)
+  features.py            2) 피처 세트 (paper / example / extra) + 사용자 변수 변환
+  mamba_encoder.py          (--encoder mamba) 피처 시퀀스 → Mamba hidden 벡터
+  rolling.py             3) 1·7월 재추정 + 사이 구간 온라인 추론 (Jump Model)
+  sparse_pin.py             Sparse Jump Model (피처 고정 지원)
+  backtest.py            4) 0/1 전략 백테스트 · 성과 · 거래 지연 로버스트니스
+  hmm_benchmark.py       5) Gaussian HMM 벤치마크 (--hmm)
+  weights.py             6) sjm 피처 가중 비중
+  regime_episodes.py        bear 에피소드 · 유사 국면 · 종료 시나리오
+  plotting.py            7) 그림
+regime_mamba/
+  models/mamba_model.py  Mamba 백본 (TimeSeriesMamba, --encoder mamba 가 사용)
+  models/e2e_regime_mamba.py, train/e2e_train.py, config/e2e_config.py
+                         End-to-End Regime Mamba (Mamba + 미분 가능한 jump penalty 로 국면을 직접 학습)
+  data/, evaluate/       E2E 용 데이터셋 · 롤링 윈도우 · 스무딩 비교
+scripts/e2e_backtest.py  E2E 롤링 백테스트 진입점
+tests/                   인과성·파이프라인 테스트
 ```
 
-Mamba scripts are run from the repository root, e.g.
-`python scripts/rolling_window_train_backtest.py --config regime_mamba/config/paper_config.yaml`.
-
-### Mamba 입력 피처 세트 → Jump Model
-
-`feature_set`을 지정하면 Mamba 입력을 `regime_jm`과 같은 정의의 피처 세트로 만들고, `jump_model: True`면
-Mamba가 압축한 hidden 벡터(`d_model`차원)를 Jump Model이 국면으로 나눕니다.
-
-```
-returns ─(regime_mamba/features.py)─▶ paper / example / extra 피처 (+ extra_feature_cols)
-        ─(윈도우 학습 구간으로 표준화)─▶ Mamba (seq_len 시퀀스 → hidden 벡터)
-        ─(ModifiedJumpModel)─▶ bull / bear 국면
-```
+## 실행
 
 ```bash
-python scripts/rolling_window_train_backtest.py --config regime_mamba/config/feature_set_config.yaml
-python scripts/rolling_window_train_backtest.py --config regime_mamba/config/paper_config.yaml --feature_set extra --extra_feature_cols dollar_index
-```
-
-| 옵션 | 설명 |
-|---|---|
-| `feature_set` | 없음(기본, 기존 `input_dim` 3/4 CSV 열) / `paper` (3개) / `example` (9개) / `extra` (27개) / `none` |
-| `extra_feature_cols` | 피처 세트 뒤에 붙일 CSV 열 (예: `dollar_index`) |
-| `feature_return_col` | 피처를 계산할 수익률 열 (기본 `returns`) |
-| `feature_warmup` | 앞에서 버릴 행 수 (기본 252) |
-| `standardize_features` | 윈도우마다 학습 구간 평균·표준편차로 표준화 (기본 True) |
-| `returns_pct` | 수익률이 % 단위인지 (생략하면 표준편차로 추정) |
-
-- `input_dim`은 피처 수(+ `extra_feature_cols`)로 자동 설정됩니다.
-- 계산된 피처는 CSV의 기존 열과 겹치지 않도록 `fs_` 접두어가 붙습니다 (예: `fs_sortino_20`).
-- `jump_model: True`일 때 비교용 원본 JM(λ=50)은 Mamba와 같은 입력 피처로 학습됩니다.
-- 2-stage(`rolling_window_train_backtest.py`), E2E(`rolling_window_train_backtest_e2e.py`) 스크립트에서 지원하고, LSTM은 지원하지 않습니다.
-
-## Installation (Regime Mamba)
-
-The Mamba part (`regime_mamba/`, `scripts/`) depends on [`mamba-ssm`](https://github.com/state-spaces/mamba) and
-[`causal-conv1d`](https://github.com/Dao-AILab/causal-conv1d), which ship custom CUDA kernels and officially
-support **Linux + NVIDIA GPU** only. There is no CPU fallback for the Mamba layers.
-
-### Linux
-
-Requires an NVIDIA GPU, a CUDA toolkit (`nvcc`) matching your PyTorch build, and Python 3.10–3.12.
-
-```bash
-pip install torch==2.5.1 --index-url https://download.pytorch.org/whl/cu124
-pip install packaging ninja wheel setuptools
-pip install causal-conv1d==1.5.0.post8 --no-build-isolation
-pip install mamba-ssm==2.2.4 --no-build-isolation
-pip install -e .
-# LaTeX is used by jumpmodels' matplotlib settings
-sudo apt-get install -y texlive-latex-base texlive-latex-extra texlive-fonts-recommended dvipng cm-super
-```
-
-### Windows
-
-`mamba-ssm` has no official Windows builds, but there are several ways to run this project on a Windows PC:
-
-| Option | Difficulty | Notes |
-|--------|-----------|-------|
-| **WSL2 + Ubuntu** (recommended) | Easy | Uses the Linux steps above on your Windows NVIDIA GPU, no code changes |
-| **Docker Desktop** (WSL2 backend) | Easy–medium | Reproducible container with `--gpus all` |
-| **Native Windows build** | Hard | Needs MSVC, the CUDA toolkit and `triton-windows`, plus building `causal-conv1d`/`mamba-ssm` from source with a small patch |
-| **Remote Linux / Colab** | Easy | For machines without an NVIDIA GPU |
-
-See **[docs/WINDOWS_SETUP.md](./docs/WINDOWS_SETUP.md)** for step-by-step instructions, version pinning,
-Windows-specific runtime notes (LaTeX, multiprocessing) and troubleshooting.
-
-The Jump Model pipeline below (`regime_jm`, `run_pipeline.py`) needs neither torch nor `mamba-ssm`,
-so it runs natively on Windows with `pip install -r requirements-jm.txt`.
-
-## Jump Model 국면 파이프라인 (`regime_jm`)
-
-입구는 `run_pipeline.py`의 `run_pipeline()`이고, `main()`이 CLI를 처리합니다.
-
-```
-입력 파일(날짜·종가·무위험금리)
-  │  data_io.py          1) 로드·정제 → 초과수익률 (+ 벤치마크 차감 rel_ret)
-  │  features.py         2) EWM downside deviation · Sortino (+ extra / 커스텀 변수)
-  │  rolling.py          3) 1·7월 첫 영업일마다 재추정(최대 3000일, 최소 500일 학습창) + 사이 구간 온라인 추론
-  │  backtest.py         4) 0/1 전략 백테스트 · 성과표 · 거래 지연 로버스트니스
-  │  hmm_benchmark.py    5) HMM 벤치마크와 비교 (--hmm)
-  │  weights.py          6) 변수 유형별 가중 비중 (sjm)
-  │  regime_episodes.py     bear 에피소드 · 유사 국면 · 종료 시나리오
-  ▼  plotting.py         7) csv 와 png 저장 (out/)
-```
-
-### 설치 · 실행
-
-```bash
-pip install -r requirements-jm.txt
-
-python run_pipeline.py data.csv                                   # paper 피처, 연속형 JM(CJM)
-python run_pipeline.py data.csv --model sjm --feature-set extra --pin-features sortino_20 --hmm
+python run_pipeline.py data.csv                                        # 피처 → Jump Model
+python run_pipeline.py data.csv --encoder mamba --device cuda:0        # 피처 → Mamba → Jump Model
+python run_pipeline.py data.csv --encoder mamba --model sjm --feature-set extra --hmm
 python run_pipeline.py sector.csv --relative-benchmark kospi.csv --backtest-ret relative
-python run_pipeline.py data.csv --extra-features macro.csv:VIX:log macro.csv:USDKRW:logdiff 거래량:zscore_60
-python run_pipeline.py data.csv --inference                       # 현재 반기 국면만 빠르게
-python run_pipeline.py --help                                     # 전체 옵션
+python run_pipeline.py data.csv --extra-features macro.csv:VIX:log macro.csv:USDKRW:logdiff
+python run_pipeline.py data.csv --inference                            # 현재 반기만 추론
+python run_pipeline.py data.csv --encoder mamba --n-seeds 5            # 시드 0~4: 개별 성과 평균 + 앙상블
 ```
 
-```python
-from run_pipeline import run_pipeline
-res = run_pipeline(input="data.csv", out_dir="out", model="sjm", feature_set="extra")
-res["performance"], res["current_state"]
-```
+`--encoder`는 Jump Model 앞에 붙는 단계일 뿐이라, 아래 데이터·피처·모델·재추정·백테스트 옵션은 `--encoder none`과 `mamba`에서 똑같이 동작합니다.
 
-### 주요 옵션
+## 옵션
 
-| 단계 | 옵션 |
+| 단계 | 옵션 (기본값) |
 |---|---|
-| 데이터 | `--date-col/--close-col/--rf-col` (기본 자동 인식), `--rf-unit` (기본 연율 %, `/100/252`), `--rf-const`, `--relative-benchmark PATH`, `--signal-ret {auto,absolute,relative}`, `--start/--end` |
-| 피처 | `--feature-set {paper,example,extra,none}`, `--extra-features 파일:열:변환`, `--remove-series 계열`, `--warmup 252` |
-| 모델 | `--model {jm,sjm}`, `--discrete` (기본은 연속형 cont=True), `--n-states`, `--jump-penalty 50`, `--max-feats`, `--pin-features` |
+| 데이터 | `--date-col/--close-col/--rf-col` (자동 인식), `--rf-unit annual_pct`, `--rf-const`, `--relative-benchmark`, `--signal-ret auto`, `--start/--end` |
+| 피처 | `--feature-set paper\|example\|extra\|none`, `--extra-features 파일:열:변환`, `--remove-series`, `--warmup 252` |
+| 인코더 | `--encoder none\|mamba`, `--device auto\|cuda\|cuda:N`, `--mamba-seq-len 60`, `--mamba-d-model 8`, `--mamba-d-state 32`, `--mamba-d-conv 4`, `--mamba-expand 2`, `--mamba-layers 4`, `--mamba-dropout 0.1`, `--mamba-epochs 100`, `--mamba-patience 10`, `--mamba-batch-size 1024`, `--mamba-lr 5e-4`, `--mamba-valid-frac 0.2` |
+| 모델 | `--model jm\|sjm`, `--discrete`, `--n-states 2`, `--jump-penalty 50`, `--max-feats`, `--pin-features`, `--n-init 10`, `--clip-mul 3`, `--center-distance` |
 | 재추정 | `--train-window 3000`, `--min-train 500`, `--refit-months 1,7`, `--oos-start` |
-| 백테스트 | `--delay 1`, `--delays 1,2,3,5,10`, `--min-cash/--max-cash`, `--cost-bps 10`, `--cost-buy-bps/--cost-sell-bps`, `--backtest-ret {absolute,relative}` |
-| HMM | `--hmm`, `--hmm-refit 21`, `--hmm-median 5`, `--hmm-states 2` |
+| 백테스트 | `--delay 1`, `--delays 1,2,3,5,10`, `--min-cash 0`, `--max-cash 1`, `--cost-bps 10`, `--backtest-ret absolute\|relative` |
+| 여러 시드 | `--n-seeds 1` (`--seed`부터 연속), `--seeds 0,1,2,3,4`, `--seed-mode ensemble\|individual\|both` (both) |
+| HMM | `--hmm`, `--hmm-states 2`, `--hmm-refit 21`, `--hmm-median 5` |
 
-- 입력 파일: csv/tsv/xlsx. 인코딩은 utf-8 → cp949 → euc-kr 순으로 시도하고, `1,234.5`·`3.5%` 같은 표기도 숫자로 읽습니다.
-- 피처 세트: `paper` = DD-log_10, sortino_20, sortino_60 (논문 Table 2) / `example` = ret·DD-log·sortino × 5·20·60 (9개) / `extra` = ret·sortino·DD·std·var·mad·rms·vol-log·vol-chg × 5·20·60 (27개).
-- 사용자 변수 변환: `none, log, diff_n, pct_n, logdiff_n, zscore_w, ewm_hl, lag_n` (`+`로 연결, 예: `logdiff+ewm_20`). 변환은 원래 관측 주기에서 적용한 뒤 거래일로 forward-fill 합니다. 파일을 생략하면 입력 파일의 열을 씁니다.
-- `--backtest-ret relative`: bull이면 자산, bear이면 벤치마크를 보유하고 벤치마크 대비 초과성과(IR)로 평가합니다.
-- 상태 0 = bull, 마지막 상태 = bear (`sort_by="cumret"`). 0/1 전략은 bear 상태에서만 현금(또는 벤치마크)으로 이동합니다.
+- 피처 세트: `paper` = DD-log_10, sortino_20, sortino_60 / `example` = ret·DD-log·sortino × 5·20·60일 (9개) / `extra` = 9개 계열 × 5·20·60일 (27개).
+- 사용자 변수 변환: `none, log, diff_n, pct_n, logdiff_n, zscore_w, ewm_hl, lag_n` (`+`로 연결).
+- 상태 0 = bull, 마지막 상태 = bear. 0/1 전략은 bear일 때 현금(`relative`면 벤치마크)을 보유합니다.
+- `--encoder mamba`: 재추정마다 학습창으로 Mamba를 새로 학습하고(시퀀스 → 다음 날 수익률, MSE, 뒤쪽 `--mamba-valid-frac`로 early stopping), 각 날짜의 마지막 hidden 벡터 `h_0..`를 Jump Model 입력으로 씁니다. mamba-ssm은 CUDA 전용이라 GPU가 없으면 시작 단계에서 에러로 끝납니다. `--pin-features`는 쓸 수 없습니다.
+- `--center-distance`: `regimes.csv`(`--inference`면 `inference_regimes.csv`)에 날짜별 상태 중심점과의 유클리드 거리 `dist_0..`를 추가합니다. 거리는 모델이 손실을 재는 공간(학습창 기준 클리핑·표준화, `sjm`이면 피처 가중치를 곱한 공간, `--encoder mamba`면 hidden 벡터)에서 그 반기를 맡은 재추정 모델의 중심점으로 계산합니다. Jump Model의 손실은 `0.5 × dist²`이며, jump penalty 때문에 국면이 항상 가장 가까운 중심점과 일치하지는 않습니다. 개별 모델의 값이라 여러 시드 실행에서는 `seed_<s>/`에만 들어가고 앙상블 표에는 없습니다.
+- 여러 시드 (`--n-seeds`/`--seeds`가 2개 이상): 시드는 Jump Model 초기값(`--n-init`)과 Mamba 가중치 초기화·배치 순서를 바꿉니다.
+  - `individual`: 시드마다 전체 파이프라인을 `seed_<s>/`에 저장하고, 전략 성과의 평균·표준편차·최소·최대를 `seed_performance.csv`로 정리합니다.
+  - `ensemble`: 날짜마다 시드별 상태 확률을 평균해 argmax를 국면으로 삼고(이산형이면 다수결) 한 번 백테스트해 `ensemble/`에 저장합니다. HMM·에피소드 분석은 하지 않습니다.
+  - `both`: 둘 다 하며, 앙상블은 개별 실행 결과를 재사용합니다. `seed_performance.csv`에 `ensemble` 행이 함께 들어갑니다.
+  - `--inference`와 함께 쓰면 시드별 · 앙상블 현재 국면만 저장합니다.
 
-### 출력 (`out/`)
+## 출력 (`--out`, 기본 `out/`)
 
 | 파일 | 내용 |
 |---|---|
-| `regimes.csv` | 날짜별 온라인 국면·상태 확률·재추정 시점 |
+| `regimes.csv` | 날짜별 국면·상태 확률·재추정일 (`--center-distance`면 중심점 거리 `dist_k`) |
 | `refit_params.csv` | 재추정 × 상태별 중심점, 연율 수익률·변동성, stay_prob |
-| `strategy.csv`, `performance.csv`, `regime_summary.csv` | 0/1 전략 일별 내역과 성과 |
-| `delay_robustness.csv` | 거래 지연별 성과 (논문 Table 5) |
-| `feat_weights.csv`, `weight_groups.csv` | (sjm) 피처 가중치와 유형·계열·기간별 비중 |
-| `regime_episodes.csv`, `similar_episodes.csv`, `episode_path_rmse.csv`, `length_scenarios.csv` | 에피소드 지표, 유사 국면, 경로 RMSE, 종료 시나리오 |
-| `hmm_regimes.csv`, `model_comparison.csv` | (--hmm) HMM 국면과 공통 구간 성과 비교 |
-| `current_state.json`, `run_config.json` | 현재 국면 요약, 실행 설정 |
-| `*.png` | 국면·누적수익률, 재추정 파라미터, 비중, 피처 가중, 에피소드 길이, 유사 국면 경로, 지연 로버스트니스 |
+| `strategy.csv`, `performance.csv`, `delay_robustness.csv` | 전략 일별 내역, 성과, 지연별 성과 |
+| `feat_weights.csv`, `weight_groups*.csv` | (sjm) 피처 가중치와 그룹별 비중 |
+| `regime_episodes.csv`, `similar_episodes.csv`, `length_scenarios.csv` | 에피소드, 유사 국면, 종료 시나리오 |
+| `hmm_regimes.csv`, `model_comparison.csv` | (--hmm) HMM 비교 |
+| `mamba_train_log.csv` | (--encoder mamba) 재추정별 epoch, train/valid loss |
+| `current_state.json`, `run_config.json`, `*.png` | 현재 국면, 실행 설정, 그림 |
+| `seed_<s>/`, `seed_performance.csv`, `seed_current_state.csv` | (여러 시드 · individual) 시드별 결과, 시드별 성과와 평균·표준편차, 시드별 현재 국면 |
+| `ensemble/` | (여러 시드 · ensemble) `regimes.csv`(평균 확률, `agreement`, `regime_seed<s>`), `strategy.csv`, `performance.csv`, `delay_robustness.csv`, `current_state.json` |
 
-`--inference`는 가장 최근 반기 시작점 직전 3000일로 한 번만 학습하고 현재 반기만 온라인 추론합니다 (`inference_*.csv`, `current_state.json`; 전략 성과는 계산하지 않음).
+`--inference`는 최근 반기 시작점 직전 학습창으로 한 번만 학습하고 현재 반기만 추론합니다 (`inference_*.csv`).
 
-### 인과성 규칙 (`tests/test_pipeline.py`에서 검증)
+## End-to-End Regime Mamba (`scripts/e2e_backtest.py`)
 
-- 클리핑(3σ)과 표준화는 학습창에만 fit 합니다.
-- 추론은 온라인 방식이라 각 날짜에 그날까지의 데이터만 씁니다 (재추정 구간 중간 이후 데이터를 바꿔도 이전 국면은 그대로).
-- 거래는 신호보다 `delay`일 늦게 체결됩니다.
+Jump Model 없이 Mamba가 국면 확률을 직접 출력하도록 학습하는 실험용 모델입니다 (Gumbel-Softmax, jump penalty · 분리 · 2단계 엔트로피 손실). `[학습 train_years][검증 valid_years]` 창을 `forward_months`씩 옮기며 학습하고, 다음 구간에서 스무딩 방법별 전략 성과를 비교합니다.
 
 ```bash
-pip install pytest && python -m pytest tests/
+python scripts/e2e_backtest.py --data_path data.csv --feature_set paper --e2e_preset balanced   # CSV: Date, returns, target_returns_1
 ```
+
+## 인과성 규칙 (`tests/`에서 검증)
+
+- 클리핑·표준화·Mamba 학습은 재추정일 이전 학습창으로만 합니다.
+- t일의 국면(과 hidden 벡터)은 t일까지의 데이터만 씁니다.
+- 거래는 신호보다 `--delay`일 늦게 체결됩니다.
 
 ## License
 
-This project is licensed under the Creative Commons Attribution-ShareAlike 4.0 International License.
-
-## Acknowledgments
-We acknowledge all data sources according to their respective licensing terms:
-
-S&P 500 index, Treasury bills, Dollar Index, and individual stock data from Yahoo Finance
-KOSPI and CD-91 data from the Bank of Korea's Economic Statistics System (ECOS) under the Korea Open Government License (KOGL Type 1)
+CC BY-SA 4.0. 데이터: S&P 500·T-bill·Dollar Index·개별 종목(Yahoo Finance), KOSPI·CD-91(한국은행 ECOS, KOGL Type 1).

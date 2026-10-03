@@ -1,6 +1,5 @@
 import torch
 import torch.nn as nn
-import numpy as np
 from mamba_ssm import Mamba
 from mamba_ssm.modules.block import Block
 from mamba_ssm.modules.mlp import GatedMLP
@@ -16,8 +15,7 @@ class TimeSeriesMamba(nn.Module):
         expand=2,           # Expansion coefficient
         n_layers=4,         # Number of Mamba layers
         dropout=0.1,         # Dropout rate
-        output_dim=1,        # Output dimension
-        config=None         # Configuration object
+        output_dim=1         # Output dimension
     ):
         """
         Mamba-based time series model implementation
@@ -32,20 +30,12 @@ class TimeSeriesMamba(nn.Module):
             n_layers: Number of Mamba layers
             dropout: Dropout rate
             output_dim: Output dimension
-            config: Configuration object
         """
         super().__init__()
 
         self.input_dim = input_dim # (batch_size, seq_len, input_dim)
         self.d_model = d_model
         self.output_dim = output_dim
-        self.config = config
-
-        if self.config is not None:
-            self.input_dim = config.input_dim
-            self.d_model = config.d_model
-            self.output_dim = 3 if config.direct_train else 1
-                
 
         # Input embedding
         self.input_embedding = nn.Linear(input_dim, d_model)
@@ -105,26 +95,3 @@ class TimeSeriesMamba(nn.Module):
         if return_hidden:
             return prediction, hidden
         return prediction
-
-def create_model_from_config(config):
-    """
-    Create model from configuration
-    
-    Args:
-        config: Configuration object
-        
-    Returns:
-        model: Created model
-    """
-    model = TimeSeriesMamba(
-        input_dim=config.input_dim,  # Basic input dimension is 4 (returns, dd_10, sortino_20, sortino_60)
-        d_model=config.d_model,
-        d_state=config.d_state,
-        d_conv=config.d_conv,
-        expand=config.expand,
-        n_layers=config.n_layers,
-        dropout=config.dropout,
-        output_dim=3 if config.direct_train else 1,
-        config=config
-    )
-    return model
