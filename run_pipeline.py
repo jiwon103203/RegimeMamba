@@ -112,7 +112,7 @@ def _fit_rolling(cfg: PipelineConfig, X: pd.DataFrame, signal: pd.Series, start=
                           jump_penalty=cfg.jump_penalty, max_feats=cfg.max_feats, pinned=pinned or None,
                           train_window=cfg.train_window, min_train=cfg.min_train, refit_months=cfg.refit_months,
                           start=start, clip_mul=cfg.clip_mul, grid_size=cfg.grid_size, n_init=cfg.n_init,
-                          random_state=cfg.seed, encoder=encoder)
+                          random_state=cfg.seed, encoder=encoder, center_distance=cfg.center_distance)
 
 
 def _regime_table(res: RollingJMResult, signal: pd.Series) -> pd.DataFrame:
@@ -524,6 +524,8 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--grid-size", type=float, default=d.grid_size, help="연속형 모델 확률 격자 크기")
     g.add_argument("--n-init", type=int, default=d.n_init, help="모델 초기값 개수")
     g.add_argument("--clip-mul", type=float, default=d.clip_mul, help="학습창 기준 클리핑 σ 배수")
+    g.add_argument("--center-distance", action="store_true",
+                   help="regimes.csv 에 날짜별 상태 중심점과의 거리 dist_0.. 를 추가 (표준화 · sjm 가중 공간)")
     g.add_argument("--seed", type=int, default=d.seed)
 
     g = p.add_argument_group("여러 시드")

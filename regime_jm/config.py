@@ -42,6 +42,7 @@ class PipelineConfig:
     grid_size: float = 0.05
     n_init: int = 10
     clip_mul: float = 3.0
+    center_distance: bool = False          # regimes 에 상태별 중심점과의 거리 dist_0.. 출력
     seed: int = 0
     # 여러 시드: seeds 를 주면 그 목록, 아니면 seed, seed+1, ... (n_seeds 개)
     seeds: Tuple[int, ...] = ()

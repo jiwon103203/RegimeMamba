@@ -196,7 +196,7 @@ def test_rolling_jm_is_causal_within_segment():
     """
     _, ret, _ = simulate(1600)
     X = build_features(ret, "paper")
-    base = run_rolling_jm(X, ret, **FAST)
+    base = run_rolling_jm(X, ret, center_distance=True, **FAST)
     seg = base.regimes[base.regimes["refit_date"] == base.refit_dates[2]]
     cut = seg.index[len(seg) // 2]
 
@@ -204,7 +204,7 @@ def test_rolling_jm_is_causal_within_segment():
     rng = np.random.default_rng(99)
     ret2.loc[cut:] = rng.normal(-0.01, 0.05, int((ret.index >= cut).sum()))
     X2 = build_features(ret2, "paper")
-    pert = run_rolling_jm(X2, ret2, **FAST)
+    pert = run_rolling_jm(X2, ret2, center_distance=True, **FAST)
 
     before = base.regimes.index < cut
     pd.testing.assert_frame_equal(base.regimes[before], pert.regimes[before])
@@ -239,6 +239,21 @@ def test_continuous_and_sparse_models_run():
                          max_feats=2.0, pinned=["ret_60"])
     assert sjm.feat_weights is not None and (sjm.feat_weights["ret_60"] > 0).all()
     assert list(sjm.feat_weights.index) == sjm.refit_dates
+
+
+@pytest.mark.parametrize("model", ["jm", "sjm"])
+def test_center_distance_matches_model_loss(model):
+    """jump_penalty=0 이면 온라인 추론 국면 = 거리가 가장 가까운 중심점 (sjm 은 가중 공간에서)."""
+    _, ret, _ = simulate(1100)
+    X = build_features(ret, "example")
+    kw = dict(model=model, cont=False, jump_penalty=0.0, train_window=400, min_train=250, n_init=2,
+              max_feats=3.0 if model == "sjm" else None)
+    res = run_rolling_jm(X, ret, center_distance=True, **kw)
+    reg = res.regimes
+    dist = reg[["dist_0", "dist_1"]].to_numpy()
+    assert (dist >= 0).all() and np.isfinite(dist).all()
+    np.testing.assert_array_equal(reg["regime"], dist.argmin(axis=1))
+    assert "dist_0" not in run_rolling_jm(X, ret, **kw).regimes.columns
 
 
 # ---------------------------------------------------------------------------
@@ -564,4 +579,18 @@ def test_cli_multi_seed(files, tmp_path):
     cfg = json.loads((tmp_path / "run_config.json").read_text(encoding="utf-8"))
     assert cfg["seeds"] == [3, 5] and cfg["seed_mode"] == "individual"
     assert run_pipeline.main([*base, "--seeds", "1,1"]) == 1
+
+
+def test_cli_center_distance(files, tmp_path):
+    base = [files["asset"], "--discrete", "--train-window", "400", "--min-train", "250", "--n-init", "2",
+            "--delays", "1,2", "--no-plots", "-q", "--center-distance"]
+    assert run_pipeline.main([*base, "--out", str(tmp_path / "one")]) == 0
+    reg = pd.read_csv(tmp_path / "one" / "regimes.csv", index_col=0)
+    assert {"dist_0", "dist_1"} <= set(reg.columns) and reg[["dist_0", "dist_1"]].notna().all().all()
+    # 거리는 개별 모델의 값: 시드별 결과에는 있고 앙상블 국면표에는 없다
+    assert run_pipeline.main([*base, "--out", str(tmp_path / "multi"), "--n-seeds", "2"]) == 0
+    assert "dist_0" in pd.read_csv(tmp_path / "multi" / "seed_1" / "regimes.csv", index_col=0).columns
+    assert "dist_0" not in pd.read_csv(tmp_path / "multi" / "ensemble" / "regimes.csv", index_col=0).columns
+    assert run_pipeline.main([*base, "--out", str(tmp_path / "inf"), "--inference"]) == 0
+    assert "dist_1" in pd.read_csv(tmp_path / "inf" / "inference_regimes.csv", index_col=0).columns
     assert run_pipeline.main([*base, "--n-seeds", "0"]) == 1

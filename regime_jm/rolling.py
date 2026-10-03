@@ -152,6 +152,21 @@ def infer_online(model, prep: WindowPreprocessor, X_train: pd.DataFrame, X_seg: 
     return proba.iloc[len(X_train):]
 
 
+def center_distances(model, prep: WindowPreprocessor, X: pd.DataFrame) -> pd.DataFrame:
+    """각 행과 상태별 중심점의 유클리드 거리 ``dist_0..`` (모델이 손실을 재는 공간과 같다).
+
+    학습창 기준 클리핑·표준화를 적용한 공간이며, sjm 이면 피처와 중심점 모두 feat_weights 가 곱해진 공간이다.
+    jumpmodels 의 손실은 0.5 * dist**2 이다. t 행의 거리는 t 행 피처와 재추정 모델만 쓰므로 인과적이다.
+    """
+    Z = prep.transform(X).to_numpy(dtype=float)
+    fw = getattr(model, "feat_weights", None)
+    if fw is not None:
+        Z = Z * np.asarray(fw, dtype=float)
+    centers = np.asarray(model.centers_, dtype=float)  # sjm 은 이미 가중치가 곱해진 중심점
+    dist = np.sqrt(((Z[:, None, :] - centers[None, :, :]) ** 2).sum(axis=2))
+    return pd.DataFrame(dist, index=X.index, columns=[f"dist_{k}" for k in range(centers.shape[0])])
+
+
 def window_params(model, prep: WindowPreprocessor, X_train: pd.DataFrame, n_states: int) -> pd.DataFrame:
     """상태별 파라미터: 연율 수익률·변동성, stay_prob, 비중, 표준화 공간의 중심점."""
     jm = _inner_jm(model)
@@ -185,7 +200,8 @@ def run_rolling_jm(features: pd.DataFrame, signal_ret: pd.Series, *, model: str 
                    pinned: Optional[Iterable[str]] = None, train_window: int = 3000, min_train: int = 500,
                    refit_months: Sequence[int] = (1, 7), start=None, end=None, clip_mul: float = 3.0,
                    grid_size: float = 0.05, n_init: int = 10, random_state: int = 0,
-                   encoder: Optional[Callable[..., pd.DataFrame]] = None) -> RollingJMResult:
+                   encoder: Optional[Callable[..., pd.DataFrame]] = None,
+                   center_distance: bool = False) -> RollingJMResult:
     """6개월 재추정 + 온라인 추론으로 날짜별 국면을 만든다 (모듈 docstring 참고).
 
     Args:
@@ -195,6 +211,7 @@ def run_rolling_jm(features: pd.DataFrame, signal_ret: pd.Series, *, model: str 
         end: 이 날짜까지의 피처만 사용
         encoder: ``encoder(X, y, lo, pos, seg_end)`` → X.iloc[lo:seg_end] 행의 새 피처.
             pos 이전 행으로만 학습해야 한다 (인과성)
+        center_distance: True 면 regimes 에 상태별 중심점과의 거리 ``dist_0..`` 를 붙인다 (``center_distances``)
     """
     if train_window < min_train:
         raise ValueError("train_window 는 min_train 이상이어야 합니다")
@@ -229,6 +246,8 @@ def run_rolling_jm(features: pd.DataFrame, signal_ret: pd.Series, *, model: str 
         for k in range(n_states):
             seg[f"prob_{k}"] = proba[k].to_numpy()
         seg["refit_date"] = d
+        if center_distance:
+            seg = seg.join(center_distances(m, prep, X_seg))
         regime_parts.append(seg)
 
         params = window_params(m, prep, X_tr, n_states)
