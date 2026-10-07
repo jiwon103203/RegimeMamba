@@ -2,8 +2,10 @@
 
 ``rolling.run_rolling_jm`` 의 ``encoder`` 로 호출되며, 재추정 시점 d 마다
   1. d 이전 학습창으로만 3σ 클리핑·표준화를 fit 하고 피처에 적용
-  2. t 행에서 끝나는 ``mamba_seq_len`` 시퀀스 → 다음 날 신호 수익률(학습창 표준편차로 나눔)을 MSE 로 학습.
-     타깃이 d 이전인 시퀀스만 쓰고, 뒤쪽 ``mamba_valid_frac`` 를 시간 순서대로 떼어 early stopping
+  2. t 행에서 끝나는 ``mamba_seq_len`` 시퀀스 → ``mamba_horizons`` 의 각 h 에 대해 t+1..t+h 일 신호 수익률 합
+     (학습창의 h일 수익률 표준편차로 나눔)을 MSE 로 동시에 학습 (기본 h=1: 다음 날 수익률, 1,5,20: 다음 날·1주·1달).
+     타깃이 모두 d 이전인 시퀀스만 쓰고, 뒤쪽 ``mamba_valid_frac`` 를 시간 순서대로 떼어 early stopping
+     (h>1 이면 학습 타깃이 검증 구간과 겹치지 않게 그 사이 max(h)-1 개 시퀀스를 버린다)
   3. [학습창 + 다음 재추정 전 구간] 각 t 행의 hidden 벡터(``h_0`` ..)를 돌려준다 → 이후는 jm / sjm 과 같다.
 네트워크는 d 이전 데이터로만 학습되고 t 행의 hidden 은 t 행까지의 피처만 쓰므로 인과적이다.
 
@@ -55,7 +57,7 @@ def build_mamba_backbone(n_features: int, cfg):
     from regime_mamba.models.mamba_model import TimeSeriesMamba
     return TimeSeriesMamba(input_dim=n_features, d_model=cfg.mamba_d_model, d_state=cfg.mamba_d_state,
                            d_conv=cfg.mamba_d_conv, expand=cfg.mamba_expand, n_layers=cfg.mamba_layers,
-                           dropout=cfg.mamba_dropout, output_dim=1)
+                           dropout=cfg.mamba_dropout, output_dim=len(cfg.mamba_horizons))
 
 
 def _windows(Z: np.ndarray, ends: np.ndarray, seq_len: int) -> np.ndarray:
@@ -70,7 +72,7 @@ class MambaEncoder:
 
     ``cfg`` 는 ``PipelineConfig`` (``mamba_*``, ``clip_mul``, ``seed`` 를 읽는다).
     ``backbone_factory(n_features, cfg)`` 는 ``forward(x, return_hidden=True)`` 가
-    ``(pred[B, 1], hidden[B, d])`` 를 돌려주는 ``torch.nn.Module`` 을 만든다.
+    ``(pred[B, len(mamba_horizons)], hidden[B, d])`` 를 돌려주는 ``torch.nn.Module`` 을 만든다.
     """
 
     def __init__(self, cfg, device: str, backbone_factory: Optional[Callable[[int, Any], Any]] = None):
@@ -88,18 +90,24 @@ class MambaEncoder:
         ctx = max(0, lo - L + 1)  # 학습창 첫 시퀀스에 쓸 이전 행
         Z = prep.transform(X.iloc[ctx:seg_end]).to_numpy(dtype=np.float32)
 
-        # 학습 샘플: t ∈ [lo, pos-1) 에서 끝나는 시퀀스 → y[t+1] (타깃도 pos 이전)
-        y_arr = y.to_numpy(dtype=np.float64)
-        t_ends = np.arange(lo, pos - 1)
-        if len(t_ends) < 2:
+        # 학습 샘플: t ∈ [lo, pos-max(h)) 에서 끝나는 시퀀스 → h 마다 y[t+1] + .. + y[t+h] (타깃이 모두 pos 이전)
+        horizons = tuple(c.mamba_horizons)
+        gap = max(horizons) - 1
+        csum = np.concatenate([[0.0], np.cumsum(y.to_numpy(dtype=np.float64))])  # csum[i] = y[:i] 합
+        t_ends = np.arange(lo, pos - gap - 1)
+        if len(t_ends) < gap + 2:
             raise ValueError("Mamba 학습 샘플이 부족합니다")
         Xs = _windows(Z, t_ends - ctx, L)
-        Ys = (y_arr[t_ends + 1] / (float(np.std(y_arr[lo:pos])) or 1.0)).astype(np.float32)
-        n_val = min(max(int(round(len(Xs) * c.mamba_valid_frac)), 1), len(Xs) - 1)
-        n_tr = len(Xs) - n_val
+        # h일 수익률 = csum[t+1+h] - csum[t+1], 학습창 [lo, pos) 안의 h일 수익률 표준편차로 나눈다
+        Ys = np.stack([(csum[t_ends + 1 + h] - csum[t_ends + 1]) /
+                       (float(np.std(csum[lo + h:pos + 1] - csum[lo:pos + 1 - h])) or 1.0) for h in horizons],
+                      axis=1).astype(np.float32)
+        n_val = min(max(int(round((len(Xs) - gap) * c.mamba_valid_frac)), 1), len(Xs) - gap - 1)
+        n_tr = len(Xs) - gap - n_val  # 학습 타깃(t+h)이 검증 구간에 겹치지 않게 gap 개를 버림
 
         model = self.backbone_factory(Z.shape[1], c).to(self.device)
-        info = {"refit_date": X.index[pos], **self._train(model, Xs[:n_tr], Ys[:n_tr], Xs[n_tr:], Ys[n_tr:]),
+        info = {"refit_date": X.index[pos],
+                **self._train(model, Xs[:n_tr], Ys[:n_tr], Xs[-n_val:], Ys[-n_val:], horizons),
                 "n_train_seq": n_tr, "n_valid_seq": n_val}
         self.history.append(info)
         logger.info("mamba refit %s: epochs %d (best %d), train %.4f, valid %.4f", info["refit_date"].date(),
@@ -120,43 +128,51 @@ class MambaEncoder:
         import torch
         return torch.from_numpy(a).to(self.device)
 
-    def _valid_loss(self, model, X: np.ndarray, Y: np.ndarray) -> float:
+    def _valid_loss(self, model, X: np.ndarray, Y: np.ndarray) -> np.ndarray:
+        """horizon 별 검증 MSE."""
         import torch
         model.eval()
-        total = 0.0
+        total = np.zeros(Y.shape[1])
         with torch.no_grad():
             for b in self._batches(len(X)):
-                pred = model(self._tensor(X[b])).reshape(-1)
-                total += torch.nn.functional.mse_loss(pred, self._tensor(Y[b]), reduction="sum").item()
+                pred = model(self._tensor(X[b])).reshape(len(b), -1)
+                total += ((pred - self._tensor(Y[b])) ** 2).sum(dim=0).cpu().numpy()
         return total / len(X)
 
-    def _train(self, model, X_tr, Y_tr, X_va, Y_va) -> Dict[str, Any]:
+    def _train(self, model, X_tr, Y_tr, X_va, Y_va, horizons=(1,)) -> Dict[str, Any]:
         import torch
         c = self.cfg
         opt = torch.optim.AdamW(model.parameters(), lr=c.mamba_lr, weight_decay=0.01)
         rng = np.random.default_rng(c.seed + len(self.history))
         best, best_state, best_epoch, bad, train_loss, epoch = np.inf, None, 0, 0, np.nan, 0
+        best_by_h = np.full(len(horizons), np.nan)
         for epoch in range(1, c.mamba_epochs + 1):
             model.train()
             total = 0.0
             for b in self._batches(len(X_tr), rng):
                 opt.zero_grad()
-                loss = torch.nn.functional.mse_loss(model(self._tensor(X_tr[b])).reshape(-1), self._tensor(Y_tr[b]))
+                pred = model(self._tensor(X_tr[b])).reshape(len(b), -1)
+                loss = torch.nn.functional.mse_loss(pred, self._tensor(Y_tr[b]))  # horizon 평균
                 loss.backward()
                 torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
                 opt.step()
                 total += loss.item() * len(b)
             train_loss = total / len(X_tr)
-            val = self._valid_loss(model, X_va, Y_va)
+            val_by_h = self._valid_loss(model, X_va, Y_va)
+            val = float(val_by_h.mean())
             if val < best - 1e-8:
                 best, best_epoch, bad, best_state = val, epoch, 0, copy.deepcopy(model.state_dict())
+                best_by_h = val_by_h
             else:
                 bad += 1
                 if bad >= c.mamba_patience:
                     break
         if best_state is not None:
             model.load_state_dict(best_state)
-        return {"epochs": epoch, "best_epoch": best_epoch, "train_loss": train_loss, "valid_loss": float(best)}
+        info = {"epochs": epoch, "best_epoch": best_epoch, "train_loss": train_loss, "valid_loss": float(best)}
+        if len(horizons) > 1:
+            info.update({f"valid_loss_h{h}": float(v) for h, v in zip(horizons, best_by_h)})
+        return info
 
     def _encode(self, model, X: np.ndarray) -> np.ndarray:
         import torch

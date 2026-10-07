@@ -65,6 +65,7 @@ class PipelineConfig:
     mamba_batch_size: int = 1024
     mamba_lr: float = 5e-4
     mamba_valid_frac: float = 0.2
+    mamba_horizons: Tuple[int, ...] = (1,)  # 동시에 예측할 미래 수익률 기간 (거래일), 예: (1, 5, 20)
 
     # 롤링 재추정
     train_window: int = 3000
@@ -139,6 +140,12 @@ class PipelineConfig:
                 raise ValueError("--mamba-* 크기 옵션은 1 이상이어야 합니다")
             if not 0.0 < self.mamba_valid_frac < 1.0:
                 raise ValueError("--mamba-valid-frac 은 0 과 1 사이여야 합니다")
+            if not self.mamba_horizons or min(self.mamba_horizons) < 1:
+                raise ValueError("--mamba-horizons 는 1 이상의 거래일 수여야 합니다")
+            if len(set(self.mamba_horizons)) != len(self.mamba_horizons):
+                raise ValueError("--mamba-horizons 에 중복된 값이 있습니다")
+            if max(self.mamba_horizons) >= self.min_train // 2:
+                raise ValueError("--mamba-horizons 의 최댓값은 --min-train 의 절반보다 작아야 합니다")
         if self.n_seeds < 1:
             raise ValueError("--n-seeds 는 1 이상이어야 합니다")
         if len(set(self.seed_list)) != len(self.seed_list):

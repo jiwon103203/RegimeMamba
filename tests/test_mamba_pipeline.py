@@ -5,6 +5,8 @@ mamba-ssm 은 CUDA 전용이므로 학습·인과성 테스트는 같은 인터�
     pytest tests/test_mamba_pipeline.py
 """
 
+import dataclasses
+import json
 import os
 import sys
 
@@ -33,7 +35,7 @@ class GRUBackbone(torch.nn.Module):
     def __init__(self, n_features, cfg):
         super().__init__()
         self.rnn = torch.nn.GRU(n_features, cfg.mamba_d_model, batch_first=True)
-        self.head = torch.nn.Linear(cfg.mamba_d_model, 1)
+        self.head = torch.nn.Linear(cfg.mamba_d_model, len(cfg.mamba_horizons))
 
     def forward(self, x, return_hidden=False):
         out, _ = self.rnn(x)
@@ -116,6 +118,61 @@ def test_config_and_cli_options():
         PipelineConfig(input="d.csv", encoder="mamba", mamba_valid_frac=1.0).validate()
     with pytest.raises(ValueError, match="pin-features"):
         PipelineConfig(input="d.csv", encoder="mamba", model="sjm", pin_features=["sortino_20"]).validate()
+    args = run_pipeline.build_parser().parse_args(["d.csv", "--encoder", "mamba", "--mamba-horizons", "1,5,20"])
+    assert run_pipeline.config_from_args(args).validate().mamba_horizons == (1, 5, 20)
+    assert PipelineConfig().mamba_horizons == (1,)
+    for bad in [(), (0, 5), (1, 1), (300,)]:
+        with pytest.raises(ValueError, match="mamba-horizons"):
+            PipelineConfig(input="d.csv", encoder="mamba", mamba_horizons=bad).validate()
+
+
+class CaptureEncoder(MambaEncoder):
+    """_train 에 넘어가는 학습 / 검증 샘플을 기록한다."""
+
+    def _train(self, model, X_tr, Y_tr, X_va, Y_va, horizons=(1,)):
+        self.captured = (X_tr, Y_tr, X_va, Y_va)
+        return super()._train(model, X_tr, Y_tr, X_va, Y_va, horizons)
+
+
+def test_multi_horizon_targets():
+    """h 마다 t+1..t+h 수익률 합 / 학습창 h일 수익률 표준편차, 타깃은 모두 pos 이전, 학습 · 검증 사이 max(h)-1 간격."""
+    X = build_features(simulate(), "paper")
+    y = pd.Series(np.random.default_rng(1).normal(0, 0.01, len(X)), index=X.index)
+    lo, pos, seg_end = 100, 500, 620
+    yv = y.to_numpy()
+
+    one = CaptureEncoder(SMALL, "cpu", GRUBackbone)
+    one(X, y, lo, pos, seg_end)
+    X_tr, Y_tr, X_va, Y_va = one.captured
+    assert Y_tr.shape[1] == 1 and len(X_tr) + len(X_va) == pos - 1 - lo  # 기본값: 기존 다음 날 타깃 그대로
+    np.testing.assert_allclose(np.concatenate([Y_tr, Y_va])[:, 0], yv[lo + 1:pos] / yv[lo:pos].std(), rtol=1e-5)
+
+    hs = (1, 5, 20)
+    cfg = dataclasses.replace(SMALL, mamba_horizons=hs)
+    enc = CaptureEncoder(cfg, "cpu", GRUBackbone)
+    H = enc(X, y, lo, pos, seg_end)
+    assert H.shape == (seg_end - lo, cfg.mamba_d_model)
+    X_tr, Y_tr, X_va, Y_va = enc.captured
+    assert Y_tr.shape[1] == Y_va.shape[1] == 3
+    t_tr = lo + np.arange(len(X_tr))
+    t_va = pos - 20 - len(X_va) + np.arange(len(X_va))
+    assert t_va[-1] + 20 == pos - 1 and t_va[0] - t_tr[-1] == 20  # 마지막 타깃은 pos-1, 사이 19개 버림
+    for k, h in enumerate(hs):
+        sums = np.convolve(yv[lo:pos], np.ones(h), "valid")  # 학습창 안의 h일 수익률
+        for t, row in [(t_tr, Y_tr), (t_va, Y_va)]:
+            want = np.array([yv[s + 1:s + 1 + h].sum() for s in t]) / sums.std()
+            np.testing.assert_allclose(row[:, k], want, rtol=1e-4, atol=1e-6)
+    log = enc.history_frame()
+    assert {"valid_loss_h1", "valid_loss_h5", "valid_loss_h20"} <= set(log.columns)
+    np.testing.assert_allclose(log[["valid_loss_h1", "valid_loss_h5", "valid_loss_h20"]].mean(axis=1),
+                               log["valid_loss"], rtol=1e-6)
+    assert "valid_loss_h1" not in one.history_frame().columns
+
+    # pos 이후 수익률은 학습에 쓰이지 않는다
+    y2 = y.copy()
+    y2.iloc[pos:] = 0.5
+    H2 = MambaEncoder(cfg, "cpu", GRUBackbone)(X, y2, lo, pos, seg_end)
+    np.testing.assert_allclose(H2, H, atol=1e-6)
 
 @pytest.fixture
 def asset_csv(tmp_path):
@@ -182,3 +239,13 @@ def test_cli_mamba_multi_seed(cpu_mamba, asset_csv, tmp_path):
     p1 = pd.read_csv(both / "seed_1" / "refit_params.csv")
     assert not np.allclose(p0["center_h_0"], p1["center_h_0"])
     pd.testing.assert_frame_equal(pd.read_csv(both / "ensemble" / "regimes.csv", index_col=0), reg)
+
+
+def test_cli_mamba_multi_horizon(cpu_mamba, asset_csv, tmp_path):
+    out = tmp_path / "mh"
+    assert run_pipeline.main([asset_csv, "--out", str(out), "--mamba-horizons", "1,5,20", *MAMBA_ARGS]) == 0
+    log = pd.read_csv(out / "mamba_train_log.csv")
+    assert {"valid_loss_h1", "valid_loss_h5", "valid_loss_h20"} <= set(log.columns)
+    with open(out / "run_config.json", encoding="utf-8") as f:
+        assert json.load(f)["mamba_horizons"] == [1, 5, 20]
+    assert (out / "performance.csv").exists()

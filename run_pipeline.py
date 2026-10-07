@@ -21,6 +21,7 @@
     python run_pipeline.py data.csv --inference
     python run_pipeline.py data.csv --encoder mamba --feature-set example --device cuda:0
     python run_pipeline.py data.csv --encoder mamba --n-seeds 5 --seed-mode both
+    python run_pipeline.py data.csv --encoder mamba --mamba-horizons 1,5,20
 """
 
 from __future__ import annotations
@@ -101,8 +102,8 @@ def _make_encoder(cfg: PipelineConfig) -> Optional[mamba_encoder.MambaEncoder]:
     if cfg.encoder != "mamba":
         return None
     device = mamba_encoder.resolve_device(cfg.device)
-    logger.info("mamba encoder on %s (seq_len=%d, d_model=%d, layers=%d)", device, cfg.mamba_seq_len,
-                cfg.mamba_d_model, cfg.mamba_layers)
+    logger.info("mamba encoder on %s (seq_len=%d, d_model=%d, layers=%d, horizons=%s)", device, cfg.mamba_seq_len,
+                cfg.mamba_d_model, cfg.mamba_layers, ",".join(map(str, cfg.mamba_horizons)))
     return mamba_encoder.MambaEncoder(cfg, device)
 
 
@@ -568,6 +569,8 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--mamba-batch-size", type=int, default=d.mamba_batch_size)
     g.add_argument("--mamba-lr", type=float, default=d.mamba_lr)
     g.add_argument("--mamba-valid-frac", type=float, default=d.mamba_valid_frac, help="학습창 뒤쪽 검증 비율")
+    g.add_argument("--mamba-horizons", type=_int_list, default=list(d.mamba_horizons),
+                   help="동시에 예측할 미래 수익률 기간 (거래일, 콤마). 1,5,20 = 다음 날·1주·1달 multi-output")
 
     g = p.add_argument_group("롤링 재추정")
     g.add_argument("--train-window", type=int, default=d.train_window, help="최대 학습창 (거래일)")
@@ -609,6 +612,7 @@ def config_from_args(args: argparse.Namespace) -> PipelineConfig:
     values["refit_months"] = tuple(values["refit_months"])
     values["delays"] = tuple(values["delays"])
     values["seeds"] = tuple(values["seeds"] or ())
+    values["mamba_horizons"] = tuple(values["mamba_horizons"])
     for key in ("verbose", "quiet"):
         values.pop(key)
     return PipelineConfig(input=input_path or "", **values)
