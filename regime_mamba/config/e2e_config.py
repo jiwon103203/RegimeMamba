@@ -7,13 +7,13 @@ Updated: Two-Level Entropy parameters, Direction Loss removed
 
 import torch
 import os
-from .config import RollingWindowTrainConfig
+from .config import RegimeMambaConfig
 
 
-class E2ERegimeMambaConfig(RollingWindowTrainConfig):
+class E2ERegimeMambaConfig(RegimeMambaConfig):
     """
     Configuration class for End-to-End Regime Mamba training.
-    Extends RollingWindowTrainConfig with Gumbel Softmax and loss parameters.
+    Extends RegimeMambaConfig with Gumbel Softmax and loss parameters.
     
     Updated: Two-Level Entropy Regularization, No Direction Loss
     """
@@ -95,7 +95,6 @@ class E2ERegimeMambaConfig(RollingWindowTrainConfig):
         self.total_window_years = 20
         self.train_years = 16
         self.valid_years = 4
-        self.clustering_years = 0  # Not used in E2E
         self.forward_months = 24
         
         # ============================================
@@ -104,12 +103,6 @@ class E2ERegimeMambaConfig(RollingWindowTrainConfig):
         self.results_dir = './e2e_results'
         os.makedirs(self.results_dir, exist_ok=True)
         
-        # ============================================
-        # Flags
-        # ============================================
-        self.direct_train = False  # Not used in E2E (regime is learned end-to-end)
-        self.jump_model = False    # Using differentiable jump penalty instead
-        self.use_onecycle = True
     
     def __str__(self):
         """Return configuration information as a string."""
@@ -139,7 +132,7 @@ class E2ERegimeMambaConfig(RollingWindowTrainConfig):
     @classmethod
     def from_base_config(cls, base_config):
         """
-        Create E2E config from base RegimeMambaConfig.
+        Create E2E config from a base RegimeMambaConfig.
         
         Args:
             base_config: Base configuration object

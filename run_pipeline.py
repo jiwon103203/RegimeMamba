@@ -6,6 +6,7 @@
   │  data_io.py         1) 로드·정제 → 초과수익률 (+ 벤치마크 차감 rel_ret)
   │  features.py        2) EWM downside deviation · Sortino (+ extra / 커스텀 변수)
   │  rolling.py         3) 6개월마다 재추정(3000일 학습창) + 사이 구간 온라인 추론
+  │  mamba_encoder.py      (--encoder mamba) 재추정마다 Mamba 학습 → hidden 벡터를 Jump Model 입력으로 (GPU)
   │  backtest.py        4) 0/1 전략 백테스트 · 성과표 · 거래 지연 로버스트니스
   │  hmm_benchmark.py   5) HMM 벤치마크와 비교 (--hmm)
   │  weights.py         6) 변수 유형별 가중 비중 (sjm)
@@ -18,6 +19,10 @@
     python run_pipeline.py sector.csv --relative-benchmark kospi.csv --backtest-ret relative
     python run_pipeline.py data.csv --extra-features macro.csv:VIX:log macro.csv:USDKRW:logdiff
     python run_pipeline.py data.csv --inference
+    python run_pipeline.py data.csv --encoder mamba --feature-set example --device cuda:0
+    python run_pipeline.py data.csv --encoder mamba --n-seeds 5 --seed-mode both
+    python run_pipeline.py data.csv --encoder mamba --mamba-horizons 1,5,20
+    python run_pipeline.py data.csv --encoder mamba --mamba-horizons 5,20 --mamba-targets vol,mdd
 """
 
 from __future__ import annotations
@@ -30,11 +35,12 @@ import os
 import sys
 from typing import Any, Dict, List, Optional, Sequence
 
+import numpy as np
 import pandas as pd
 
-from regime_jm import plotting
+from regime_jm import mamba_encoder, plotting
 from regime_jm.backtest import delay_robustness_table, performance_table, regime_summary, run_0_1_strategy
-from regime_jm.config import PipelineConfig
+from regime_jm.config import SEED_MODES, PipelineConfig
 from regime_jm.data_io import (RF_UNITS, align_to_index, load_series, parse_extra_spec, prepare_inputs,
                                resolve_signal_return)
 from regime_jm.features import FEATURE_SETS, apply_transform, build_features, expand_feature_names
@@ -93,13 +99,24 @@ def prepare_features(cfg: PipelineConfig):
     return data, signal_col, X
 
 
-def _fit_rolling(cfg: PipelineConfig, X: pd.DataFrame, signal: pd.Series, start=None) -> RollingJMResult:
+def _make_encoder(cfg: PipelineConfig) -> Optional[mamba_encoder.MambaEncoder]:
+    if cfg.encoder != "mamba":
+        return None
+    device = mamba_encoder.resolve_device(cfg.device)
+    logger.info("mamba encoder on %s (seq_len=%d, d_model=%d, layers=%d, targets=%s, horizons=%s)", device,
+                cfg.mamba_seq_len, cfg.mamba_d_model, cfg.mamba_layers, ",".join(cfg.mamba_targets),
+                ",".join(map(str, cfg.mamba_horizons)))
+    return mamba_encoder.MambaEncoder(cfg, device)
+
+
+def _fit_rolling(cfg: PipelineConfig, X: pd.DataFrame, signal: pd.Series, start=None,
+                 encoder=None) -> RollingJMResult:
     pinned = expand_feature_names(X.columns, cfg.pin_features)
     return run_rolling_jm(X, signal, model=cfg.model, cont=cfg.cont, n_states=cfg.n_states,
                           jump_penalty=cfg.jump_penalty, max_feats=cfg.max_feats, pinned=pinned or None,
                           train_window=cfg.train_window, min_train=cfg.min_train, refit_months=cfg.refit_months,
                           start=start, clip_mul=cfg.clip_mul, grid_size=cfg.grid_size, n_init=cfg.n_init,
-                          random_state=cfg.seed)
+                          random_state=cfg.seed, encoder=encoder, center_distance=cfg.center_distance)
 
 
 def _regime_table(res: RollingJMResult, signal: pd.Series) -> pd.DataFrame:
@@ -107,6 +124,11 @@ def _regime_table(res: RollingJMResult, signal: pd.Series) -> pd.DataFrame:
     reg.insert(1, "label", [state_label(s, res.n_states) for s in reg["regime"]])
     reg["signal_ret"] = signal.reindex(reg.index)
     return reg
+
+
+def _strategy_kwargs(cfg: PipelineConfig, bear_state: int) -> Dict[str, Any]:
+    return dict(bear_state=bear_state, min_cash=cfg.min_cash, max_cash=cfg.max_cash, cost_buy=cfg.cost_buy,
+                cost_sell=cfg.cost_sell, mode=cfg.backtest_ret)
 
 
 def _save(df: Optional[pd.DataFrame], out_dir: str, name: str, index: bool = True) -> Optional[str]:
@@ -142,23 +164,25 @@ def _write_json(obj, out_dir: str, name: str):
 def run_pipeline(cfg: Optional[PipelineConfig] = None, **overrides) -> Dict[str, Any]:
     """전체 파이프라인을 실행하고 결과 DataFrame 들을 dict 로 돌려준다 (파일은 cfg.out_dir 에 저장)."""
     cfg = _resolve_cfg(cfg, overrides)
+    if len(cfg.seed_list) > 1:
+        return run_multi_seed(cfg)
     if cfg.inference:
         return run_inference(cfg)
     out = cfg.out_dir
     os.makedirs(out, exist_ok=True)
     _write_json(cfg.to_dict(), out, "run_config.json")
+    encoder = _make_encoder(cfg)  # GPU 가 없으면 데이터 처리 전에 실패
 
     # 1)~2) 데이터 · 피처
     data, signal_col, X = prepare_features(cfg)
     signal = data[signal_col]
 
-    # 3) 롤링 재추정 + 온라인 추론
-    res = _fit_rolling(cfg, X, signal, start=cfg.oos_start)
+    # 3) 롤링 재추정 + 온라인 추론 (mamba: 재추정마다 Mamba 학습 → hidden 벡터)
+    res = _fit_rolling(cfg, X, signal, start=cfg.oos_start, encoder=encoder)
     reg = _regime_table(res, signal)
 
     # 4) 백테스트
-    strat_kwargs = dict(bear_state=res.bear_state, min_cash=cfg.min_cash, max_cash=cfg.max_cash,
-                        cost_buy=cfg.cost_buy, cost_sell=cfg.cost_sell, mode=cfg.backtest_ret)
+    strat_kwargs = _strategy_kwargs(cfg, res.bear_state)
     strategy = run_0_1_strategy(reg["regime"], data, delay=cfg.delay, **strat_kwargs)
     performance = performance_table(strategy)
     summary = regime_summary(reg["regime"], signal, res.n_states)
@@ -210,6 +234,7 @@ def run_pipeline(cfg: Optional[PipelineConfig] = None, **overrides) -> Dict[str,
     _save(scenarios, out, "length_scenarios.csv", index=False)
     _save(hmm_regimes, out, "hmm_regimes.csv")
     _save(comparison, out, "model_comparison.csv")
+    _save(encoder.history_frame() if encoder else None, out, "mamba_train_log.csv", index=False)
     current = _current_state(reg, res.n_states)
     _write_json(current, out, "current_state.json")
 
@@ -248,16 +273,19 @@ def run_inference(cfg: Optional[PipelineConfig] = None, **overrides) -> Dict[str
     과거 전체 백테스트와 전략 성과는 계산하지 않는다.
     """
     cfg = _resolve_cfg(cfg, overrides)
+    if len(cfg.seed_list) > 1:
+        return run_multi_seed(dataclasses.replace(cfg, inference=True))
     out = cfg.out_dir
     os.makedirs(out, exist_ok=True)
     _write_json(cfg.to_dict(), out, "run_config.json")
+    encoder = _make_encoder(cfg)
 
     data, signal_col, X = prepare_features(cfg)
     signal = data[signal_col]
     dates = refit_schedule(X.index, cfg.refit_months, cfg.min_train)
     if not dates:
         raise ValueError("추론할 반기 시작점이 없습니다 (데이터 부족)")
-    res = _fit_rolling(cfg, X, signal, start=dates[-1])
+    res = _fit_rolling(cfg, X, signal, start=dates[-1], encoder=encoder)
     reg = _regime_table(res, signal)
 
     params = res.params
@@ -267,7 +295,7 @@ def run_inference(cfg: Optional[PipelineConfig] = None, **overrides) -> Dict[str
         "train_end": pd.Timestamp(params["train_end"].iloc[0]).date().isoformat(),
         "n_train": int(params["n_train"].iloc[0]),
         "signal": signal_col,
-        "model": cfg.model + ("" if cfg.cont else " (discrete)"),
+        "model": cfg.model + ("" if cfg.cont else " (discrete)") + (" + mamba" if encoder else ""),
     })
     for _, row in params.iterrows():
         current[f"{row['label']}_ann_ret"] = float(row["ann_ret"])
@@ -276,6 +304,7 @@ def run_inference(cfg: Optional[PipelineConfig] = None, **overrides) -> Dict[str
     _save(reg, out, "inference_regimes.csv")
     _save(params, out, "inference_params.csv", index=False)
     _save(pd.DataFrame([current]), out, "inference_summary.csv", index=False)
+    _save(encoder.history_frame() if encoder else None, out, "inference_mamba_train_log.csv", index=False)
     weights_now = None
     if res.feat_weights is not None:
         _save(res.feat_weights, out, "inference_feat_weights.csv")
@@ -291,11 +320,187 @@ def run_inference(cfg: Optional[PipelineConfig] = None, **overrides) -> Dict[str
 
 
 # ---------------------------------------------------------------------------
+# 여러 시드 (--n-seeds / --seeds)
+# ---------------------------------------------------------------------------
+
+def _seed_cfg(cfg: PipelineConfig, seed: int, out_dir: str, **extra) -> PipelineConfig:
+    return dataclasses.replace(cfg, seed=seed, seeds=(), n_seeds=1, ensemble_bear_vote=None, out_dir=out_dir, **extra)
+
+
+def ensemble_regimes(regimes: Dict[int, pd.DataFrame], n_states: int,
+                     bear_vote: Optional[float] = None) -> pd.DataFrame:
+    """시드별 국면표의 상태 확률을 날짜마다 평균내고 argmax 를 앙상블 국면으로 삼는다.
+
+    상태는 시드마다 같은 규칙(상태 0 = bull, 마지막 = bear, sort_by='cumret')으로 정렬돼 있어 바로 평균낼 수 있다.
+    이산형 모델이면 확률이 one-hot 이라 다수결과 같다. agreement 는 앙상블 국면과 같은 시드의 비율,
+    bear_vote 는 bear 로 판정한 시드의 비율.
+    bear_vote 기준을 주면 bear 표 비율이 그 값 이상인 날을 bear 로, 나머지 날은 bear 를 뺀 상태 중 평균 확률
+    argmax 로 정한다 (예: 0.4 면 5개 시드 중 2개만 bear 여도 bear).
+    """
+    seeds = list(regimes)
+    idx = regimes[seeds[0]].index
+    for r in regimes.values():
+        idx = idx.intersection(r.index)
+    prob_cols = [f"prob_{k}" for k in range(n_states)]
+    avg = sum(regimes[s].loc[idx, prob_cols].to_numpy(dtype=float) for s in seeds) / len(seeds)
+    by_seed = pd.DataFrame({f"regime_seed{s}": regimes[s].loc[idx, "regime"].astype(int) for s in seeds}, index=idx)
+    bear = n_states - 1
+    votes = (by_seed.to_numpy() == bear).mean(axis=1)
+    if bear_vote is None:
+        state = avg.argmax(axis=1)
+    else:
+        state = np.where(votes >= bear_vote - 1e-9, bear, avg[:, :bear].argmax(axis=1))
+    first = regimes[seeds[0]].loc[idx]
+    ens = pd.DataFrame({"regime": state, "label": [state_label(k, n_states) for k in state]}, index=idx)
+    for k, col in enumerate(prob_cols):
+        ens[col] = avg[:, k]
+    ens["refit_date"] = first["refit_date"]
+    if "signal_ret" in first.columns:
+        ens["signal_ret"] = first["signal_ret"]
+    ens["agreement"] = (by_seed.to_numpy() == state[:, None]).mean(axis=1)
+    ens["bear_vote"] = votes
+    ens.index.name = "date"
+    return pd.concat([ens, by_seed], axis=1)
+
+
+def seed_performance_table(seed_results: Dict[int, Dict[str, Any]],
+                           ensemble_perf: Optional[pd.DataFrame] = None) -> pd.DataFrame:
+    """시드별 전략 성과 + 평균 · 표준편차 · 최소 · 최대 (+ 앙상블 · Buy & Hold · 벤치마크)."""
+    per = pd.DataFrame({f"seed_{s}": r["performance"].loc["JM strategy"] for s, r in seed_results.items()}).T
+    num = per.apply(pd.to_numeric, errors="coerce").dropna(axis=1, how="all")
+    stats = pd.DataFrame({"mean": num.mean(), "std": num.std(ddof=1), "min": num.min(), "max": num.max()}).T
+    ref = next(iter(seed_results.values()))["performance"]
+    parts = [per, stats]
+    if ensemble_perf is not None:
+        parts.append(ensemble_perf.loc[["Ensemble strategy"]].rename(index={"Ensemble strategy": "ensemble"}))
+    parts.append(ref.drop(index="JM strategy"))
+    table = pd.concat(parts)
+    table.index.name = "portfolio"
+    return table
+
+
+def _seed_states(seed_results: Dict[int, Dict[str, Any]]) -> pd.DataFrame:
+    rows = [{"seed": s, **{k: r["current_state"][k] for k in ("asof", "label", "prob_bear", "days_in_regime")}}
+            for s, r in seed_results.items()]
+    return pd.DataFrame(rows)
+
+
+def run_multi_seed(cfg: PipelineConfig) -> Dict[str, Any]:
+    """여러 시드로 같은 설정을 돌린다 (Jump Model n_init 초기값 · Mamba 가중치 초기화/배치 순서가 시드에 따라 바뀐다).
+
+    seed_mode
+      individual  시드마다 전체 파이프라인을 seed_<s>/ 에 저장하고, 전략 성과의 평균·표준편차를 seed_performance.csv 로
+      ensemble    시드별 국면 확률을 평균한 앙상블 국면으로 한 번 백테스트해 ensemble/ 에 저장 (HMM · 에피소드 분석은 생략)
+      both        둘 다 (앙상블은 individual 실행 결과를 재사용하므로 추가 학습이 없다)
+    --inference 와 함께 쓰면 백테스트 대신 현재 반기 추론 결과를 시드별 · 앙상블로 저장한다.
+    """
+    seeds = cfg.seed_list
+    out = cfg.out_dir
+    os.makedirs(out, exist_ok=True)
+    _write_json(cfg.to_dict(), out, "run_config.json")
+    individual = cfg.seed_mode in ("individual", "both")
+    ensemble = cfg.seed_mode in ("ensemble", "both")
+    logger.info("multi-seed run: seeds=%s, mode=%s%s%s", list(seeds), cfg.seed_mode,
+                "" if cfg.ensemble_bear_vote is None else f", bear vote >= {cfg.ensemble_bear_vote:.0%}",
+                " (inference)" if cfg.inference else "")
+
+    seed_results: Dict[int, Dict[str, Any]] = {}
+    regimes: Dict[int, pd.DataFrame] = {}
+    mamba_logs: List[pd.DataFrame] = []
+    if individual:
+        runner = run_inference if cfg.inference else run_pipeline
+        for i, s in enumerate(seeds, start=1):
+            logger.info("seed %d (%d/%d)", s, i, len(seeds))
+            seed_results[s] = runner(_seed_cfg(cfg, s, os.path.join(out, f"seed_{s}")))
+            regimes[s] = seed_results[s]["regimes"]
+        data = seed_results[seeds[0]]["data"]
+    else:
+        _make_encoder(cfg)  # GPU 가 없으면 데이터 처리 전에 실패
+        data, signal_col, X = prepare_features(cfg)
+        signal = data[signal_col]
+        start = cfg.oos_start
+        if cfg.inference:
+            dates = refit_schedule(X.index, cfg.refit_months, cfg.min_train)
+            if not dates:
+                raise ValueError("추론할 반기 시작점이 없습니다 (데이터 부족)")
+            start = dates[-1]
+        for i, s in enumerate(seeds, start=1):
+            logger.info("seed %d (%d/%d)", s, i, len(seeds))
+            scfg = _seed_cfg(cfg, s, out)
+            encoder = _make_encoder(scfg)
+            regimes[s] = _regime_table(_fit_rolling(scfg, X, signal, start=start, encoder=encoder), signal)
+            if encoder is not None:
+                mamba_logs.append(encoder.history_frame().assign(seed=s))
+
+    result: Dict[str, Any] = {"config": cfg, "seeds": list(seeds), "seed_results": seed_results or None,
+                              "seed_performance": None, "ensemble": None, "current_state": None,
+                              "performance": None}
+    if individual:
+        states = _seed_states(seed_results)
+        _save(states, out, "seed_current_state.csv", index=False)
+        result["seed_current_state"] = states
+
+    n_states, bear = cfg.n_states, cfg.n_states - 1
+    ens_perf = None
+    if ensemble:
+        ens_dir = os.path.join(out, "ensemble")
+        os.makedirs(ens_dir, exist_ok=True)
+        ens = ensemble_regimes(regimes, n_states, cfg.ensemble_bear_vote)
+        current = _current_state(ens, n_states)
+        current.update({"seeds": list(seeds), "seed_agreement": float(ens["agreement"].iloc[-1]),
+                        "bear_vote": float(ens["bear_vote"].iloc[-1]), "bear_vote_threshold": cfg.ensemble_bear_vote,
+                        "seed_labels": {str(s): state_label(int(r["regime"].iloc[-1]), n_states)
+                                        for s, r in regimes.items()}})
+        ens_out: Dict[str, Any] = {"regimes": ens, "current_state": current}
+        prefix = "inference_" if cfg.inference else ""
+        _save(ens, ens_dir, f"{prefix}regimes.csv")
+        _save(pd.concat(mamba_logs, ignore_index=True) if mamba_logs else None, ens_dir,
+              f"{prefix}mamba_train_log.csv", index=False)
+        _write_json(current, ens_dir, "current_state.json")
+        if not cfg.inference:
+            kw = _strategy_kwargs(cfg, bear)
+            strategy = run_0_1_strategy(ens["regime"], data, delay=cfg.delay, **kw)
+            ens_perf = performance_table(strategy, name="Ensemble strategy")
+            summary = regime_summary(ens["regime"], ens["signal_ret"], n_states)
+            delay_table = delay_robustness_table(ens["regime"], data, cfg.delays, **kw)
+            _save(strategy, ens_dir, "strategy.csv")
+            _save(ens_perf, ens_dir, "performance.csv")
+            _save(summary, ens_dir, "regime_summary.csv", index=False)
+            _save(delay_table, ens_dir, "delay_robustness.csv")
+            ens_out.update(strategy=strategy, performance=ens_perf, regime_summary=summary,
+                           delay_robustness=delay_table)
+            if cfg.plots:
+                others = None
+                if seed_results:
+                    others = {f"seed {s}": r["strategy"] for s, r in seed_results.items()}
+                vote_note = ("" if cfg.ensemble_bear_vote is None
+                             else f", bear if vote >= {cfg.ensemble_bear_vote:.0%}")
+                plotting.plot_regimes_cumret(strategy, bear, os.path.join(ens_dir, "regimes_cumret.png"), others,
+                                             title=f"Seed ensemble ({len(seeds)} seeds{vote_note})",
+                                             label="Ensemble strategy")
+                plotting.plot_delay_robustness(delay_table, os.path.join(ens_dir, "delay_robustness.png"))
+        elif cfg.plots:
+            plotting.plot_inference(ens, data["close"], bear, os.path.join(ens_dir, "inference.png"))
+        result.update(ensemble=ens_out, current_state=current, performance=ens_perf)
+        logger.info("ensemble current regime: %s", current)
+
+    if individual and not cfg.inference:
+        table = seed_performance_table(seed_results, ens_perf)
+        _save(table, out, "seed_performance.csv")
+        result["seed_performance"] = table
+    return result
+
+
+# ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 
 def _int_list(text: str) -> List[int]:
     return [int(t) for t in str(text).replace(" ", "").split(",") if t]
+
+
+def _str_list(text: str) -> List[str]:
+    return [t for t in str(text).replace(" ", "").lower().split(",") if t]
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -342,7 +547,39 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--grid-size", type=float, default=d.grid_size, help="연속형 모델 확률 격자 크기")
     g.add_argument("--n-init", type=int, default=d.n_init, help="모델 초기값 개수")
     g.add_argument("--clip-mul", type=float, default=d.clip_mul, help="학습창 기준 클리핑 σ 배수")
+    g.add_argument("--center-distance", action="store_true",
+                   help="regimes.csv 에 날짜별 상태 중심점과의 거리 dist_0.. 를 추가 (표준화 · sjm 가중 공간)")
     g.add_argument("--seed", type=int, default=d.seed)
+
+    g = p.add_argument_group("여러 시드")
+    g.add_argument("--n-seeds", type=int, default=d.n_seeds, help="시드 개수 (--seed, --seed+1, ...)")
+    g.add_argument("--seeds", type=_int_list, help="시드 목록 (콤마, --n-seeds 대신)")
+    g.add_argument("--seed-mode", choices=SEED_MODES, default=d.seed_mode,
+                   help="ensemble: 국면 확률 평균으로 백테스트 / individual: 시드별 백테스트 후 성과 평균 / both")
+    g.add_argument("--ensemble-bear-vote", type=float, metavar="X",
+                   help="앙상블에서 bear 로 판정한 시드 비율이 X 이상이면 bear (0~1, 예: 0.4). 기본: 확률 평균 argmax")
+
+    g = p.add_argument_group("Mamba 인코더 (--encoder mamba, CUDA GPU 필요)")
+    g.add_argument("--encoder", choices=("none", "mamba"), default=d.encoder,
+                   help="mamba: 재추정마다 Mamba 를 학습해 피처 대신 hidden 벡터를 --model 에 넣음")
+    g.add_argument("--device", default=d.device, help="auto(첫 번째 GPU) | cuda | cuda:N")
+    g.add_argument("--mamba-seq-len", type=int, default=d.mamba_seq_len, help="입력 시퀀스 길이 (거래일)")
+    g.add_argument("--mamba-d-model", type=int, default=d.mamba_d_model, help="hidden 벡터 차원")
+    g.add_argument("--mamba-d-state", type=int, default=d.mamba_d_state)
+    g.add_argument("--mamba-d-conv", type=int, default=d.mamba_d_conv)
+    g.add_argument("--mamba-expand", type=int, default=d.mamba_expand)
+    g.add_argument("--mamba-layers", type=int, default=d.mamba_layers)
+    g.add_argument("--mamba-dropout", type=float, default=d.mamba_dropout)
+    g.add_argument("--mamba-epochs", type=int, default=d.mamba_epochs, help="재추정당 최대 epoch")
+    g.add_argument("--mamba-patience", type=int, default=d.mamba_patience, help="early stopping patience")
+    g.add_argument("--mamba-batch-size", type=int, default=d.mamba_batch_size)
+    g.add_argument("--mamba-lr", type=float, default=d.mamba_lr)
+    g.add_argument("--mamba-valid-frac", type=float, default=d.mamba_valid_frac, help="학습창 뒤쪽 검증 비율")
+    g.add_argument("--mamba-horizons", type=_int_list, default=list(d.mamba_horizons),
+                   help="동시에 예측할 미래 기간 (거래일, 콤마). 1,5,20 = 다음 날·1주·1달 multi-output")
+    g.add_argument("--mamba-targets", type=_str_list, default=list(d.mamba_targets),
+                   help="예측할 값 (콤마): return(수익률 합) | vol(실현 변동성) | mdd(최대 낙폭). "
+                        "여러 개면 타깃 × horizon 을 동시에 예측")
 
     g = p.add_argument_group("롤링 재추정")
     g.add_argument("--train-window", type=int, default=d.train_window, help="최대 학습창 (거래일)")
@@ -383,6 +620,9 @@ def config_from_args(args: argparse.Namespace) -> PipelineConfig:
     values["plots"] = not values.pop("no_plots")
     values["refit_months"] = tuple(values["refit_months"])
     values["delays"] = tuple(values["delays"])
+    values["seeds"] = tuple(values["seeds"] or ())
+    values["mamba_horizons"] = tuple(values["mamba_horizons"])
+    values["mamba_targets"] = tuple(values["mamba_targets"])
     for key in ("verbose", "quiet"):
         values.pop(key)
     return PipelineConfig(input=input_path or "", **values)
@@ -403,14 +643,26 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         logger.error("%s", e)
         return 1
 
+    print()
+    for _, row in result.get("seed_current_state", pd.DataFrame()).iterrows():
+        print(f"[{row['asof']}] seed {row['seed']}: {row['label']} (bear 확률 {row['prob_bear']:.1%}, "
+              f"{row['days_in_regime']}일째)")
     cur = result["current_state"]
-    print(f"\n[{cur['asof']}] 현재 국면: {cur['label']} (bear 확률 {cur['prob_bear']:.1%}, "
-          f"{cur['days_in_regime']}일째, 재추정 {cur['refit_date']})")
-    if "performance" in result:
+    if cur:
+        name = f"앙상블({len(cur['seeds'])}개 시드) 국면" if "seeds" in cur else "현재 국면"
+        agree = f", 시드 일치 {cur['seed_agreement']:.0%}" if "seed_agreement" in cur else ""
+        if cur.get("bear_vote_threshold") is not None:
+            agree += f", bear 표 {cur['bear_vote']:.0%} (기준 {cur['bear_vote_threshold']:.0%})"
+        print(f"[{cur['asof']}] {name}: {cur['label']} (bear 확률 {cur['prob_bear']:.1%}, "
+              f"{cur['days_in_regime']}일째, 재추정 {cur['refit_date']}{agree})")
+    perf = result.get("seed_performance")
+    if perf is None:
+        perf = result.get("performance")
+    if perf is not None:
         cols = [c for c in ("cagr", "ann_vol", "sharpe", "max_drawdown", "information_ratio", "n_trades")
-                if c in result["performance"].columns]
+                if c in perf.columns]
         with pd.option_context("display.float_format", "{:.4f}".format, "display.width", 120):
-            print(result["performance"][cols].to_string())
+            print(perf[cols].apply(pd.to_numeric, errors="coerce").to_string())
     print(f"결과: {os.path.abspath(cfg.out_dir)}")
     return 0
 

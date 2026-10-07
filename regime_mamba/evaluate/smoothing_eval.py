@@ -1,7 +1,6 @@
 """Evaluate every smoothing method on one forward window and compare them.
 
-All model variants (2-stage Mamba + K-Means, E2E, RL) share this code; they only
-differ in how raw regimes are predicted, which is passed in as ``predict_fn``::
+Raw regimes come from the model through ``predict_fn``::
 
     predict_fn(dataloader) -> (raw_predictions, true_returns, dates)
 

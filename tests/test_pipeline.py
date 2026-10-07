@@ -196,7 +196,7 @@ def test_rolling_jm_is_causal_within_segment():
     """
     _, ret, _ = simulate(1600)
     X = build_features(ret, "paper")
-    base = run_rolling_jm(X, ret, **FAST)
+    base = run_rolling_jm(X, ret, center_distance=True, **FAST)
     seg = base.regimes[base.regimes["refit_date"] == base.refit_dates[2]]
     cut = seg.index[len(seg) // 2]
 
@@ -204,7 +204,7 @@ def test_rolling_jm_is_causal_within_segment():
     rng = np.random.default_rng(99)
     ret2.loc[cut:] = rng.normal(-0.01, 0.05, int((ret.index >= cut).sum()))
     X2 = build_features(ret2, "paper")
-    pert = run_rolling_jm(X2, ret2, **FAST)
+    pert = run_rolling_jm(X2, ret2, center_distance=True, **FAST)
 
     before = base.regimes.index < cut
     pd.testing.assert_frame_equal(base.regimes[before], pert.regimes[before])
@@ -239,6 +239,21 @@ def test_continuous_and_sparse_models_run():
                          max_feats=2.0, pinned=["ret_60"])
     assert sjm.feat_weights is not None and (sjm.feat_weights["ret_60"] > 0).all()
     assert list(sjm.feat_weights.index) == sjm.refit_dates
+
+
+@pytest.mark.parametrize("model", ["jm", "sjm"])
+def test_center_distance_matches_model_loss(model):
+    """jump_penalty=0 이면 온라인 추론 국면 = 거리가 가장 가까운 중심점 (sjm 은 가중 공간에서)."""
+    _, ret, _ = simulate(1100)
+    X = build_features(ret, "example")
+    kw = dict(model=model, cont=False, jump_penalty=0.0, train_window=400, min_train=250, n_init=2,
+              max_feats=3.0 if model == "sjm" else None)
+    res = run_rolling_jm(X, ret, center_distance=True, **kw)
+    reg = res.regimes
+    dist = reg[["dist_0", "dist_1"]].to_numpy()
+    assert (dist >= 0).all() and np.isfinite(dist).all()
+    np.testing.assert_array_equal(reg["regime"], dist.argmin(axis=1))
+    assert "dist_0" not in run_rolling_jm(X, ret, **kw).regimes.columns
 
 
 # ---------------------------------------------------------------------------
@@ -481,3 +496,154 @@ def test_cli_main(files, tmp_path):
     assert cfg["cost_buy"] == pytest.approx(0.0005) and cfg["cost_sell"] == pytest.approx(0.0025)
     assert cfg["cont"] is False
     assert run_pipeline.main([str(tmp_path / "missing.csv"), "--out", str(tmp_path), "-q"]) == 1
+
+
+# ---------------------------------------------------------------------------
+# 여러 시드
+# ---------------------------------------------------------------------------
+
+def test_ensemble_regimes_averages_probabilities():
+    idx = pd.bdate_range("2020-01-01", periods=4)
+
+    def reg(p_bear):
+        p = np.asarray(p_bear, dtype=float)
+        return pd.DataFrame({"regime": (p > 0.5).astype(int), "prob_0": 1 - p, "prob_1": p,
+                             "refit_date": idx[0], "signal_ret": 0.0}, index=idx)
+
+    ens = run_pipeline.ensemble_regimes({0: reg([0, 1, 1, 0.9]), 1: reg([0, 0, 1, 0.1]),
+                                         2: reg([0, 0, 1, 0.4])}, n_states=2)
+    np.testing.assert_allclose(ens["prob_1"], [0, 1 / 3, 1, 1.4 / 3])
+    assert list(ens["regime"]) == [0, 0, 1, 0] and list(ens["label"]) == ["bull", "bull", "bear", "bull"]
+    np.testing.assert_allclose(ens["agreement"], [1, 2 / 3, 1, 2 / 3])
+    assert list(ens["regime_seed0"]) == [0, 1, 1, 1]
+
+
+def test_ensemble_regimes_bear_vote_threshold():
+    idx = pd.bdate_range("2020-01-01", periods=4)
+
+    def reg(regime):
+        r = np.asarray(regime)
+        return pd.DataFrame({"regime": r, "prob_0": 1.0 - r, "prob_1": r.astype(float),
+                             "refit_date": idx[0], "signal_ret": 0.0}, index=idx)
+
+    seeds = {0: reg([0, 1, 1, 0]), 1: reg([0, 0, 1, 0]), 2: reg([0, 0, 1, 1]), 3: reg([0, 0, 0, 0]),
+             4: reg([0, 0, 1, 0])}
+    base = run_pipeline.ensemble_regimes(seeds, n_states=2)
+    np.testing.assert_allclose(base["bear_vote"], [0, 0.2, 0.8, 0.2])
+    assert list(base["regime"]) == [0, 0, 1, 0]
+    # 40%: 5개 중 2개 이상이면 bear / 20%: 1개만 bear 여도 bear
+    assert list(run_pipeline.ensemble_regimes(seeds, 2, bear_vote=0.4)["regime"]) == [0, 0, 1, 0]
+    low = run_pipeline.ensemble_regimes(seeds, 2, bear_vote=0.2)
+    assert list(low["regime"]) == [0, 1, 1, 1]
+    np.testing.assert_allclose(low["agreement"], [1, 0.2, 0.8, 0.2])
+    np.testing.assert_allclose(low["prob_1"], base["prob_1"])
+
+    # 3 상태: bear 표가 기준 미만이면 bear 를 뺀 상태 중 평균 확률 argmax
+    def reg3(regime):
+        r = np.asarray(regime)
+        return pd.DataFrame({"regime": r, **{f"prob_{k}": (r == k).astype(float) for k in range(3)},
+                             "refit_date": idx[0]}, index=idx)
+
+    three = {0: reg3([2, 2, 1, 0]), 1: reg3([1, 2, 1, 0]), 2: reg3([1, 0, 2, 2])}
+    assert list(run_pipeline.ensemble_regimes(three, 3)["regime"]) == [1, 2, 1, 0]
+    assert list(run_pipeline.ensemble_regimes(three, 3, bear_vote=0.3)["regime"]) == [2, 2, 2, 2]
+    assert list(run_pipeline.ensemble_regimes(three, 3, bear_vote=0.9)["regime"]) == [1, 0, 1, 0]
+
+
+def test_multi_seed_bear_vote(files, tmp_path):
+    kw = dict(input=files["asset"], seeds=(1, 4, 6), plots=False, seed_mode="ensemble", **PIPE_FAST)
+    base = run_pipeline.run_pipeline(out_dir=str(tmp_path / "base"), **kw)
+    res = run_pipeline.run_pipeline(out_dir=str(tmp_path / "vote"), ensemble_bear_vote=1 / 3, **kw)
+    ens = res["ensemble"]["regimes"]
+    seed_cols = [c for c in ens.columns if c.startswith("regime_seed")]
+    np.testing.assert_array_equal(ens["regime"], (ens[seed_cols] == 1).any(axis=1).astype(int))
+    assert (ens["regime"] >= base["ensemble"]["regimes"]["regime"]).all()
+    strat = res["ensemble"]["strategy"]
+    expected = regime_to_weight(ens["regime"], bear_state=1).shift(1).reindex(strat.index)
+    np.testing.assert_allclose(strat["weight"], expected)
+    cur = json.loads((tmp_path / "vote" / "ensemble" / "current_state.json").read_text(encoding="utf-8"))
+    assert cur["bear_vote_threshold"] == pytest.approx(1 / 3) and cur["bear_vote"] == ens["bear_vote"].iloc[-1]
+
+    for bad in (dict(ensemble_bear_vote=0.0), dict(ensemble_bear_vote=1.5),
+                dict(ensemble_bear_vote=0.5, seed_mode="individual"),
+                dict(ensemble_bear_vote=0.5, seeds=(), n_seeds=1)):
+        with pytest.raises(ValueError, match="ensemble-bear-vote"):
+            run_pipeline.run_pipeline(out_dir=str(tmp_path / "bad"), **{**kw, **bad})
+
+
+def test_multi_seed_both_modes(files, tmp_path):
+    res = run_pipeline.run_pipeline(input=files["asset"], out_dir=str(tmp_path), n_seeds=3, seed=7,
+                                    **{**PIPE_FAST, "cont": True})
+    assert res["seeds"] == [7, 8, 9]
+    for s in (7, 8, 9):
+        assert (tmp_path / f"seed_{s}" / "performance.csv").exists()
+        assert json.loads((tmp_path / f"seed_{s}" / "run_config.json").read_text(encoding="utf-8"))["seed"] == s
+    for name in ["regimes.csv", "strategy.csv", "performance.csv", "delay_robustness.csv", "current_state.json",
+                 "regimes_cumret.png"]:
+        assert (tmp_path / "ensemble" / name).exists(), name
+    assert (tmp_path / "seed_performance.csv").exists() and (tmp_path / "seed_current_state.csv").exists()
+
+    # 앙상블 국면 = 시드별 상태 확률 평균의 argmax, 전략은 그 국면으로 delay 1 체결
+    ens = res["ensemble"]["regimes"]
+    avg = np.mean([r["regimes"]["prob_1"].to_numpy() for r in res["seed_results"].values()], axis=0)
+    np.testing.assert_allclose(ens["prob_1"], avg)
+    np.testing.assert_array_equal(ens["regime"], (avg > 0.5).astype(int))
+    strat = res["ensemble"]["strategy"]
+    expected = regime_to_weight(ens["regime"], bear_state=1).shift(1).reindex(strat.index)
+    np.testing.assert_allclose(strat["weight"], expected)
+
+    # 개별 성과의 평균 · 표준편차
+    table = res["seed_performance"]
+    sharpes = [r["performance"].loc["JM strategy", "sharpe"] for r in res["seed_results"].values()]
+    assert table.loc["mean", "sharpe"] == pytest.approx(np.mean(sharpes))
+    assert table.loc["std", "sharpe"] == pytest.approx(np.std(sharpes, ddof=1))
+    assert {"seed_7", "seed_8", "seed_9", "ensemble", "Buy & Hold"} <= set(table.index)
+    assert res["current_state"]["seeds"] == [7, 8, 9]
+
+
+def test_multi_seed_ensemble_only_matches_individual(files, tmp_path):
+    kw = dict(input=files["asset"], seeds=(1, 4), plots=False, **PIPE_FAST)
+    ens_only = run_pipeline.run_pipeline(out_dir=str(tmp_path / "e"), seed_mode="ensemble", **kw)
+    both = run_pipeline.run_pipeline(out_dir=str(tmp_path / "b"), seed_mode="both", **kw)
+    assert not (tmp_path / "e" / "seed_1").exists() and not (tmp_path / "e" / "seed_performance.csv").exists()
+    assert ens_only["seed_performance"] is None
+    pd.testing.assert_frame_equal(ens_only["ensemble"]["regimes"], both["ensemble"]["regimes"])
+
+    ind = run_pipeline.run_pipeline(out_dir=str(tmp_path / "i"), seed_mode="individual", **kw)
+    assert ind["ensemble"] is None and not (tmp_path / "i" / "ensemble").exists()
+    assert "ensemble" not in ind["seed_performance"].index
+
+
+def test_multi_seed_inference(files, tmp_path):
+    res = run_pipeline.run_pipeline(input=files["asset"], out_dir=str(tmp_path), inference=True, n_seeds=2,
+                                    plots=False, **PIPE_FAST)
+    assert (tmp_path / "seed_0" / "inference_summary.csv").exists()
+    assert (tmp_path / "ensemble" / "inference_regimes.csv").exists()
+    assert not (tmp_path / "ensemble" / "strategy.csv").exists()
+    last_refit = refit_schedule(res["seed_results"][0]["features"].index, (1, 7), 250)[-1]
+    assert res["ensemble"]["regimes"].index[0] == last_refit
+
+
+def test_cli_multi_seed(files, tmp_path):
+    base = [files["asset"], "--out", str(tmp_path), "--discrete", "--train-window", "400", "--min-train", "250",
+            "--n-init", "2", "--delays", "1,2", "--no-plots", "-q"]
+    assert run_pipeline.main([*base, "--seeds", "3,5", "--seed-mode", "individual"]) == 0
+    assert (tmp_path / "seed_3").exists() and (tmp_path / "seed_5").exists()
+    cfg = json.loads((tmp_path / "run_config.json").read_text(encoding="utf-8"))
+    assert cfg["seeds"] == [3, 5] and cfg["seed_mode"] == "individual"
+    assert run_pipeline.main([*base, "--seeds", "1,1"]) == 1
+
+
+def test_cli_center_distance(files, tmp_path):
+    base = [files["asset"], "--discrete", "--train-window", "400", "--min-train", "250", "--n-init", "2",
+            "--delays", "1,2", "--no-plots", "-q", "--center-distance"]
+    assert run_pipeline.main([*base, "--out", str(tmp_path / "one")]) == 0
+    reg = pd.read_csv(tmp_path / "one" / "regimes.csv", index_col=0)
+    assert {"dist_0", "dist_1"} <= set(reg.columns) and reg[["dist_0", "dist_1"]].notna().all().all()
+    # 거리는 개별 모델의 값: 시드별 결과에는 있고 앙상블 국면표에는 없다
+    assert run_pipeline.main([*base, "--out", str(tmp_path / "multi"), "--n-seeds", "2"]) == 0
+    assert "dist_0" in pd.read_csv(tmp_path / "multi" / "seed_1" / "regimes.csv", index_col=0).columns
+    assert "dist_0" not in pd.read_csv(tmp_path / "multi" / "ensemble" / "regimes.csv", index_col=0).columns
+    assert run_pipeline.main([*base, "--out", str(tmp_path / "inf"), "--inference"]) == 0
+    assert "dist_1" in pd.read_csv(tmp_path / "inf" / "inference_regimes.csv", index_col=0).columns
+    assert run_pipeline.main([*base, "--n-seeds", "0"]) == 1

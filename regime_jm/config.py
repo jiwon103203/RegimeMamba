@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 from typing import List, Optional, Tuple
 
+SEED_MODES = ("ensemble", "individual", "both")
+
 
 @dataclass
 class PipelineConfig:
@@ -40,7 +42,31 @@ class PipelineConfig:
     grid_size: float = 0.05
     n_init: int = 10
     clip_mul: float = 3.0
+    center_distance: bool = False          # regimes 에 상태별 중심점과의 거리 dist_0.. 출력
     seed: int = 0
+    # 여러 시드: seeds 를 주면 그 목록, 아니면 seed, seed+1, ... (n_seeds 개)
+    seeds: Tuple[int, ...] = ()
+    n_seeds: int = 1
+    seed_mode: str = "both"                # ensemble | individual | both
+    ensemble_bear_vote: Optional[float] = None   # 앙상블: bear 표 비율이 이 값 이상이면 bear (기본: 확률 평균 argmax)
+
+    # 인코더: none 이면 피처 → JM, mamba 면 피처 → Mamba hidden 벡터 → JM (GPU 필요)
+    encoder: str = "none"                  # none | mamba
+    device: str = "auto"                   # auto | cuda | cuda:N (mamba-ssm 은 CUDA 전용)
+    mamba_seq_len: int = 60
+    mamba_d_model: int = 8                 # hidden 벡터 차원 = Jump Model 입력 차원
+    mamba_d_state: int = 32
+    mamba_d_conv: int = 4
+    mamba_expand: int = 2
+    mamba_layers: int = 4
+    mamba_dropout: float = 0.1
+    mamba_epochs: int = 100
+    mamba_patience: int = 10
+    mamba_batch_size: int = 1024
+    mamba_lr: float = 5e-4
+    mamba_valid_frac: float = 0.2
+    mamba_horizons: Tuple[int, ...] = (1,)  # 동시에 예측할 미래 기간 (거래일), 예: (1, 5, 20)
+    mamba_targets: Tuple[str, ...] = ("return",)  # 예측할 값: return | vol | mdd (여러 개면 타깃 × horizon 출력)
 
     # 롤링 재추정
     train_window: int = 3000
@@ -72,6 +98,12 @@ class PipelineConfig:
     plots: bool = True
 
     @property
+    def seed_list(self) -> Tuple[int, ...]:
+        if self.seeds:
+            return tuple(int(s) for s in self.seeds)
+        return tuple(range(self.seed, self.seed + self.n_seeds))
+
+    @property
     def cost_buy(self) -> float:
         return (self.cost_bps if self.cost_buy_bps is None else self.cost_buy_bps) / 1e4
 
@@ -96,6 +128,41 @@ class PipelineConfig:
             raise ValueError("n_states >= 2")
         if self.min_train < 2 or self.train_window < self.min_train:
             raise ValueError("train_window >= min_train >= 2 이어야 합니다")
+        if self.encoder not in ("none", "mamba"):
+            raise ValueError("encoder must be none or mamba")
+        if self.encoder == "mamba":
+            from .mamba_encoder import DEVICE_RE
+            if not DEVICE_RE.match(str(self.device).strip().lower()):
+                raise ValueError(f"--device 는 auto, cuda, cuda:N 중 하나여야 합니다 (got {self.device!r})")
+            if self.pin_features:
+                raise ValueError("--encoder mamba 에서는 Jump Model 입력이 hidden 벡터라 --pin-features 를 쓸 수 없습니다")
+            if min(self.mamba_seq_len, self.mamba_d_model, self.mamba_d_state, self.mamba_layers, self.mamba_epochs,
+                   self.mamba_patience, self.mamba_batch_size) < 1:
+                raise ValueError("--mamba-* 크기 옵션은 1 이상이어야 합니다")
+            if not 0.0 < self.mamba_valid_frac < 1.0:
+                raise ValueError("--mamba-valid-frac 은 0 과 1 사이여야 합니다")
+            if not self.mamba_horizons or min(self.mamba_horizons) < 1:
+                raise ValueError("--mamba-horizons 는 1 이상의 거래일 수여야 합니다")
+            if len(set(self.mamba_horizons)) != len(self.mamba_horizons):
+                raise ValueError("--mamba-horizons 에 중복된 값이 있습니다")
+            from .mamba_encoder import TARGETS
+            if not self.mamba_targets or any(t not in TARGETS for t in self.mamba_targets):
+                raise ValueError(f"--mamba-targets 는 {', '.join(TARGETS)} 중에서 골라야 합니다 (got {self.mamba_targets})")
+            if len(set(self.mamba_targets)) != len(self.mamba_targets):
+                raise ValueError("--mamba-targets 에 중복된 값이 있습니다")
+            if max(self.mamba_horizons) >= self.min_train // 2:
+                raise ValueError("--mamba-horizons 의 최댓값은 --min-train 의 절반보다 작아야 합니다")
+        if self.n_seeds < 1:
+            raise ValueError("--n-seeds 는 1 이상이어야 합니다")
+        if len(set(self.seed_list)) != len(self.seed_list):
+            raise ValueError("--seeds 에 중복된 시드가 있습니다")
+        if self.seed_mode not in SEED_MODES:
+            raise ValueError(f"--seed-mode 는 {', '.join(SEED_MODES)} 중 하나여야 합니다")
+        if self.ensemble_bear_vote is not None:
+            if not 0.0 < self.ensemble_bear_vote <= 1.0:
+                raise ValueError("--ensemble-bear-vote 는 0 초과 1 이하의 비율이어야 합니다 (예: 0.4 = 40%)")
+            if len(self.seed_list) < 2 or self.seed_mode == "individual":
+                raise ValueError("--ensemble-bear-vote 는 시드 2개 이상의 ensemble/both 실행에서만 쓸 수 있습니다")
         if self.delay < 0 or any(d < 0 for d in self.delays):
             raise ValueError("delay 는 0 이상이어야 합니다")
         return self

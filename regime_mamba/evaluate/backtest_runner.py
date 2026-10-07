@@ -1,6 +1,6 @@
-"""Generic rolling-window backtest loop shared by the scripts in ``scripts/``.
+"""Rolling-window backtest loop for ``scripts/e2e_backtest.py``.
 
-A script only has to provide ``process_window(window_info, window_dir)`` which
+The script only has to provide ``process_window(window_info, window_dir)`` which
 trains a model for that window and returns the smoothing-method results of
 :func:`regime_mamba.evaluate.smoothing_eval.evaluate_smoothing_methods` (or
 ``None`` to skip the window). Scheduling, checkpointing, result aggregation and
@@ -14,17 +14,11 @@ import os
 import traceback
 from collections import defaultdict
 from datetime import datetime
-from functools import partial
 from typing import Any, Callable, Dict, Optional, Tuple
 
-import pandas as pd
-
-from ..features import standardize_for_window
 from ..utils.io import json_serializer, load_checkpoint, save_checkpoint
-from .clustering import predict_regimes
-from .rolling_window_w_train import identify_regimes_for_window, train_model_for_window
 from .schedule import create_window_schedule
-from .smoothing_eval import evaluate_smoothing_methods, visualize_final_comparison
+from .smoothing_eval import visualize_final_comparison
 
 ProcessWindowFn = Callable[[Dict[str, Any], str], Optional[Dict[str, Dict[str, Any]]]]
 
@@ -82,7 +76,6 @@ def run_windowed_backtest(
     logger: logging.Logger,
     process_window: ProcessWindowFn,
     checkpoint_path: Optional[str] = None,
-    use_clustering: bool = True,
     log_prefix: str = "",
     title_prefix: str = "",
     checkpoint_extra: Optional[Dict[str, Any]] = None
@@ -94,8 +87,7 @@ def run_windowed_backtest(
         logger: Logger instance
         process_window: ``(window_info, window_dir) -> methods_results | None``
         checkpoint_path: Path to a checkpoint to resume from (optional)
-        use_clustering: Whether the schedule contains a clustering period
-        log_prefix: Prefix for log messages (e.g. ``[RL] ``)
+        log_prefix: Prefix for log messages (e.g. ``[E2E] ``)
         title_prefix: Prefix for final comparison plot titles
         checkpoint_extra: Extra fields stored in every checkpoint (e.g. ``{'mode': 'e2e'}``)
 
@@ -113,7 +105,7 @@ def run_windowed_backtest(
             logger.error(f"Error loading checkpoint: {str(e)}")
             logger.info("Starting from beginning")
 
-    window_schedule = create_window_schedule(config, start_from_window, use_clustering=use_clustering)
+    window_schedule = create_window_schedule(config, start_from_window)
     if not window_schedule:
         logger.info("No windows to process")
         return {'combined_results': combined_results, 'summary': None}
@@ -136,8 +128,6 @@ def run_windowed_backtest(
 
         logger.info(f"Training period: {window_info['train_period']['start']} to {window_info['train_period']['end']}")
         logger.info(f"Validation period: {window_info['valid_period']['start']} to {window_info['valid_period']['end']}")
-        if 'clustering_period' in window_info:
-            logger.info(f"Clustering period: {window_info['clustering_period']['start']} to {window_info['clustering_period']['end']}")
         logger.info(f"Forward period: {window_info['forward_period']['start']} to {window_info['forward_period']['end']}")
 
         try:
@@ -176,82 +166,3 @@ def run_windowed_backtest(
 
     logger.info(f"{log_prefix}Backtest complete with {len(result_data)} methods across {len(window_schedule)} windows")
     return {'combined_results': combined_results, 'summary': summary}
-
-
-def run_two_stage_window(
-    config,
-    data: pd.DataFrame,
-    window_info: Dict[str, Any],
-    window_dir: str,
-    logger: logging.Logger,
-    parallel: bool = False,
-    loader_workers: int = 2
-) -> Optional[Dict[str, Dict[str, Any]]]:
-    """Original 2-stage flow for one window: train Mamba -> K-Means regimes -> smoothing methods.
-
-    With ``config.jump_model`` the Mamba features are fed to ``ModifiedJumpModel``,
-    which writes its own per-window outputs, so ``None`` is returned.
-    """
-    window_number = window_info['window_number']
-    # feature_set 모드: 이 윈도우의 학습 구간 통계로 입력 피처를 표준화 (기존 모드는 그대로)
-    data = standardize_for_window(data, config, window_info['train_period']['start'], window_info['train_period']['end'])
-    train_args = (
-        config,
-        window_info['train_period']['start'],
-        window_info['train_period']['end'],
-        window_info['valid_period']['start'],
-        window_info['valid_period']['end'],
-        data,
-    )
-
-    if config.jump_model:
-        logger.info("Training jump model...")
-        model = train_model_for_window(*train_args, window_number=window_number)
-        if model is None:
-            logger.warning("Jump model training failed, skipping window")
-            return None
-        # 미래 기간에 대한 예측 (결과는 window 디렉토리에 저장됨)
-        model.predict(
-            window_info['forward_period']['start'],
-            window_info['forward_period']['end'],
-            data,
-            window_number,
-            sort="cumret"
-        )
-        logger.info("Jump model results saved")
-        return None
-
-    logger.info("Training model...")
-    model, _ = train_model_for_window(*train_args, window_number=window_number)
-    if model is None:
-        logger.warning("Model training failed, skipping window")
-        return None
-
-    if config.lstm:
-        logger.info("Skipping regime identification for this model")
-        kmeans, bull_regime = None, None
-    else:
-        logger.info("Identifying regimes...")
-        kmeans, bull_regime = identify_regimes_for_window(
-            config,
-            model,
-            data,
-            window_info['clustering_period']['start'],
-            window_info['clustering_period']['end']
-        )
-        if kmeans is None or bull_regime is None:
-            logger.warning("Regime identification failed, skipping window")
-            return None
-
-    logger.info("Evaluating smoothing methods...")
-    predict_fn = partial(predict_regimes, model, kmeans=kmeans, bull_regime=bull_regime, config=config)
-    return evaluate_smoothing_methods(
-        predict_fn,
-        data,
-        config,
-        window_info['forward_period'],
-        window_dir,
-        parallel=parallel,
-        max_workers=getattr(config, 'max_workers', None),
-        loader_workers=loader_workers
-    )

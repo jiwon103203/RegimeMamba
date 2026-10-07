@@ -6,13 +6,16 @@
   3. [학습창 + 다음 재추정 전까지 구간] 을 이어 ``predict_proba_online`` 을 돌린 뒤 학습창 행을 잘라낸다.
      온라인 추론의 t 행 결과는 t 행까지의 피처만 쓰므로 해당 반기 구간이 인과적으로 추론된다.
   4. 재추정 파라미터(중심점, 연율 수익률·변동성, stay_prob)와 sjm 피처 가중치를 기록한다.
+
+``encoder`` (예: ``mamba_encoder.MambaEncoder``) 를 주면 1 이전에 [학습창 + 구간] 피처를 그 창에서 학습한
+표현(hidden 벡터)으로 바꾼 뒤 같은 절차로 Jump Model 을 적합한다.
 """
 
 from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import Any, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Iterable, List, Optional, Sequence, Tuple
 
 import numpy as np
 import pandas as pd
@@ -149,6 +152,21 @@ def infer_online(model, prep: WindowPreprocessor, X_train: pd.DataFrame, X_seg: 
     return proba.iloc[len(X_train):]
 
 
+def center_distances(model, prep: WindowPreprocessor, X: pd.DataFrame) -> pd.DataFrame:
+    """각 행과 상태별 중심점의 유클리드 거리 ``dist_0..`` (모델이 손실을 재는 공간과 같다).
+
+    학습창 기준 클리핑·표준화를 적용한 공간이며, sjm 이면 피처와 중심점 모두 feat_weights 가 곱해진 공간이다.
+    jumpmodels 의 손실은 0.5 * dist**2 이다. t 행의 거리는 t 행 피처와 재추정 모델만 쓰므로 인과적이다.
+    """
+    Z = prep.transform(X).to_numpy(dtype=float)
+    fw = getattr(model, "feat_weights", None)
+    if fw is not None:
+        Z = Z * np.asarray(fw, dtype=float)
+    centers = np.asarray(model.centers_, dtype=float)  # sjm 은 이미 가중치가 곱해진 중심점
+    dist = np.sqrt(((Z[:, None, :] - centers[None, :, :]) ** 2).sum(axis=2))
+    return pd.DataFrame(dist, index=X.index, columns=[f"dist_{k}" for k in range(centers.shape[0])])
+
+
 def window_params(model, prep: WindowPreprocessor, X_train: pd.DataFrame, n_states: int) -> pd.DataFrame:
     """상태별 파라미터: 연율 수익률·변동성, stay_prob, 비중, 표준화 공간의 중심점."""
     jm = _inner_jm(model)
@@ -181,7 +199,9 @@ def run_rolling_jm(features: pd.DataFrame, signal_ret: pd.Series, *, model: str 
                    n_states: int = 2, jump_penalty: float = 50.0, max_feats: Optional[float] = None,
                    pinned: Optional[Iterable[str]] = None, train_window: int = 3000, min_train: int = 500,
                    refit_months: Sequence[int] = (1, 7), start=None, end=None, clip_mul: float = 3.0,
-                   grid_size: float = 0.05, n_init: int = 10, random_state: int = 0) -> RollingJMResult:
+                   grid_size: float = 0.05, n_init: int = 10, random_state: int = 0,
+                   encoder: Optional[Callable[..., pd.DataFrame]] = None,
+                   center_distance: bool = False) -> RollingJMResult:
     """6개월 재추정 + 온라인 추론으로 날짜별 국면을 만든다 (모듈 docstring 참고).
 
     Args:
@@ -189,6 +209,9 @@ def run_rolling_jm(features: pd.DataFrame, signal_ret: pd.Series, *, model: str 
         signal_ret: 모델이 학습할 수익률 (상태 정렬 sort_by='cumret' 에 사용)
         start: 이 날짜 이후의 재추정만 수행 (학습에는 그 이전 데이터도 사용)
         end: 이 날짜까지의 피처만 사용
+        encoder: ``encoder(X, y, lo, pos, seg_end)`` → X.iloc[lo:seg_end] 행의 새 피처.
+            pos 이전 행으로만 학습해야 한다 (인과성)
+        center_distance: True 면 regimes 에 상태별 중심점과의 거리 ``dist_0..`` 를 붙인다 (``center_distances``)
     """
     if train_window < min_train:
         raise ValueError("train_window 는 min_train 이상이어야 합니다")
@@ -213,6 +236,9 @@ def run_rolling_jm(features: pd.DataFrame, signal_ret: pd.Series, *, model: str 
         X_tr, y_tr = X.iloc[lo:pos], y.iloc[lo:pos]
         seg_end = X.index.get_loc(dates[i + 1]) if i + 1 < len(dates) else len(X)
         X_seg = X.iloc[pos:seg_end]
+        if encoder is not None:
+            H = encoder(X, y, lo, pos, seg_end)
+            X_tr, X_seg = H.iloc[:pos - lo], H.iloc[pos - lo:]
 
         m, prep = fit_window(X_tr, y_tr, clip_mul=clip_mul, **model_kwargs)
         proba = infer_online(m, prep, X_tr, X_seg)
@@ -220,6 +246,8 @@ def run_rolling_jm(features: pd.DataFrame, signal_ret: pd.Series, *, model: str 
         for k in range(n_states):
             seg[f"prob_{k}"] = proba[k].to_numpy()
         seg["refit_date"] = d
+        if center_distance:
+            seg = seg.join(center_distances(m, prep, X_seg))
         regime_parts.append(seg)
 
         params = window_params(m, prep, X_tr, n_states)
@@ -230,7 +258,7 @@ def run_rolling_jm(features: pd.DataFrame, signal_ret: pd.Series, *, model: str 
         param_parts.append(params)
 
         if model == "sjm":
-            weight_rows.append(pd.Series(np.asarray(m.feat_weights, dtype=float), index=X.columns, name=d))
+            weight_rows.append(pd.Series(np.asarray(m.feat_weights, dtype=float), index=X_tr.columns, name=d))
         logger.info("refit %s: train %s~%s (%d), infer %d days", d.date(), X_tr.index[0].date(),
                     X_tr.index[-1].date(), len(X_tr), len(X_seg))
 

@@ -2,20 +2,12 @@
 # -*- coding: utf-8 -*-
 
 """
-Rolling Window Training Backtest with Smoothing Technique Comparison
-Supports both original 2-stage approach and End-to-End Regime Mamba.
-
-Updated: Two-Level Entropy Regularization, Direction Loss removed
+End-to-End Regime Mamba rolling-window backtest with smoothing technique comparison
+(Two-Level Entropy Regularization).
 
 Usage:
-    # Original 2-stage approach
-    python scripts/rolling_window_train_backtest_e2e.py --config config.yaml --data_path data.csv
-
-    # End-to-End Regime Mamba
-    python scripts/rolling_window_train_backtest_e2e.py --config config.yaml --data_path data.csv --e2e
-
-    # E2E with high confidence preset (strong symmetry breaking)
-    python scripts/rolling_window_train_backtest_e2e.py --data_path data.csv --e2e --e2e_preset high_confidence
+    python scripts/e2e_backtest.py --data_path data.csv
+    python scripts/e2e_backtest.py --config config.yaml --data_path data.csv --e2e_preset high_confidence
 """
 
 import os
@@ -33,10 +25,9 @@ import pandas as pd
 import torch
 from torch.utils.data import DataLoader
 
-from regime_mamba.config.config import RollingWindowTrainConfig
 from regime_mamba.config.e2e_config import E2ERegimeMambaConfig, E2EConfigPresets
 from regime_mamba.data.dataset import DateRangeRegimeMambaDataset
-from regime_mamba.evaluate.backtest_runner import run_two_stage_window, run_windowed_backtest
+from regime_mamba.evaluate.backtest_runner import run_windowed_backtest
 from regime_mamba.features import FEATURE_SETS, prepare_feature_set, standardize_for_window
 from regime_mamba.evaluate.smoothing_eval import evaluate_smoothing_methods
 from regime_mamba.models.e2e_regime_mamba import (
@@ -61,7 +52,7 @@ E2E_LOSS_PARAMS = ['w_return', 'w_jump', 'w_separation']
 def parse_args():
     """Parse command-line arguments"""
     parser = argparse.ArgumentParser(
-        description='Rolling Window Training Backtest with Smoothing Technique Comparison'
+        description='End-to-End Regime Mamba rolling-window backtest'
     )
     
     # Configuration sources
@@ -74,14 +65,12 @@ def parse_args():
     parser.add_argument('--results_dir', type=str, help='Results directory')
     parser.add_argument('--start_date', type=str, help='Backtest start date (YYYY-MM-DD)')
     parser.add_argument('--end_date', type=str, help='Backtest end date (YYYY-MM-DD)')
-    parser.add_argument('--preprocessed', action='store_true', help='Whether data is preprocessed')
     parser.add_argument('--checkpoint', type=str, help='Path to checkpoint to resume from')
     
     # Period-related settings
     parser.add_argument('--total_window_years', type=int, help='Total data period (years)')
     parser.add_argument('--train_years', type=int, help='Training period (years)')
     parser.add_argument('--valid_years', type=int, help='Validation period (years)')
-    parser.add_argument('--clustering_years', type=int, help='Clustering period (years)')
     parser.add_argument('--forward_months', type=int, help='Interval to next window (months)')
     
     # Model parameters
@@ -93,9 +82,6 @@ def parse_args():
     parser.add_argument('--seq_len', type=int, default=60, help='Sequence length')
     parser.add_argument('--batch_size', type=int, default=1024, help='Batch size')
     parser.add_argument('--learning_rate', type=float, default=5e-4, help='Learning rate')
-    parser.add_argument('--output_dim', type=int, default=1, help='Output dimension')
-    parser.add_argument('--cluster_method', type=str, default='cosine_kmeans', help='Clustering method')
-    parser.add_argument('--direct_train', action='store_true', help='Train model directly for classification')
 
     # Input feature settings (regime_mamba/features.py)
     parser.add_argument('--feature_set', type=str, choices=FEATURE_SETS,
@@ -108,24 +94,15 @@ def parse_args():
     parser.add_argument('--patience', type=int, default=10, help='Early stopping patience')
     parser.add_argument('--transaction_cost', type=float, default=0.001, help='Transaction cost')
     parser.add_argument('--seed', type=int, default=42, help='Random seed')
-    parser.add_argument('--use_onecycle', type=bool, default=True, help='Use one-cycle learning rate policy')
 
-    # Extra Settings
-    parser.add_argument('--jump_model', type=bool, default=False, help='Jump model flag')
     parser.add_argument('--jump_penalty', type=int, default=0, help='Jump penalty')
-    parser.add_argument('--freeze_feature_extractor', type=bool, default=True, help='Freeze feature extractor')
-    parser.add_argument('--window_size', type=int, default=252, help='Window size for Sharpe calculation')
-    parser.add_argument('--lstm', action='store_true', help='Use LSTM model')
-    parser.add_argument('--scale', type=int, default=1, help='Scaling Dollar Index')
 
     # Performance-related settings
-    parser.add_argument('--max_workers', type=int, help='Maximum number of worker processes')
     parser.add_argument('--gpu_id', type=int, default=0, help='GPU ID to use (-1 for CPU)')
     parser.add_argument('--enable_checkpointing', action='store_true', help='Enable checkpointing')
     parser.add_argument('--checkpoint_interval', type=int, help='Checkpoint interval (windows)')
 
     # E2E Regime Mamba specific arguments
-    parser.add_argument('--e2e', action='store_true', help='Use End-to-End Regime Mamba')
     parser.add_argument('--e2e_preset', type=str, default='balanced',
                         choices=['aggressive', 'conservative', 'balanced', 'high_capacity', 'fast',
                                  'high_confidence', 'strong_separation', 'debug_symmetry'],
@@ -161,78 +138,11 @@ def parse_args():
     parser.add_argument('--lambda_inter', type=float, default=1.5, help='Inter-cluster separation weight')
     parser.add_argument('--lambda_intra', type=float, default=1.0, help='Intra-cluster compactness weight')
 
-    # Optional parameters
-    parser.add_argument('--predict', default=False, help='Predict price to predict regime')
     
     return parser.parse_args()
 
 
-def load_config(args) -> RollingWindowTrainConfig:
-    """Load configuration from file and command-line arguments"""
-    # Use E2E config if --e2e flag is set
-    if args.e2e:
-        config = load_e2e_config(args)
-    else:
-        config = load_original_config(args)
-    
-    return config
-
-
-def load_original_config(args) -> RollingWindowTrainConfig:
-    """Load original 2-stage configuration"""
-    config = RollingWindowTrainConfig()
-    
-    # Set default values
-    defaults = {
-        'results_dir': './train_backtest_results',
-        'start_date': '1990-04-20',
-        'end_date': '2023-12-31',
-        'total_window_years': 54,
-        'train_years': 50,
-        'valid_years': 4,
-        'clustering_years': 4,
-        'forward_months': 24,
-        'd_model': 8,
-        'd_state': 32,
-        'n_layers': 4,
-        'dropout': 0.1,
-        'seq_len': 60,
-        'batch_size': 1024,
-        'learning_rate': 5e-4,
-        'max_epochs': 300,
-        'patience': 50,
-        'transaction_cost': 0.001,
-        'max_workers': None,
-        'gpu_id': 0,
-        'enable_checkpointing': False,
-        'checkpoint_interval': 1
-    }
-
-    # Command-line arguments first, then the YAML file (YAML wins)
-    apply_overrides(config, vars(args))
-    apply_overrides(config, load_yaml_config(args.config), skip_none=False)
-    
-    # Check for required parameters
-    required_params = ['data_path']
-    missing_params = [param for param in required_params if getattr(config, param, None) is None]
-    if missing_params:
-        raise ValueError(f"Missing required parameters: {', '.join(missing_params)}")
-    
-    # Fill in defaults
-    for key, value in defaults.items():
-        if getattr(config, key, None) is None:
-            setattr(config, key, value)
-    
-    # Set device
-    if config.gpu_id >= 0 and torch.cuda.is_available():
-        config.device = torch.device(f'cuda:{config.gpu_id}')
-    else:
-        config.device = torch.device('cpu')
-    
-    return config
-
-
-def load_e2e_config(args) -> E2ERegimeMambaConfig:
+def load_config(args) -> E2ERegimeMambaConfig:
     """Load E2E Regime Mamba configuration with Two-Level Entropy support"""
     # Get preset config (Updated preset map)
     preset_map = {
@@ -256,9 +166,7 @@ def load_e2e_config(args) -> E2ERegimeMambaConfig:
         'total_window_years': 20,
         'train_years': 16,
         'valid_years': 4,
-        'clustering_years': 0,  # Not used in E2E
         'forward_months': 24,
-        'max_workers': None,
         'gpu_id': 0,
         'enable_checkpointing': False,
         'checkpoint_interval': 1
@@ -275,7 +183,7 @@ def load_e2e_config(args) -> E2ERegimeMambaConfig:
         'total_window_years', 'train_years', 'valid_years', 'forward_months',
         'input_dim', 'd_model', 'd_state', 'n_layers', 'dropout', 'seq_len',
         'batch_size', 'learning_rate', 'max_epochs', 'patience', 'transaction_cost',
-        'seed', 'max_workers', 'gpu_id', 'enable_checkpointing', 'checkpoint_interval',
+        'seed', 'gpu_id', 'enable_checkpointing', 'checkpoint_interval',
         # E2E Gumbel Softmax
         'initial_temp', 'final_temp', 'temp_schedule', 'warmup_epochs',
         # E2E Loss weights (NO w_direction)
@@ -310,29 +218,20 @@ def load_e2e_config(args) -> E2ERegimeMambaConfig:
     else:
         config.device = torch.device('cpu')
     
-    # E2E doesn't use clustering
-    config.clustering_years = 0
-    
-    # Mark as E2E mode
-    config.e2e_mode = True
-    
     return config
 
 
 def save_config(config, output_dir: str):
-    """Save configuration to file (E2E runs list entropy / loss parameters first)"""
-    if getattr(config, 'e2e_mode', False):
-        save_config_files(
-            config, output_dir,
-            title="E2E Regime Mamba (Two-Level Entropy)",
-            sections=[
-                ("Two-Level Entropy Parameters", E2E_ENTROPY_PARAMS),
-                ("Loss Weights (No Direction Loss)", E2E_LOSS_PARAMS),
-            ],
-            sort_keys=True
-        )
-    else:
-        save_config_files(config, output_dir, title="Rolling Window Train Backtest", sort_keys=True)
+    """Save configuration to file (entropy / loss parameters listed first)"""
+    save_config_files(
+        config, output_dir,
+        title="E2E Regime Mamba (Two-Level Entropy)",
+        sections=[
+            ("Two-Level Entropy Parameters", E2E_ENTROPY_PARAMS),
+            ("Loss Weights (No Direction Loss)", E2E_LOSS_PARAMS),
+        ],
+        sort_keys=True
+    )
 
 
 # ============================================================================
@@ -492,18 +391,12 @@ def run_rolling_window_backtest(
     logger: logging.Logger,
     checkpoint_path: Optional[str] = None
 ) -> Dict[str, Any]:
-    """Run rolling window backtest (supports both original and E2E modes)"""
-    is_e2e = getattr(config, 'e2e_mode', False)
-    mode_str = "[E2E]" if is_e2e else "[2-Stage]"
-
-    if is_e2e:
-        logger.info(f"{mode_str} Two-Level Entropy: λ_sample={config.lambda_sample_entropy}, λ_batch={config.lambda_batch_entropy}")
-        logger.info(f"{mode_str} Loss weights: return={config.w_return}, jump={config.w_jump}, sep={config.w_separation}, ent={config.w_entropy}")
+    """Run the E2E rolling window backtest"""
+    mode_str = "[E2E]"
+    logger.info(f"{mode_str} Two-Level Entropy: λ_sample={config.lambda_sample_entropy}, λ_batch={config.lambda_batch_entropy}")
+    logger.info(f"{mode_str} Loss weights: return={config.w_return}, jump={config.w_jump}, sep={config.w_separation}, ent={config.w_entropy}")
 
     def process_window(window_info, window_dir):
-        if not is_e2e:
-            return run_two_stage_window(config, data, window_info, window_dir, logger)
-
         # feature_set 모드: 이 윈도우의 학습 구간 통계로 입력 피처를 표준화 (기존 모드는 그대로)
         window_data = standardize_for_window(
             data, config, window_info['train_period']['start'], window_info['train_period']['end']
@@ -537,9 +430,8 @@ def run_rolling_window_backtest(
     return run_windowed_backtest(
         config, logger, process_window,
         checkpoint_path=checkpoint_path,
-        use_clustering=not is_e2e,
         log_prefix=f"{mode_str} ",
-        checkpoint_extra={'mode': 'e2e' if is_e2e else '2-stage'}
+        checkpoint_extra={'mode': 'e2e'}
     )
 
 
@@ -551,18 +443,15 @@ def main():
 
         args = parse_args()
 
-        mode_name = 'E2E Regime Mamba (Two-Level Entropy)' if args.e2e else 'Original 2-Stage'
+        mode_name = 'E2E Regime Mamba (Two-Level Entropy)'
         print(f"\n{'='*60}")
         print(f"Mode: {mode_name}")
-        if args.e2e:
-            print(f"Preset: {args.e2e_preset}")
-            print(f"Two-Level Entropy: λ_sample={args.lambda_sample_entropy}, λ_batch={args.lambda_batch_entropy}")
+        print(f"Preset: {args.e2e_preset}")
+        print(f"Two-Level Entropy: λ_sample={args.lambda_sample_entropy}, λ_batch={args.lambda_batch_entropy}")
         print(f"{'='*60}\n")
 
-        default_dir = './e2e_backtest_results' if args.e2e else './train_backtest_results'
         result_dir, log_file = prepare_output_directory(
-            args.results_dir or default_dir,
-            prefix="e2e_backtest" if args.e2e else "train_backtest"
+            args.results_dir or './e2e_backtest_results', prefix="e2e_backtest"
         )
 
         logger = setup_logging(log_file=log_file)
@@ -572,11 +461,10 @@ def main():
             config = load_config(args)
             config.results_dir = result_dir
             logger.info("Configuration loaded successfully")
-            if args.e2e:
-                logger.info(f"Two-Level Entropy Config:")
-                logger.info(f"  lambda_sample_entropy: {config.lambda_sample_entropy}")
-                logger.info(f"  lambda_batch_entropy: {config.lambda_batch_entropy}")
-                logger.info(f"  w_entropy: {config.w_entropy}")
+            logger.info("Two-Level Entropy Config:")
+            logger.info(f"  lambda_sample_entropy: {config.lambda_sample_entropy}")
+            logger.info(f"  lambda_batch_entropy: {config.lambda_batch_entropy}")
+            logger.info(f"  w_entropy: {config.w_entropy}")
         except Exception as e:
             logger.error(f"Error loading configuration: {str(e)}")
             sys.exit(1)

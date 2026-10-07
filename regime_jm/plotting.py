@@ -105,7 +105,8 @@ def _shade_state(ax, regimes: pd.Series, state: int):
 
 
 def plot_regimes_cumret(strategy: pd.DataFrame, bear_state: int, path: str,
-                        others: Optional[Dict[str, pd.DataFrame]] = None, title: str = "") -> str:
+                        others: Optional[Dict[str, pd.DataFrame]] = None, title: str = "",
+                        label: str = "JM strategy") -> str:
     """누적수익률 (전략 · 다른 전략 · Buy & Hold · 벤치마크) + bear 신호 구간 음영."""
     fig, ax = plt.subplots(figsize=(11, 5.2))
     _shade_state(ax, strategy["regime"], bear_state)
@@ -114,8 +115,8 @@ def plot_regimes_cumret(strategy: pd.DataFrame, bear_state: int, path: str,
         ax.plot(strategy.index, strategy["cum_bench"], color=INK_2, lw=LW, label="Benchmark")
     for i, (name, other) in enumerate((others or {}).items(), start=1):
         cum = (1.0 + other["strat_ret"]).cumprod() - 1.0
-        ax.plot(cum.index, cum, color=SERIES[i], lw=LW, label=name)
-    ax.plot(strategy.index, strategy["cum_strategy"], color=SERIES[0], lw=LW + 0.4, label="JM strategy")
+        ax.plot(cum.index, cum, color=SERIES[1 + (i - 1) % (len(SERIES) - 1)], lw=LW, label=name)
+    ax.plot(strategy.index, strategy["cum_strategy"], color=SERIES[0], lw=LW + 0.4, label=label)
     last = strategy.index[-1]
     ax.annotate(f"{strategy['cum_strategy'].iloc[-1]:+.0%}", (last, strategy["cum_strategy"].iloc[-1]),
                 xytext=(4, 0), textcoords="offset points", color=INK, fontsize=8, va="center")
