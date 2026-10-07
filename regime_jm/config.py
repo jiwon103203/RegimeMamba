@@ -65,7 +65,8 @@ class PipelineConfig:
     mamba_batch_size: int = 1024
     mamba_lr: float = 5e-4
     mamba_valid_frac: float = 0.2
-    mamba_horizons: Tuple[int, ...] = (1,)  # 동시에 예측할 미래 수익률 기간 (거래일), 예: (1, 5, 20)
+    mamba_horizons: Tuple[int, ...] = (1,)  # 동시에 예측할 미래 기간 (거래일), 예: (1, 5, 20)
+    mamba_targets: Tuple[str, ...] = ("return",)  # 예측할 값: return | vol | mdd (여러 개면 타깃 × horizon 출력)
 
     # 롤링 재추정
     train_window: int = 3000
@@ -144,6 +145,11 @@ class PipelineConfig:
                 raise ValueError("--mamba-horizons 는 1 이상의 거래일 수여야 합니다")
             if len(set(self.mamba_horizons)) != len(self.mamba_horizons):
                 raise ValueError("--mamba-horizons 에 중복된 값이 있습니다")
+            from .mamba_encoder import TARGETS
+            if not self.mamba_targets or any(t not in TARGETS for t in self.mamba_targets):
+                raise ValueError(f"--mamba-targets 는 {', '.join(TARGETS)} 중에서 골라야 합니다 (got {self.mamba_targets})")
+            if len(set(self.mamba_targets)) != len(self.mamba_targets):
+                raise ValueError("--mamba-targets 에 중복된 값이 있습니다")
             if max(self.mamba_horizons) >= self.min_train // 2:
                 raise ValueError("--mamba-horizons 의 최댓값은 --min-train 의 절반보다 작아야 합니다")
         if self.n_seeds < 1:

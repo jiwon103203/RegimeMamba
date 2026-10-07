@@ -22,6 +22,7 @@
     python run_pipeline.py data.csv --encoder mamba --feature-set example --device cuda:0
     python run_pipeline.py data.csv --encoder mamba --n-seeds 5 --seed-mode both
     python run_pipeline.py data.csv --encoder mamba --mamba-horizons 1,5,20
+    python run_pipeline.py data.csv --encoder mamba --mamba-horizons 5,20 --mamba-targets vol,mdd
 """
 
 from __future__ import annotations
@@ -102,8 +103,9 @@ def _make_encoder(cfg: PipelineConfig) -> Optional[mamba_encoder.MambaEncoder]:
     if cfg.encoder != "mamba":
         return None
     device = mamba_encoder.resolve_device(cfg.device)
-    logger.info("mamba encoder on %s (seq_len=%d, d_model=%d, layers=%d, horizons=%s)", device, cfg.mamba_seq_len,
-                cfg.mamba_d_model, cfg.mamba_layers, ",".join(map(str, cfg.mamba_horizons)))
+    logger.info("mamba encoder on %s (seq_len=%d, d_model=%d, layers=%d, targets=%s, horizons=%s)", device,
+                cfg.mamba_seq_len, cfg.mamba_d_model, cfg.mamba_layers, ",".join(cfg.mamba_targets),
+                ",".join(map(str, cfg.mamba_horizons)))
     return mamba_encoder.MambaEncoder(cfg, device)
 
 
@@ -497,6 +499,10 @@ def _int_list(text: str) -> List[int]:
     return [int(t) for t in str(text).replace(" ", "").split(",") if t]
 
 
+def _str_list(text: str) -> List[str]:
+    return [t for t in str(text).replace(" ", "").lower().split(",") if t]
+
+
 def build_parser() -> argparse.ArgumentParser:
     d = PipelineConfig()
     p = argparse.ArgumentParser(description="Jump Model 국면 파이프라인",
@@ -570,7 +576,10 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--mamba-lr", type=float, default=d.mamba_lr)
     g.add_argument("--mamba-valid-frac", type=float, default=d.mamba_valid_frac, help="학습창 뒤쪽 검증 비율")
     g.add_argument("--mamba-horizons", type=_int_list, default=list(d.mamba_horizons),
-                   help="동시에 예측할 미래 수익률 기간 (거래일, 콤마). 1,5,20 = 다음 날·1주·1달 multi-output")
+                   help="동시에 예측할 미래 기간 (거래일, 콤마). 1,5,20 = 다음 날·1주·1달 multi-output")
+    g.add_argument("--mamba-targets", type=_str_list, default=list(d.mamba_targets),
+                   help="예측할 값 (콤마): return(수익률 합) | vol(실현 변동성) | mdd(최대 낙폭). "
+                        "여러 개면 타깃 × horizon 을 동시에 예측")
 
     g = p.add_argument_group("롤링 재추정")
     g.add_argument("--train-window", type=int, default=d.train_window, help="최대 학습창 (거래일)")
@@ -613,6 +622,7 @@ def config_from_args(args: argparse.Namespace) -> PipelineConfig:
     values["delays"] = tuple(values["delays"])
     values["seeds"] = tuple(values["seeds"] or ())
     values["mamba_horizons"] = tuple(values["mamba_horizons"])
+    values["mamba_targets"] = tuple(values["mamba_targets"])
     for key in ("verbose", "quiet"):
         values.pop(key)
     return PipelineConfig(input=input_path or "", **values)

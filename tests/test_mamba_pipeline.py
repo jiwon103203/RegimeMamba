@@ -21,7 +21,7 @@ import run_pipeline  # noqa: E402
 from regime_jm import mamba_encoder  # noqa: E402
 from regime_jm.config import PipelineConfig  # noqa: E402
 from regime_jm.features import build_features  # noqa: E402
-from regime_jm.mamba_encoder import MambaEncoder, _windows, resolve_device  # noqa: E402
+from regime_jm.mamba_encoder import MambaEncoder, _windows, forward_targets, resolve_device  # noqa: E402
 
 torch = pytest.importorskip("torch")
 
@@ -35,7 +35,7 @@ class GRUBackbone(torch.nn.Module):
     def __init__(self, n_features, cfg):
         super().__init__()
         self.rnn = torch.nn.GRU(n_features, cfg.mamba_d_model, batch_first=True)
-        self.head = torch.nn.Linear(cfg.mamba_d_model, len(cfg.mamba_horizons))
+        self.head = torch.nn.Linear(cfg.mamba_d_model, mamba_encoder.n_outputs(cfg))
 
     def forward(self, x, return_hidden=False):
         out, _ = self.rnn(x)
@@ -124,6 +124,12 @@ def test_config_and_cli_options():
     for bad in [(), (0, 5), (1, 1), (300,)]:
         with pytest.raises(ValueError, match="mamba-horizons"):
             PipelineConfig(input="d.csv", encoder="mamba", mamba_horizons=bad).validate()
+    args = run_pipeline.build_parser().parse_args(["d.csv", "--encoder", "mamba", "--mamba-targets", "Vol, mdd"])
+    assert run_pipeline.config_from_args(args).validate().mamba_targets == ("vol", "mdd")
+    assert PipelineConfig().mamba_targets == ("return",)
+    for bad in [(), ("sharpe",), ("vol", "vol")]:
+        with pytest.raises(ValueError, match="mamba-targets"):
+            PipelineConfig(input="d.csv", encoder="mamba", mamba_targets=bad).validate()
 
 
 class CaptureEncoder(MambaEncoder):
@@ -249,3 +255,60 @@ def test_cli_mamba_multi_horizon(cpu_mamba, asset_csv, tmp_path):
     with open(out / "run_config.json", encoding="utf-8") as f:
         assert json.load(f)["mamba_horizons"] == [1, 5, 20]
     assert (out / "performance.csv").exists()
+
+
+def test_forward_targets_match_brute_force():
+    y = np.random.default_rng(3).normal(0, 0.02, 80)
+    t = np.array([-1, 0, 7, 40, 58])
+    for h in (1, 5, 20):
+        ret, vol, mdd = (forward_targets(y, t, h, k) for k in ("return", "vol", "mdd"))
+        for i, s in enumerate(t):
+            w = y[s + 1:s + 1 + h]
+            wealth = np.concatenate([[1.0], np.cumprod(1 + w)])
+            assert ret[i] == pytest.approx(w.sum())
+            assert vol[i] == pytest.approx(np.sqrt(np.mean(w ** 2)))
+            assert mdd[i] == pytest.approx(np.max(1 - wealth / np.maximum.accumulate(wealth)))
+    assert forward_targets(np.array([0.01, -0.05, 0.02]), np.array([-1]), 1, "mdd")[0] == 0.0
+    assert forward_targets(np.array([0.01, -0.05, 0.02]), np.array([0]), 1, "mdd")[0] == pytest.approx(0.05)
+    with pytest.raises(ValueError, match="sharpe"):
+        forward_targets(y, t, 5, "sharpe")
+
+
+def test_vol_mdd_targets():
+    """타깃 × horizon 출력, vol · mdd 는 학습창 안의 h일 값으로 표준화, pos 이후 수익률은 쓰지 않는다."""
+    X = build_features(simulate(), "paper")
+    y = pd.Series(np.random.default_rng(1).normal(0, 0.01, len(X)), index=X.index)
+    lo, pos, seg_end = 100, 500, 620
+    yv = y.to_numpy()
+    targets, hs = ("vol", "mdd"), (5, 20)
+    cfg = dataclasses.replace(SMALL, mamba_targets=targets, mamba_horizons=hs)
+    enc = CaptureEncoder(cfg, "cpu", GRUBackbone)
+    H = enc(X, y, lo, pos, seg_end)
+    X_tr, Y_tr, X_va, Y_va = enc.captured
+    assert Y_tr.shape[1] == 4
+    t_all = np.concatenate([lo + np.arange(len(X_tr)), pos - 20 - len(X_va) + np.arange(len(X_va))])
+    Y_all = np.concatenate([Y_tr, Y_va])
+    for j, (k, h) in enumerate((k, h) for k in targets for h in hs):
+        ref = forward_targets(yv, np.arange(lo - 1, pos - h), h, k)
+        assert ref.min() >= 0
+        want = (forward_targets(yv, t_all, h, k) - ref.mean()) / ref.std()
+        np.testing.assert_allclose(Y_all[:, j], want, rtol=1e-4, atol=1e-5)
+    log = enc.history_frame()
+    cols = ["valid_loss_vol_h5", "valid_loss_vol_h20", "valid_loss_mdd_h5", "valid_loss_mdd_h20"]
+    assert set(cols) <= set(log.columns)
+    np.testing.assert_allclose(log[cols].mean(axis=1), log["valid_loss"], rtol=1e-6)
+
+    y2 = y.copy()
+    y2.iloc[pos:] = -0.5
+    H2 = MambaEncoder(cfg, "cpu", GRUBackbone)(X, y2, lo, pos, seg_end)
+    np.testing.assert_allclose(H2, H, atol=1e-6)
+
+
+def test_cli_mamba_vol_mdd(cpu_mamba, asset_csv, tmp_path):
+    out = tmp_path / "vm"
+    assert run_pipeline.main([asset_csv, "--out", str(out), "--mamba-targets", "return,vol,mdd",
+                              "--mamba-horizons", "1,5", *MAMBA_ARGS]) == 0
+    log = pd.read_csv(out / "mamba_train_log.csv")
+    assert {f"valid_loss_{k}_h{h}" for k in ("return", "vol", "mdd") for h in (1, 5)} <= set(log.columns)
+    with open(out / "run_config.json", encoding="utf-8") as f:
+        assert json.load(f)["mamba_targets"] == ["return", "vol", "mdd"]
