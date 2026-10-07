@@ -33,6 +33,7 @@ import os
 import sys
 from typing import Any, Dict, List, Optional, Sequence
 
+import numpy as np
 import pandas as pd
 
 from regime_jm import mamba_encoder, plotting
@@ -320,14 +321,18 @@ def run_inference(cfg: Optional[PipelineConfig] = None, **overrides) -> Dict[str
 # ---------------------------------------------------------------------------
 
 def _seed_cfg(cfg: PipelineConfig, seed: int, out_dir: str, **extra) -> PipelineConfig:
-    return dataclasses.replace(cfg, seed=seed, seeds=(), n_seeds=1, out_dir=out_dir, **extra)
+    return dataclasses.replace(cfg, seed=seed, seeds=(), n_seeds=1, ensemble_bear_vote=None, out_dir=out_dir, **extra)
 
 
-def ensemble_regimes(regimes: Dict[int, pd.DataFrame], n_states: int) -> pd.DataFrame:
+def ensemble_regimes(regimes: Dict[int, pd.DataFrame], n_states: int,
+                     bear_vote: Optional[float] = None) -> pd.DataFrame:
     """시드별 국면표의 상태 확률을 날짜마다 평균내고 argmax 를 앙상블 국면으로 삼는다.
 
     상태는 시드마다 같은 규칙(상태 0 = bull, 마지막 = bear, sort_by='cumret')으로 정렬돼 있어 바로 평균낼 수 있다.
-    이산형 모델이면 확률이 one-hot 이라 다수결과 같다. agreement 는 앙상블 국면과 같은 시드의 비율.
+    이산형 모델이면 확률이 one-hot 이라 다수결과 같다. agreement 는 앙상블 국면과 같은 시드의 비율,
+    bear_vote 는 bear 로 판정한 시드의 비율.
+    bear_vote 기준을 주면 bear 표 비율이 그 값 이상인 날을 bear 로, 나머지 날은 bear 를 뺀 상태 중 평균 확률
+    argmax 로 정한다 (예: 0.4 면 5개 시드 중 2개만 bear 여도 bear).
     """
     seeds = list(regimes)
     idx = regimes[seeds[0]].index
@@ -335,8 +340,13 @@ def ensemble_regimes(regimes: Dict[int, pd.DataFrame], n_states: int) -> pd.Data
         idx = idx.intersection(r.index)
     prob_cols = [f"prob_{k}" for k in range(n_states)]
     avg = sum(regimes[s].loc[idx, prob_cols].to_numpy(dtype=float) for s in seeds) / len(seeds)
-    state = avg.argmax(axis=1)
     by_seed = pd.DataFrame({f"regime_seed{s}": regimes[s].loc[idx, "regime"].astype(int) for s in seeds}, index=idx)
+    bear = n_states - 1
+    votes = (by_seed.to_numpy() == bear).mean(axis=1)
+    if bear_vote is None:
+        state = avg.argmax(axis=1)
+    else:
+        state = np.where(votes >= bear_vote - 1e-9, bear, avg[:, :bear].argmax(axis=1))
     first = regimes[seeds[0]].loc[idx]
     ens = pd.DataFrame({"regime": state, "label": [state_label(k, n_states) for k in state]}, index=idx)
     for k, col in enumerate(prob_cols):
@@ -345,6 +355,7 @@ def ensemble_regimes(regimes: Dict[int, pd.DataFrame], n_states: int) -> pd.Data
     if "signal_ret" in first.columns:
         ens["signal_ret"] = first["signal_ret"]
     ens["agreement"] = (by_seed.to_numpy() == state[:, None]).mean(axis=1)
+    ens["bear_vote"] = votes
     ens.index.name = "date"
     return pd.concat([ens, by_seed], axis=1)
 
@@ -386,7 +397,8 @@ def run_multi_seed(cfg: PipelineConfig) -> Dict[str, Any]:
     _write_json(cfg.to_dict(), out, "run_config.json")
     individual = cfg.seed_mode in ("individual", "both")
     ensemble = cfg.seed_mode in ("ensemble", "both")
-    logger.info("multi-seed run: seeds=%s, mode=%s%s", list(seeds), cfg.seed_mode,
+    logger.info("multi-seed run: seeds=%s, mode=%s%s%s", list(seeds), cfg.seed_mode,
+                "" if cfg.ensemble_bear_vote is None else f", bear vote >= {cfg.ensemble_bear_vote:.0%}",
                 " (inference)" if cfg.inference else "")
 
     seed_results: Dict[int, Dict[str, Any]] = {}
@@ -430,9 +442,10 @@ def run_multi_seed(cfg: PipelineConfig) -> Dict[str, Any]:
     if ensemble:
         ens_dir = os.path.join(out, "ensemble")
         os.makedirs(ens_dir, exist_ok=True)
-        ens = ensemble_regimes(regimes, n_states)
+        ens = ensemble_regimes(regimes, n_states, cfg.ensemble_bear_vote)
         current = _current_state(ens, n_states)
         current.update({"seeds": list(seeds), "seed_agreement": float(ens["agreement"].iloc[-1]),
+                        "bear_vote": float(ens["bear_vote"].iloc[-1]), "bear_vote_threshold": cfg.ensemble_bear_vote,
                         "seed_labels": {str(s): state_label(int(r["regime"].iloc[-1]), n_states)
                                         for s, r in regimes.items()}})
         ens_out: Dict[str, Any] = {"regimes": ens, "current_state": current}
@@ -457,8 +470,11 @@ def run_multi_seed(cfg: PipelineConfig) -> Dict[str, Any]:
                 others = None
                 if seed_results:
                     others = {f"seed {s}": r["strategy"] for s, r in seed_results.items()}
+                vote_note = ("" if cfg.ensemble_bear_vote is None
+                             else f", bear if vote >= {cfg.ensemble_bear_vote:.0%}")
                 plotting.plot_regimes_cumret(strategy, bear, os.path.join(ens_dir, "regimes_cumret.png"), others,
-                                             title=f"Seed ensemble ({len(seeds)} seeds)", label="Ensemble strategy")
+                                             title=f"Seed ensemble ({len(seeds)} seeds{vote_note})",
+                                             label="Ensemble strategy")
                 plotting.plot_delay_robustness(delay_table, os.path.join(ens_dir, "delay_robustness.png"))
         elif cfg.plots:
             plotting.plot_inference(ens, data["close"], bear, os.path.join(ens_dir, "inference.png"))
@@ -533,6 +549,8 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--seeds", type=_int_list, help="시드 목록 (콤마, --n-seeds 대신)")
     g.add_argument("--seed-mode", choices=SEED_MODES, default=d.seed_mode,
                    help="ensemble: 국면 확률 평균으로 백테스트 / individual: 시드별 백테스트 후 성과 평균 / both")
+    g.add_argument("--ensemble-bear-vote", type=float, metavar="X",
+                   help="앙상블에서 bear 로 판정한 시드 비율이 X 이상이면 bear (0~1, 예: 0.4). 기본: 확률 평균 argmax")
 
     g = p.add_argument_group("Mamba 인코더 (--encoder mamba, CUDA GPU 필요)")
     g.add_argument("--encoder", choices=("none", "mamba"), default=d.encoder,
@@ -619,6 +637,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     if cur:
         name = f"앙상블({len(cur['seeds'])}개 시드) 국면" if "seeds" in cur else "현재 국면"
         agree = f", 시드 일치 {cur['seed_agreement']:.0%}" if "seed_agreement" in cur else ""
+        if cur.get("bear_vote_threshold") is not None:
+            agree += f", bear 표 {cur['bear_vote']:.0%} (기준 {cur['bear_vote_threshold']:.0%})"
         print(f"[{cur['asof']}] {name}: {cur['label']} (bear 확률 {cur['prob_bear']:.1%}, "
               f"{cur['days_in_regime']}일째, 재추정 {cur['refit_date']}{agree})")
     perf = result.get("seed_performance")

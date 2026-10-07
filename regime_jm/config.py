@@ -48,6 +48,7 @@ class PipelineConfig:
     seeds: Tuple[int, ...] = ()
     n_seeds: int = 1
     seed_mode: str = "both"                # ensemble | individual | both
+    ensemble_bear_vote: Optional[float] = None   # 앙상블: bear 표 비율이 이 값 이상이면 bear (기본: 확률 평균 argmax)
 
     # 인코더: none 이면 피처 → JM, mamba 면 피처 → Mamba hidden 벡터 → JM (GPU 필요)
     encoder: str = "none"                  # none | mamba
@@ -144,6 +145,11 @@ class PipelineConfig:
             raise ValueError("--seeds 에 중복된 시드가 있습니다")
         if self.seed_mode not in SEED_MODES:
             raise ValueError(f"--seed-mode 는 {', '.join(SEED_MODES)} 중 하나여야 합니다")
+        if self.ensemble_bear_vote is not None:
+            if not 0.0 < self.ensemble_bear_vote <= 1.0:
+                raise ValueError("--ensemble-bear-vote 는 0 초과 1 이하의 비율이어야 합니다 (예: 0.4 = 40%)")
+            if len(self.seed_list) < 2 or self.seed_mode == "individual":
+                raise ValueError("--ensemble-bear-vote 는 시드 2개 이상의 ensemble/both 실행에서만 쓸 수 있습니다")
         if self.delay < 0 or any(d < 0 for d in self.delays):
             raise ValueError("delay 는 0 이상이어야 합니다")
         return self

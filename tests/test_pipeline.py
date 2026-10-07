@@ -518,6 +518,59 @@ def test_ensemble_regimes_averages_probabilities():
     assert list(ens["regime_seed0"]) == [0, 1, 1, 1]
 
 
+def test_ensemble_regimes_bear_vote_threshold():
+    idx = pd.bdate_range("2020-01-01", periods=4)
+
+    def reg(regime):
+        r = np.asarray(regime)
+        return pd.DataFrame({"regime": r, "prob_0": 1.0 - r, "prob_1": r.astype(float),
+                             "refit_date": idx[0], "signal_ret": 0.0}, index=idx)
+
+    seeds = {0: reg([0, 1, 1, 0]), 1: reg([0, 0, 1, 0]), 2: reg([0, 0, 1, 1]), 3: reg([0, 0, 0, 0]),
+             4: reg([0, 0, 1, 0])}
+    base = run_pipeline.ensemble_regimes(seeds, n_states=2)
+    np.testing.assert_allclose(base["bear_vote"], [0, 0.2, 0.8, 0.2])
+    assert list(base["regime"]) == [0, 0, 1, 0]
+    # 40%: 5개 중 2개 이상이면 bear / 20%: 1개만 bear 여도 bear
+    assert list(run_pipeline.ensemble_regimes(seeds, 2, bear_vote=0.4)["regime"]) == [0, 0, 1, 0]
+    low = run_pipeline.ensemble_regimes(seeds, 2, bear_vote=0.2)
+    assert list(low["regime"]) == [0, 1, 1, 1]
+    np.testing.assert_allclose(low["agreement"], [1, 0.2, 0.8, 0.2])
+    np.testing.assert_allclose(low["prob_1"], base["prob_1"])
+
+    # 3 상태: bear 표가 기준 미만이면 bear 를 뺀 상태 중 평균 확률 argmax
+    def reg3(regime):
+        r = np.asarray(regime)
+        return pd.DataFrame({"regime": r, **{f"prob_{k}": (r == k).astype(float) for k in range(3)},
+                             "refit_date": idx[0]}, index=idx)
+
+    three = {0: reg3([2, 2, 1, 0]), 1: reg3([1, 2, 1, 0]), 2: reg3([1, 0, 2, 2])}
+    assert list(run_pipeline.ensemble_regimes(three, 3)["regime"]) == [1, 2, 1, 0]
+    assert list(run_pipeline.ensemble_regimes(three, 3, bear_vote=0.3)["regime"]) == [2, 2, 2, 2]
+    assert list(run_pipeline.ensemble_regimes(three, 3, bear_vote=0.9)["regime"]) == [1, 0, 1, 0]
+
+
+def test_multi_seed_bear_vote(files, tmp_path):
+    kw = dict(input=files["asset"], seeds=(1, 4, 6), plots=False, seed_mode="ensemble", **PIPE_FAST)
+    base = run_pipeline.run_pipeline(out_dir=str(tmp_path / "base"), **kw)
+    res = run_pipeline.run_pipeline(out_dir=str(tmp_path / "vote"), ensemble_bear_vote=1 / 3, **kw)
+    ens = res["ensemble"]["regimes"]
+    seed_cols = [c for c in ens.columns if c.startswith("regime_seed")]
+    np.testing.assert_array_equal(ens["regime"], (ens[seed_cols] == 1).any(axis=1).astype(int))
+    assert (ens["regime"] >= base["ensemble"]["regimes"]["regime"]).all()
+    strat = res["ensemble"]["strategy"]
+    expected = regime_to_weight(ens["regime"], bear_state=1).shift(1).reindex(strat.index)
+    np.testing.assert_allclose(strat["weight"], expected)
+    cur = json.loads((tmp_path / "vote" / "ensemble" / "current_state.json").read_text(encoding="utf-8"))
+    assert cur["bear_vote_threshold"] == pytest.approx(1 / 3) and cur["bear_vote"] == ens["bear_vote"].iloc[-1]
+
+    for bad in (dict(ensemble_bear_vote=0.0), dict(ensemble_bear_vote=1.5),
+                dict(ensemble_bear_vote=0.5, seed_mode="individual"),
+                dict(ensemble_bear_vote=0.5, seeds=(), n_seeds=1)):
+        with pytest.raises(ValueError, match="ensemble-bear-vote"):
+            run_pipeline.run_pipeline(out_dir=str(tmp_path / "bad"), **{**kw, **bad})
+
+
 def test_multi_seed_both_modes(files, tmp_path):
     res = run_pipeline.run_pipeline(input=files["asset"], out_dir=str(tmp_path), n_seeds=3, seed=7,
                                     **{**PIPE_FAST, "cont": True})

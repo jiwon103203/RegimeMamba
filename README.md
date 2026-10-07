@@ -52,7 +52,7 @@ python run_pipeline.py data.csv --encoder mamba --n-seeds 5            # 시드 
 | 모델 | `--model jm\|sjm`, `--discrete`, `--n-states 2`, `--jump-penalty 50`, `--max-feats`, `--pin-features`, `--n-init 10`, `--clip-mul 3`, `--center-distance` |
 | 재추정 | `--train-window 3000`, `--min-train 500`, `--refit-months 1,7`, `--oos-start` |
 | 백테스트 | `--delay 1`, `--delays 1,2,3,5,10`, `--min-cash 0`, `--max-cash 1`, `--cost-bps 10`, `--backtest-ret absolute\|relative` |
-| 여러 시드 | `--n-seeds 1` (`--seed`부터 연속), `--seeds 0,1,2,3,4`, `--seed-mode ensemble\|individual\|both` (both) |
+| 여러 시드 | `--n-seeds 1` (`--seed`부터 연속), `--seeds 0,1,2,3,4`, `--seed-mode ensemble\|individual\|both` (both), `--ensemble-bear-vote 0.4` |
 | HMM | `--hmm`, `--hmm-states 2`, `--hmm-refit 21`, `--hmm-median 5` |
 
 - 피처 세트: `paper` = DD-log_10, sortino_20, sortino_60 / `example` = ret·DD-log·sortino × 5·20·60일 (9개) / `extra` = 9개 계열 × 5·20·60일 (27개).
@@ -64,6 +64,7 @@ python run_pipeline.py data.csv --encoder mamba --n-seeds 5            # 시드 
   - `individual`: 시드마다 전체 파이프라인을 `seed_<s>/`에 저장하고, 전략 성과의 평균·표준편차·최소·최대를 `seed_performance.csv`로 정리합니다.
   - `ensemble`: 날짜마다 시드별 상태 확률을 평균해 argmax를 국면으로 삼고(이산형이면 다수결) 한 번 백테스트해 `ensemble/`에 저장합니다. HMM·에피소드 분석은 하지 않습니다.
   - `both`: 둘 다 하며, 앙상블은 개별 실행 결과를 재사용합니다. `seed_performance.csv`에 `ensemble` 행이 함께 들어갑니다.
+  - `--ensemble-bear-vote X` (0~1): bear 국면에 더 빨리 반응하도록, bear로 판정한 시드 비율(`bear_vote`)이 X 이상인 날을 앙상블 bear로 삼습니다 (예: `0.4`면 5개 시드 중 2개). 나머지 날은 bear를 뺀 상태 중 평균 확률이 가장 큰 상태입니다. 상태 확률 평균(`prob_k`)은 그대로이고, 국면·전략·`current_state.json`(`bear_vote`, `bear_vote_threshold`)에 반영됩니다.
   - `--inference`와 함께 쓰면 시드별 · 앙상블 현재 국면만 저장합니다.
 
 ## 출력 (`--out`, 기본 `out/`)
@@ -79,7 +80,7 @@ python run_pipeline.py data.csv --encoder mamba --n-seeds 5            # 시드 
 | `mamba_train_log.csv` | (--encoder mamba) 재추정별 epoch, train/valid loss |
 | `current_state.json`, `run_config.json`, `*.png` | 현재 국면, 실행 설정, 그림 |
 | `seed_<s>/`, `seed_performance.csv`, `seed_current_state.csv` | (여러 시드 · individual) 시드별 결과, 시드별 성과와 평균·표준편차, 시드별 현재 국면 |
-| `ensemble/` | (여러 시드 · ensemble) `regimes.csv`(평균 확률, `agreement`, `regime_seed<s>`), `strategy.csv`, `performance.csv`, `delay_robustness.csv`, `current_state.json` |
+| `ensemble/` | (여러 시드 · ensemble) `regimes.csv`(평균 확률, `agreement`, `bear_vote`, `regime_seed<s>`), `strategy.csv`, `performance.csv`, `delay_robustness.csv`, `current_state.json` |
 
 `--inference`는 최근 반기 시작점 직전 학습창으로 한 번만 학습하고 현재 반기만 추론합니다 (`inference_*.csv`).
 
