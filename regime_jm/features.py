@@ -229,7 +229,7 @@ def expand_feature_names(columns: Sequence[str], names: Optional[Iterable[str]])
 # ---------------------------------------------------------------------------
 
 def build_features(ret: pd.Series, feature_set: str = "paper", extra: Optional[pd.DataFrame] = None,
-                   remove: Optional[Iterable[str]] = None, warmup: int = 252) -> pd.DataFrame:
+                   remove: Optional[Iterable[str]] = None, warmup: int = 252, return_context: bool = False):
     """수익률 → 피처 행렬.
 
     Args:
@@ -238,6 +238,8 @@ def build_features(ret: pd.Series, feature_set: str = "paper", extra: Optional[p
         extra: 이미 변환·정렬된 사용자 변수 (index = ret.index)
         remove: 제거할 계열 / 피처 이름
         warmup: 앞에서 버릴 행 수 (EWM·롤링 통계 안정화용)
+        return_context: True 면 (X, context) 를 돌려준다. context 는 X 첫 행 직전까지 버려진 행 중
+            결측 없이 이어지는 뒤쪽 부분 (Mamba 시퀀스 앞부분을 0 대신 채우는 용도, --mamba-warmup-context)
     """
     ret = ret.dropna()
     parts = []
@@ -270,4 +272,10 @@ def build_features(ret: pd.Series, feature_set: str = "paper", extra: Optional[p
         logger.warning("결측 피처가 있는 앞쪽 %d행을 제외했습니다 (사용자 변수 시작일 등)", n_before - len(X))
     if len(X) == 0:
         raise ValueError("warmup 이후 남은 피처 행이 없습니다")
-    return X
+    if not return_context:
+        return X
+    context = filled.loc[filled.index < X.index[0]]
+    bad = context.isna().any(axis=1).to_numpy()
+    if bad.any():
+        context = context.iloc[np.flatnonzero(bad)[-1] + 1:]
+    return X, context

@@ -107,12 +107,16 @@ class MambaEncoder:
     ``cfg`` 는 ``PipelineConfig`` (``mamba_*``, ``clip_mul``, ``seed`` 를 읽는다).
     ``backbone_factory(n_features, cfg)`` 는 ``forward(x, return_hidden=True)`` 가
     ``(pred[B, len(mamba_targets) * len(mamba_horizons)], hidden[B, d])`` 를 돌려주는 ``torch.nn.Module`` 을 만든다.
+    ``context`` 는 X 첫 행 이전의 피처 행 (warmup 으로 버려진 구간). 주면 시퀀스가 X 시작 전으로 넘어갈 때
+    0 대신 이 행들로 채운다 (학습창 fit 통계로 같이 변환. 모자라면 남는 앞부분만 0).
     """
 
-    def __init__(self, cfg, device: str, backbone_factory: Optional[Callable[[int, Any], Any]] = None):
+    def __init__(self, cfg, device: str, backbone_factory: Optional[Callable[[int, Any], Any]] = None,
+                 context: Optional[pd.DataFrame] = None):
         self.cfg = cfg
         self.device = device
         self.backbone_factory = backbone_factory or build_mamba_backbone
+        self.context = context
         self.history: List[Dict[str, Any]] = []
 
     def __call__(self, X: pd.DataFrame, y: pd.Series, lo: int, pos: int, seg_end: int) -> pd.DataFrame:
@@ -122,7 +126,10 @@ class MambaEncoder:
         torch.manual_seed(c.seed + len(self.history))
         prep = WindowPreprocessor(c.clip_mul).fit(X.iloc[lo:pos])
         ctx = max(0, lo - L + 1)  # 학습창 첫 시퀀스에 쓸 이전 행
-        Z = prep.transform(X.iloc[ctx:seg_end]).to_numpy(dtype=np.float32)
+        pre = self._context_rows(X, L - 1 - (lo - ctx))  # X 시작 전으로 넘어가는 부분 (context 가 있을 때)
+        frame = pd.concat([pre, X.iloc[ctx:seg_end]]) if len(pre) else X.iloc[ctx:seg_end]
+        Z = prep.transform(frame).to_numpy(dtype=np.float32)
+        base = ctx - len(pre)  # Z 0 행에 해당하는 X 위치 (context 를 붙이면 음수)
 
         # 학습 샘플: t ∈ [lo, pos-max(h)) 에서 끝나는 시퀀스 → 타깃 × h 마다 y[t+1..t+h] 로 만든 값 (모두 pos 이전)
         horizons = tuple(c.mamba_horizons)
@@ -131,7 +138,7 @@ class MambaEncoder:
         t_ends = np.arange(lo, pos - gap - 1)
         if len(t_ends) < gap + 2:
             raise ValueError("Mamba 학습 샘플이 부족합니다")
-        Xs = _windows(Z, t_ends - ctx, L)
+        Xs = _windows(Z, t_ends - base, L)
         Ys = np.empty((len(t_ends), len(c.mamba_targets) * len(horizons)), dtype=np.float32)
         for j, (kind, h) in enumerate((k, h) for k in c.mamba_targets for h in horizons):
             # 스케일: 학습창 [lo, pos) 안의 모든 h일 구간 값 (return 은 평균을 빼지 않아 부호를 유지)
@@ -145,13 +152,21 @@ class MambaEncoder:
         info = {"refit_date": X.index[pos],
                 **self._train(model, Xs[:n_tr], Ys[:n_tr], Xs[-n_val:], Ys[-n_val:],
                               target_labels(c.mamba_targets, horizons)),
-                "n_train_seq": n_tr, "n_valid_seq": n_val}
+                "n_train_seq": n_tr, "n_valid_seq": n_val,
+                "n_context_rows": len(pre), "n_zero_pad": max(0, L - 1 - (lo - base))}
         self.history.append(info)
         logger.info("mamba refit %s: epochs %d (best %d), train %.4f, valid %.4f", info["refit_date"].date(),
                     info["epochs"], info["best_epoch"], info["train_loss"], info["valid_loss"])
 
-        hidden = self._encode(model, _windows(Z, np.arange(lo - ctx, seg_end - ctx), L))
+        hidden = self._encode(model, _windows(Z, np.arange(lo - base, seg_end - base), L))
         return pd.DataFrame(hidden, index=X.index[lo:seg_end], columns=[f"h_{k}" for k in range(hidden.shape[1])])
+
+    def _context_rows(self, X: pd.DataFrame, need: int) -> pd.DataFrame:
+        """X 첫 행 직전 context 의 마지막 ``need`` 행 (없거나 필요 없으면 빈 DataFrame)."""
+        if need <= 0 or self.context is None or not len(self.context):
+            return X.iloc[:0]
+        ctx = self.context.loc[self.context.index < X.index[0], list(X.columns)]
+        return ctx.iloc[max(0, len(ctx) - need):]
 
     def history_frame(self) -> pd.DataFrame:
         return pd.DataFrame(self.history)

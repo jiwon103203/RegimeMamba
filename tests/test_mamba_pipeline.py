@@ -105,6 +105,50 @@ def test_encoder_is_causal():
     assert list(log["refit_date"]) == [X.index[pos]] and log["epochs"].iloc[0] >= 1
 
 
+def test_build_features_warmup_context():
+    """context 는 warmup 으로 버린 행 중 X 첫 행 직전까지 결측 없이 이어지는 부분이다."""
+    ret = simulate()
+    X = build_features(ret, "extra")
+    X2, ctx = build_features(ret, "extra", return_context=True)
+    pd.testing.assert_frame_equal(X, X2)
+    assert 0 < len(ctx) <= 252 and list(ctx.columns) == list(X.columns)
+    assert ctx.notna().all().all() and ctx.index[-1] < X.index[0]
+    assert ret.index.get_loc(ctx.index[-1]) + 1 == ret.index.get_loc(X.index[0])
+    assert len(build_features(ret, "paper", warmup=0, return_context=True)[1]) == 0
+
+
+def test_encoder_warmup_context_replaces_zero_pad():
+    """context 를 주면 X 시작 전 시퀀스 앞부분이 0 대신 그 행들로 채워진다 (X 앞에 붙여 넣은 것과 같음)."""
+    X, ctx = build_features(simulate(), "paper", return_context=True)
+    y = pd.Series(np.random.default_rng(1).normal(0, 0.01, len(X)), index=X.index)
+    L, pos, seg_end = SMALL.mamba_seq_len, 400, 450
+
+    plain = MambaEncoder(SMALL, "cpu", GRUBackbone)
+    H0 = plain(X, y, 0, pos, seg_end)
+    with_ctx = MambaEncoder(SMALL, "cpu", GRUBackbone, context=ctx)
+    H1 = with_ctx(X, y, 0, pos, seg_end)
+    assert plain.history[0]["n_zero_pad"] == L - 1 and plain.history[0]["n_context_rows"] == 0
+    assert with_ctx.history[0]["n_zero_pad"] == 0 and with_ctx.history[0]["n_context_rows"] == L - 1
+    assert H1.index.equals(H0.index) and not np.allclose(H0.iloc[:L - 1], H1.iloc[:L - 1])
+
+    k = L - 1  # context 를 X 앞에 직접 붙이고 lo 를 k 로 옮기면 같은 입력 · 같은 정규화 · 같은 시드
+    full = pd.concat([ctx.iloc[-k:], X])
+    y_full = pd.Series(0.0, index=full.index)
+    y_full.iloc[k:] = y.to_numpy()
+    H2 = MambaEncoder(SMALL, "cpu", GRUBackbone)(full, y_full, k, pos + k, seg_end + k)
+    np.testing.assert_allclose(H1.to_numpy(), H2.to_numpy(), atol=1e-6)
+
+    # 학습창이 X 시작에서 seq_len 이상 떨어져 있으면 context 는 쓰이지 않는다
+    far = MambaEncoder(SMALL, "cpu", GRUBackbone, context=ctx)
+    far(X, y, 50, pos, seg_end)
+    assert far.history[0]["n_context_rows"] == 0 and far.history[0]["n_zero_pad"] == 0
+
+
+def test_warmup_context_requires_mamba():
+    with pytest.raises(ValueError, match="mamba-warmup-context"):
+        PipelineConfig(input="d.csv", mamba_warmup_context=True).validate()
+
+
 def test_config_and_cli_options():
     args = run_pipeline.build_parser().parse_args(
         ["d.csv", "--encoder", "mamba", "--model", "sjm", "--min-train", "300", "--device", "cuda:1",
@@ -312,3 +356,11 @@ def test_cli_mamba_vol_mdd(cpu_mamba, asset_csv, tmp_path):
     assert {f"valid_loss_{k}_h{h}" for k in ("return", "vol", "mdd") for h in (1, 5)} <= set(log.columns)
     with open(out / "run_config.json", encoding="utf-8") as f:
         assert json.load(f)["mamba_targets"] == ["return", "vol", "mdd"]
+
+
+def test_cli_mamba_warmup_context(cpu_mamba, asset_csv, tmp_path):
+    out = tmp_path / "ctx"
+    assert run_pipeline.main([asset_csv, "--out", str(out), "--mamba-warmup-context", *MAMBA_ARGS]) == 0
+    log = pd.read_csv(out / "mamba_train_log.csv")
+    assert (log["n_zero_pad"] == 0).all() and log["n_context_rows"].iloc[0] == 9
+    assert json.load(open(out / "run_config.json"))["mamba_warmup_context"] is True

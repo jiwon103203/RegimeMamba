@@ -54,6 +54,7 @@ class PipelineConfig:
     encoder: str = "none"                  # none | mamba
     device: str = "auto"                   # auto | cuda | cuda:N (mamba-ssm 은 CUDA 전용)
     mamba_seq_len: int = 60
+    mamba_warmup_context: bool = False     # 시퀀스 앞부분을 0 대신 warmup 으로 버린 피처 행으로 채움
     mamba_d_model: int = 8                 # hidden 벡터 차원 = Jump Model 입력 차원
     mamba_d_state: int = 32
     mamba_d_conv: int = 4
@@ -130,6 +131,8 @@ class PipelineConfig:
             raise ValueError("train_window >= min_train >= 2 이어야 합니다")
         if self.encoder not in ("none", "mamba"):
             raise ValueError("encoder must be none or mamba")
+        if self.mamba_warmup_context and self.encoder != "mamba":
+            raise ValueError("--mamba-warmup-context 는 --encoder mamba 에서만 쓸 수 있습니다")
         if self.encoder == "mamba":
             from .mamba_encoder import DEVICE_RE
             if not DEVICE_RE.match(str(self.device).strip().lower()):

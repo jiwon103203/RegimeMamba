@@ -85,28 +85,38 @@ def load_extra_features(specs: Sequence[str], main_path: str, index: pd.Datetime
 
 
 def prepare_features(cfg: PipelineConfig):
-    """1)~2) 단계: 입력 → (data, 신호 수익률 열 이름, 피처 행렬)."""
+    """1)~2) 단계: 입력 → (data, 신호 수익률 열 이름, 피처 행렬, warmup context).
+
+    context 는 --encoder mamba --mamba-warmup-context 일 때만 warmup 으로 버려진 피처 행 (아니면 None).
+    """
     data = prepare_inputs(cfg.input, date_col=cfg.date_col, close_col=cfg.close_col, rf_col=cfg.rf_col,
                           rf_unit=cfg.rf_unit, rf_const=cfg.rf_const, benchmark=cfg.relative_benchmark,
                           bench_date_col=cfg.bench_date_col, bench_close_col=cfg.bench_close_col,
                           start=cfg.start, end=cfg.end)
     signal_col = resolve_signal_return(data, cfg.signal_ret)
     extra = load_extra_features(cfg.extra_features, cfg.input, data.index, cfg.date_col)
+    use_context = cfg.encoder == "mamba" and cfg.mamba_warmup_context
     X = build_features(data[signal_col], cfg.feature_set, extra=extra, remove=cfg.remove_series,
-                       warmup=cfg.warmup)
+                       warmup=cfg.warmup, return_context=use_context)
+    context = None
+    if use_context:
+        X, context = X
+        logger.info("mamba warmup context: X 이전 %d행을 시퀀스 앞부분으로 사용 (seq_len %d → 필요 최대 %d행)",
+                    len(context), cfg.mamba_seq_len, cfg.mamba_seq_len - 1)
     logger.info("signal=%s, features=%d (%s), rows=%d (%s ~ %s)", signal_col, X.shape[1], cfg.feature_set,
                 len(X), X.index[0].date(), X.index[-1].date())
-    return data, signal_col, X
+    return data, signal_col, X, context
 
 
-def _make_encoder(cfg: PipelineConfig) -> Optional[mamba_encoder.MambaEncoder]:
+def _make_encoder(cfg: PipelineConfig, context: Optional[pd.DataFrame] = None
+                  ) -> Optional[mamba_encoder.MambaEncoder]:
     if cfg.encoder != "mamba":
         return None
     device = mamba_encoder.resolve_device(cfg.device)
     logger.info("mamba encoder on %s (seq_len=%d, d_model=%d, layers=%d, targets=%s, horizons=%s)", device,
                 cfg.mamba_seq_len, cfg.mamba_d_model, cfg.mamba_layers, ",".join(cfg.mamba_targets),
                 ",".join(map(str, cfg.mamba_horizons)))
-    return mamba_encoder.MambaEncoder(cfg, device)
+    return mamba_encoder.MambaEncoder(cfg, device, context=context)
 
 
 def _fit_rolling(cfg: PipelineConfig, X: pd.DataFrame, signal: pd.Series, start=None,
@@ -174,8 +184,10 @@ def run_pipeline(cfg: Optional[PipelineConfig] = None, **overrides) -> Dict[str,
     encoder = _make_encoder(cfg)  # GPU 가 없으면 데이터 처리 전에 실패
 
     # 1)~2) 데이터 · 피처
-    data, signal_col, X = prepare_features(cfg)
+    data, signal_col, X, context = prepare_features(cfg)
     signal = data[signal_col]
+    if encoder is not None:
+        encoder.context = context
 
     # 3) 롤링 재추정 + 온라인 추론 (mamba: 재추정마다 Mamba 학습 → hidden 벡터)
     res = _fit_rolling(cfg, X, signal, start=cfg.oos_start, encoder=encoder)
@@ -280,8 +292,10 @@ def run_inference(cfg: Optional[PipelineConfig] = None, **overrides) -> Dict[str
     _write_json(cfg.to_dict(), out, "run_config.json")
     encoder = _make_encoder(cfg)
 
-    data, signal_col, X = prepare_features(cfg)
+    data, signal_col, X, context = prepare_features(cfg)
     signal = data[signal_col]
+    if encoder is not None:
+        encoder.context = context
     dates = refit_schedule(X.index, cfg.refit_months, cfg.min_train)
     if not dates:
         raise ValueError("추론할 반기 시작점이 없습니다 (데이터 부족)")
@@ -416,7 +430,7 @@ def run_multi_seed(cfg: PipelineConfig) -> Dict[str, Any]:
         data = seed_results[seeds[0]]["data"]
     else:
         _make_encoder(cfg)  # GPU 가 없으면 데이터 처리 전에 실패
-        data, signal_col, X = prepare_features(cfg)
+        data, signal_col, X, context = prepare_features(cfg)
         signal = data[signal_col]
         start = cfg.oos_start
         if cfg.inference:
@@ -427,7 +441,7 @@ def run_multi_seed(cfg: PipelineConfig) -> Dict[str, Any]:
         for i, s in enumerate(seeds, start=1):
             logger.info("seed %d (%d/%d)", s, i, len(seeds))
             scfg = _seed_cfg(cfg, s, out)
-            encoder = _make_encoder(scfg)
+            encoder = _make_encoder(scfg, context)
             regimes[s] = _regime_table(_fit_rolling(scfg, X, signal, start=start, encoder=encoder), signal)
             if encoder is not None:
                 mamba_logs.append(encoder.history_frame().assign(seed=s))
@@ -564,6 +578,8 @@ def build_parser() -> argparse.ArgumentParser:
                    help="mamba: 재추정마다 Mamba 를 학습해 피처 대신 hidden 벡터를 --model 에 넣음")
     g.add_argument("--device", default=d.device, help="auto(첫 번째 GPU) | cuda | cuda:N")
     g.add_argument("--mamba-seq-len", type=int, default=d.mamba_seq_len, help="입력 시퀀스 길이 (거래일)")
+    g.add_argument("--mamba-warmup-context", action="store_true",
+                   help="시퀀스가 피처 시작 전으로 넘어가면 0 대신 --warmup 으로 버린 행으로 채움")
     g.add_argument("--mamba-d-model", type=int, default=d.mamba_d_model, help="hidden 벡터 차원")
     g.add_argument("--mamba-d-state", type=int, default=d.mamba_d_state)
     g.add_argument("--mamba-d-conv", type=int, default=d.mamba_d_conv)
