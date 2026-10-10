@@ -607,6 +607,8 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--top-k", type=int, default=d.top_k, help="유사 에피소드 개수")
     g.add_argument("--inference", action="store_true", help="현재 반기만 추론 (백테스트 없음)")
     g.add_argument("--no-plots", action="store_true", help="png 저장 안 함")
+    g.add_argument("--summary-file", metavar="PATH",
+                   help="실행이 끝날 때마다 성과 요약을 이 txt 파일에 이어 쓴다 (여러 옵션 일괄 실행용)")
     g.add_argument("-v", "--verbose", action="store_true")
     g.add_argument("-q", "--quiet", action="store_true")
     return p
@@ -623,12 +625,30 @@ def config_from_args(args: argparse.Namespace) -> PipelineConfig:
     values["seeds"] = tuple(values["seeds"] or ())
     values["mamba_horizons"] = tuple(values["mamba_horizons"])
     values["mamba_targets"] = tuple(values["mamba_targets"])
-    for key in ("verbose", "quiet"):
+    for key in ("verbose", "quiet", "summary_file"):
         values.pop(key)
     return PipelineConfig(input=input_path or "", **values)
 
 
+def append_summary(path: str, argv: Sequence[str], out_dir: str, table: Optional[pd.DataFrame],
+                   error: Optional[str] = None) -> None:
+    """성과 요약 한 블록(실행 명령 · 출력 폴더 · 성과표 또는 오류)을 path 에 이어 쓴다."""
+    stamp = pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S")
+    lines = ["=" * 80, f"[{stamp}] python run_pipeline.py {' '.join(argv)}", f"out: {os.path.abspath(out_dir)}"]
+    if error is not None:
+        lines.append(f"FAILED: {error}")
+    elif table is not None:
+        with pd.option_context("display.float_format", "{:.4f}".format, "display.width", 200,
+                               "display.max_columns", None):
+            lines.append(table.to_string())
+    folder = os.path.dirname(os.path.abspath(path))
+    os.makedirs(folder, exist_ok=True)
+    with open(path, "a", encoding="utf-8") as f:
+        f.write("\n".join(lines) + "\n\n")
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
+    argv = list(sys.argv[1:] if argv is None else argv)
     parser = build_parser()
     args = parser.parse_args(argv)
     level = logging.WARNING if args.quiet else logging.DEBUG if args.verbose else logging.INFO
@@ -641,6 +661,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         result = run_pipeline(cfg)
     except (ValueError, KeyError, FileNotFoundError) as e:
         logger.error("%s", e)
+        if args.summary_file:
+            append_summary(args.summary_file, argv, args.out_dir, None, error=str(e))
         return 1
 
     print()
@@ -658,11 +680,15 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     perf = result.get("seed_performance")
     if perf is None:
         perf = result.get("performance")
+    table = None
     if perf is not None:
         cols = [c for c in ("cagr", "ann_vol", "sharpe", "max_drawdown", "information_ratio", "n_trades")
                 if c in perf.columns]
+        table = perf[cols].apply(pd.to_numeric, errors="coerce")
         with pd.option_context("display.float_format", "{:.4f}".format, "display.width", 120):
-            print(perf[cols].apply(pd.to_numeric, errors="coerce").to_string())
+            print(table.to_string())
+    if args.summary_file:
+        append_summary(args.summary_file, argv, cfg.out_dir, table)
     print(f"결과: {os.path.abspath(cfg.out_dir)}")
     return 0
 
