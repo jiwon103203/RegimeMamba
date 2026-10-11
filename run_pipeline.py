@@ -118,9 +118,11 @@ def _make_encoder(cfg: PipelineConfig, context: Optional[pd.DataFrame] = None
     if cfg.encoder != "mamba":
         return None
     device = mamba_encoder.resolve_device(cfg.device)
-    logger.info("mamba encoder on %s (seq_len=%d, d_model=%d, layers=%d, targets=%s, horizons=%s)", device,
+    weights = mamba_encoder.loss_weights(cfg)
+    logger.info("mamba encoder on %s (seq_len=%d, d_model=%d, layers=%d, targets=%s, horizons=%s, loss=%s)", device,
                 cfg.mamba_seq_len, cfg.mamba_d_model, cfg.mamba_layers, ",".join(cfg.mamba_targets),
-                ",".join(map(str, cfg.mamba_horizons)))
+                ",".join(map(str, cfg.mamba_horizons)),
+                "mean" if weights is None else "weighted " + ",".join(f"{v:.3g}" for v in weights))
     return mamba_encoder.MambaEncoder(cfg, device, context=context)
 
 
@@ -616,6 +618,10 @@ def _int_list(text: str) -> List[int]:
     return [int(t) for t in str(text).replace(" ", "").split(",") if t]
 
 
+def _float_list(text: str) -> List[float]:
+    return [float(t) for t in str(text).replace(" ", "").split(",") if t]
+
+
 def _str_list(text: str) -> List[str]:
     return [t for t in str(text).replace(" ", "").lower().split(",") if t]
 
@@ -703,6 +709,9 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--mamba-targets", type=_str_list, default=list(d.mamba_targets),
                    help="예측할 값 (콤마): return(수익률 합) | vol(실현 변동성) | mdd(최대 낙폭). "
                         "여러 개면 타깃 × horizon 을 동시에 예측")
+    g.add_argument("--mamba-loss-weights", type=_float_list, metavar="W",
+                   help="출력별 MSE 가중치 (콤마). horizon 수만큼 주면 horizon 별(예: 0.5,0.25,0.25), "
+                        "타깃 × horizon 수만큼 주면 출력별(타깃 → horizon 순). 합으로 정규화. 기본: 단순 평균")
 
     g = p.add_argument_group("롤링 재추정")
     g.add_argument("--train-window", type=int, default=d.train_window, help="최대 학습창 (거래일)")
@@ -749,6 +758,7 @@ def config_from_args(args: argparse.Namespace) -> PipelineConfig:
     values["seed_devices"] = tuple(values["seed_devices"] or ())
     values["mamba_horizons"] = tuple(values["mamba_horizons"])
     values["mamba_targets"] = tuple(values["mamba_targets"])
+    values["mamba_loss_weights"] = tuple(values["mamba_loss_weights"] or ())
     for key in ("verbose", "quiet", "summary_file"):
         values.pop(key)
     return PipelineConfig(input=input_path or "", **values)

@@ -40,6 +40,7 @@ python run_pipeline.py data.csv --inference                            # 현재 
 python run_pipeline.py data.csv --encoder mamba --n-seeds 5            # 시드 0~4: 개별 성과 평균 + 앙상블
 python run_pipeline.py data.csv --encoder mamba --n-seeds 20 --seed-workers 8   # 시드 8개씩 동시에 실행
 python run_pipeline.py data.csv --encoder mamba --mamba-horizons 1,5,20  # 다음 날·1주·1달 수익률을 동시에 예측하며 학습
+python run_pipeline.py data.csv --encoder mamba --mamba-horizons 1,5,20 --mamba-loss-weights 0.5,0.25,0.25  # 손실 가중치
 python run_pipeline.py data.csv --encoder mamba --mamba-horizons 5,20 --mamba-targets vol,mdd  # 1주·1달 변동성·MDD
 ```
 
@@ -51,7 +52,7 @@ python run_pipeline.py data.csv --encoder mamba --mamba-horizons 5,20 --mamba-ta
 |---|---|
 | 데이터 | `--date-col/--close-col/--rf-col` (자동 인식), `--rf-unit annual_pct`, `--rf-const`, `--relative-benchmark`, `--signal-ret auto`, `--start/--end` |
 | 피처 | `--feature-set paper\|example\|extra\|none`, `--extra-features 파일:열:변환`, `--remove-series`, `--warmup 252` |
-| 인코더 | `--encoder none\|mamba`, `--device auto\|cuda\|cuda:N`, `--mamba-seq-len 60`, `--mamba-warmup-context`, `--mamba-d-model 8`, `--mamba-d-state 32`, `--mamba-d-conv 4`, `--mamba-expand 2`, `--mamba-layers 4`, `--mamba-dropout 0.1`, `--mamba-epochs 100`, `--mamba-patience 10`, `--mamba-batch-size 1024`, `--mamba-lr 5e-4`, `--mamba-valid-frac 0.2`, `--mamba-horizons 1`, `--mamba-targets return` |
+| 인코더 | `--encoder none\|mamba`, `--device auto\|cuda\|cuda:N`, `--mamba-seq-len 60`, `--mamba-warmup-context`, `--mamba-d-model 8`, `--mamba-d-state 32`, `--mamba-d-conv 4`, `--mamba-expand 2`, `--mamba-layers 4`, `--mamba-dropout 0.1`, `--mamba-epochs 100`, `--mamba-patience 10`, `--mamba-batch-size 1024`, `--mamba-lr 5e-4`, `--mamba-valid-frac 0.2`, `--mamba-horizons 1`, `--mamba-targets return`, `--mamba-loss-weights` |
 | 모델 | `--model jm\|sjm`, `--discrete`, `--n-states 2`, `--jump-penalty 50`, `--max-feats`, `--pin-features`, `--n-init 10`, `--clip-mul 3`, `--center-distance` |
 | 재추정 | `--train-window 3000`, `--min-train 500`, `--refit-months 1,7`, `--oos-start` |
 | 백테스트 | `--delay 1`, `--delays 1,2,3,5,10`, `--min-cash 0`, `--max-cash 1`, `--cost-bps 10`, `--backtest-ret absolute\|relative` |
@@ -62,8 +63,9 @@ python run_pipeline.py data.csv --encoder mamba --mamba-horizons 5,20 --mamba-ta
 - 사용자 변수 변환: `none, log, diff_n, pct_n, logdiff_n, zscore_w, ewm_hl, lag_n` (`+`로 연결).
 - 상태 0 = bull, 마지막 상태 = bear. 0/1 전략은 bear일 때 현금(`relative`면 벤치마크)을 보유합니다.
 - `--encoder mamba`: 재추정마다 학습창으로 Mamba를 새로 학습하고(시퀀스 → 다음 날 수익률, MSE, 뒤쪽 `--mamba-valid-frac`로 early stopping), 각 날짜의 마지막 hidden 벡터 `h_0..`를 Jump Model 입력으로 씁니다. mamba-ssm은 CUDA 전용이라 GPU가 없으면 시작 단계에서 에러로 끝납니다. `--pin-features`는 쓸 수 없습니다.
-- `--mamba-horizons 1,5,20`: Mamba 출력을 horizon 수만큼 늘려 다음 날·5거래일·20거래일 뒤까지의 수익률(t+1..t+h 일별 신호 수익률의 합, 학습창의 h일 수익률 표준편차로 나눔)을 동시에 예측하도록 학습합니다(horizon별 MSE의 평균). 타깃이 모두 재추정일 이전인 시퀀스만 쓰고, 학습 타깃이 검증 구간과 겹치지 않게 학습·검증 사이 `max(h)-1`개 시퀀스를 버립니다. Jump Model 입력은 여전히 hidden 벡터이며, `mamba_train_log.csv`에 horizon별 검증 손실 `valid_loss_h<h>`가 추가됩니다. 기본값 `1`은 기존(다음 날만 예측)과 같습니다.
+- `--mamba-horizons 1,5,20`: Mamba 출력을 horizon 수만큼 늘려 다음 날·5거래일·20거래일 뒤까지의 수익률(t+1..t+h 일별 신호 수익률의 합, 학습창의 h일 수익률 표준편차로 나눔)을 동시에 예측하도록 학습합니다(기본: horizon별 MSE의 평균, `--mamba-loss-weights`로 가중합). 타깃이 모두 재추정일 이전인 시퀀스만 쓰고, 학습 타깃이 검증 구간과 겹치지 않게 학습·검증 사이 `max(h)-1`개 시퀀스를 버립니다. Jump Model 입력은 여전히 hidden 벡터이며, `mamba_train_log.csv`에 horizon별 검증 손실 `valid_loss_h<h>`가 추가됩니다. 기본값 `1`은 기존(다음 날만 예측)과 같습니다.
 - `--mamba-targets return,vol,mdd`: 수익률 대신(또는 함께) 예측할 값입니다. 각 타깃 × `--mamba-horizons`가 출력이 됩니다.
+- `--mamba-loss-weights 0.5,0.25,0.25`: 출력별 MSE를 단순 평균하는 대신 가중합합니다. horizon 수만큼 주면 horizon별 가중치(타깃이 여러 개면 모든 타깃에 같은 가중치)이고, 타깃 × horizon 수만큼 주면 출력별 가중치(타깃 → horizon 순서, 예: `--mamba-targets return,vol --mamba-horizons 5,20`이면 return_h5, return_h20, vol_h5, vol_h20)입니다. 합으로 나눠 정규화하므로 `2,1,1`도 `0.5,0.25,0.25`와 같습니다. 0 이상이어야 하며, early stopping의 검증 손실(`mamba_train_log.csv`의 `valid_loss`)도 같은 가중합입니다. 출력별 검증 손실 `valid_loss_<출력>`은 가중치 없이 그대로 기록됩니다.
   - `return`: t+1..t+h 일 신호 수익률 합, 학습창의 h일 값 표준편차로 나눔 (기본).
   - `vol`: t+1..t+h 일 실현 변동성 `sqrt(mean(r²))` (일간 단위), 학습창의 h일 값으로 표준화.
   - `mdd`: t일 종가에서 시작한 `(1+r)` 복리 경로의 최대 낙폭 `1 - min(W/이전 고점)` (0 이상), 학습창의 h일 값으로 표준화.

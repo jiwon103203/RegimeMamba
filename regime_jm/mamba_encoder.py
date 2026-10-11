@@ -4,6 +4,7 @@
   1. d 이전 학습창으로만 3σ 클리핑·표준화를 fit 하고 피처에 적용
   2. t 행에서 끝나는 ``mamba_seq_len`` 시퀀스 → ``mamba_targets`` × ``mamba_horizons`` 의 t+1..t+h 일 타깃을
      MSE 로 동시에 학습 (기본: 다음 날 수익률. horizons 1,5,20 = 다음 날·1주·1달, targets 는 ``forward_targets``).
+     출력별 MSE 는 단순 평균하거나 ``mamba_loss_weights`` 가중합으로 합친다 (early stopping 검증 손실도 같은 방식).
      타깃은 학습창 안의 같은 h일 값으로 맞춘 스케일로 바꾼다 (return: 표준편차로 나눔, vol · mdd: 표준화).
      타깃이 모두 d 이전인 시퀀스만 쓰고, 뒤쪽 ``mamba_valid_frac`` 를 시간 순서대로 떼어 early stopping
      (h>1 이면 학습 타깃이 검증 구간과 겹치지 않게 그 사이 max(h)-1 개 시퀀스를 버린다)
@@ -61,6 +62,27 @@ def target_labels(targets, horizons) -> List[str]:
     """출력 열 순서(타깃 → horizon)의 이름. 수익률만이면 h<h>, 아니면 <타깃>_h<h>."""
     only_return = tuple(targets) == ("return",)
     return [f"h{h}" if only_return else f"{k}_h{h}" for k in targets for h in horizons]
+
+
+def loss_weights(cfg) -> Optional[np.ndarray]:
+    """``mamba_loss_weights`` → 출력(타깃 → horizon 순) 별 손실 가중치 (합 1). 없으면 None (출력별 MSE 단순 평균).
+
+    길이가 horizon 수면 horizon 별 가중치로 보고 모든 타깃에 똑같이 쓰고, 타깃 × horizon 수면 출력별 가중치로 쓴다.
+    합이 1 이 아니어도 합으로 나눠 정규화한다 (예: 2,1,1 = 0.5,0.25,0.25).
+    """
+    raw = getattr(cfg, "mamba_loss_weights", None)
+    if not raw:
+        return None
+    w = np.asarray(raw, dtype=np.float64)
+    n_t, n_h = len(cfg.mamba_targets), len(cfg.mamba_horizons)
+    if len(w) == n_h:
+        w = np.tile(w, n_t)
+    elif len(w) != n_t * n_h:
+        raise ValueError(f"--mamba-loss-weights 는 horizon 수({n_h}) 또는 타깃 × horizon 수({n_t * n_h})만큼 "
+                         f"줘야 합니다 (got {len(w)}개)")
+    if not np.isfinite(w).all() or (w < 0).any() or w.sum() <= 0:
+        raise ValueError(f"--mamba-loss-weights 는 0 이상이고 합이 0 보다 커야 합니다 (got {list(raw)})")
+    return w / w.sum()
 
 
 def resolve_device(spec: str = "auto") -> str:
@@ -196,6 +218,8 @@ class MambaEncoder:
         c = self.cfg
         opt = torch.optim.AdamW(model.parameters(), lr=c.mamba_lr, weight_decay=0.01)
         rng = np.random.default_rng(c.seed + len(self.history))
+        w = loss_weights(c)
+        w_t = None if w is None else torch.tensor(w, dtype=torch.float32, device=self.device)
         best, best_state, best_epoch, bad, train_loss, epoch = np.inf, None, 0, 0, np.nan, 0
         best_by_h = np.full(len(labels), np.nan)
         for epoch in range(1, c.mamba_epochs + 1):
@@ -206,14 +230,17 @@ class MambaEncoder:
                 pred = model(self._tensor(X_tr[b])).reshape(len(b), -1)
                 if pred.shape[1] != Y_tr.shape[1]:
                     raise ValueError(f"Mamba 출력 {pred.shape[1]}개 ≠ 타깃 {Y_tr.shape[1]}개 (n_outputs(cfg))")
-                loss = torch.nn.functional.mse_loss(pred, self._tensor(Y_tr[b]))  # 출력(타깃 × horizon) 평균
+                if w_t is None:
+                    loss = torch.nn.functional.mse_loss(pred, self._tensor(Y_tr[b]))  # 출력(타깃 × horizon) 평균
+                else:
+                    loss = (((pred - self._tensor(Y_tr[b])) ** 2).mean(dim=0) * w_t).sum()  # 출력별 MSE 가중합
                 loss.backward()
                 torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
                 opt.step()
                 total += loss.item() * len(b)
             train_loss = total / len(X_tr)
             val_by_h = self._valid_loss(model, X_va, Y_va)
-            val = float(val_by_h.mean())
+            val = float(val_by_h.mean() if w is None else val_by_h @ w)
             if val < best - 1e-8:
                 best, best_epoch, bad, best_state = val, epoch, 0, copy.deepcopy(model.state_dict())
                 best_by_h = val_by_h

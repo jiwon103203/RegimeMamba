@@ -70,6 +70,7 @@ class PipelineConfig:
     mamba_valid_frac: float = 0.2
     mamba_horizons: Tuple[int, ...] = (1,)  # 동시에 예측할 미래 기간 (거래일), 예: (1, 5, 20)
     mamba_targets: Tuple[str, ...] = ("return",)  # 예측할 값: return | vol | mdd (여러 개면 타깃 × horizon 출력)
+    mamba_loss_weights: Tuple[float, ...] = ()  # 출력별 MSE 가중치 (horizon 수 또는 타깃 × horizon 수). 기본: 단순 평균
 
     # 롤링 재추정
     train_window: int = 3000
@@ -157,6 +158,10 @@ class PipelineConfig:
                 raise ValueError("--mamba-targets 에 중복된 값이 있습니다")
             if max(self.mamba_horizons) >= self.min_train // 2:
                 raise ValueError("--mamba-horizons 의 최댓값은 --min-train 의 절반보다 작아야 합니다")
+            from .mamba_encoder import loss_weights
+            loss_weights(self)
+        elif self.mamba_loss_weights:
+            raise ValueError("--mamba-loss-weights 는 --encoder mamba 에서만 쓸 수 있습니다")
         if self.n_seeds < 1:
             raise ValueError("--n-seeds 는 1 이상이어야 합니다")
         if len(set(self.seed_list)) != len(self.seed_list):

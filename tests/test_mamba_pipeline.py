@@ -176,6 +176,42 @@ def test_config_and_cli_options():
             PipelineConfig(input="d.csv", encoder="mamba", mamba_targets=bad).validate()
 
 
+def test_loss_weights_option():
+    args = run_pipeline.build_parser().parse_args(["d.csv", "--encoder", "mamba", "--mamba-horizons", "1,5,20",
+                                                   "--mamba-loss-weights", "0.5, 0.25,0.25"])
+    cfg = run_pipeline.config_from_args(args).validate()
+    assert cfg.mamba_loss_weights == (0.5, 0.25, 0.25)
+    np.testing.assert_allclose(mamba_encoder.loss_weights(cfg), [0.5, 0.25, 0.25])
+    assert PipelineConfig().mamba_loss_weights == () and mamba_encoder.loss_weights(SMALL) is None
+    # 합으로 정규화, horizon 수만큼이면 모든 타깃에 같은 horizon 가중치, 타깃 × horizon 수면 출력별
+    two = dataclasses.replace(SMALL, mamba_targets=("return", "vol"), mamba_horizons=(5, 20))
+    np.testing.assert_allclose(mamba_encoder.loss_weights(dataclasses.replace(two, mamba_loss_weights=(3, 1))),
+                               [0.375, 0.125, 0.375, 0.125])
+    np.testing.assert_allclose(mamba_encoder.loss_weights(dataclasses.replace(two, mamba_loss_weights=(1, 2, 3, 4))),
+                               [0.1, 0.2, 0.3, 0.4])
+    base = PipelineConfig(input="d.csv", encoder="mamba", mamba_horizons=(1, 5, 20))
+    for bad in [(1, 1), (1, 1, 1, 1), (1, -1, 1), (0, 0, 0), (1, float("nan"), 1)]:
+        with pytest.raises(ValueError, match="mamba-loss-weights"):
+            dataclasses.replace(base, mamba_loss_weights=bad).validate()
+    with pytest.raises(ValueError, match="mamba-loss-weights"):
+        PipelineConfig(input="d.csv", mamba_loss_weights=(1.0,)).validate()
+
+
+def test_weighted_loss_training():
+    """검증 손실(early stopping 기준)은 출력별 검증 MSE 의 가중합이고, 가중치를 바꾸면 학습 결과가 달라진다."""
+    X = build_features(simulate(), "paper")
+    y = pd.Series(np.random.default_rng(1).normal(0, 0.01, len(X)), index=X.index)
+    cfg = dataclasses.replace(SMALL, mamba_horizons=(1, 5, 20), mamba_epochs=4, mamba_patience=4)
+    w = (0.5, 0.25, 0.25)
+    enc = MambaEncoder(dataclasses.replace(cfg, mamba_loss_weights=w), "cpu", GRUBackbone)
+    H = enc(X, y, 100, 500, 620)
+    log = enc.history_frame()
+    cols = ["valid_loss_h1", "valid_loss_h5", "valid_loss_h20"]
+    np.testing.assert_allclose(log[cols].to_numpy() @ np.array(w), log["valid_loss"], rtol=1e-6)
+    H_mean = MambaEncoder(cfg, "cpu", GRUBackbone)(X, y, 100, 500, 620)
+    assert not np.allclose(H, H_mean)
+
+
 class CaptureEncoder(MambaEncoder):
     """_train 에 넘어가는 학습 / 검증 샘플을 기록한다."""
 
@@ -356,6 +392,19 @@ def test_cli_mamba_vol_mdd(cpu_mamba, asset_csv, tmp_path):
     assert {f"valid_loss_{k}_h{h}" for k in ("return", "vol", "mdd") for h in (1, 5)} <= set(log.columns)
     with open(out / "run_config.json", encoding="utf-8") as f:
         assert json.load(f)["mamba_targets"] == ["return", "vol", "mdd"]
+
+
+def test_cli_mamba_loss_weights(cpu_mamba, asset_csv, tmp_path):
+    out = tmp_path / "lw"
+    assert run_pipeline.main([asset_csv, "--out", str(out), "--mamba-horizons", "1,5,20",
+                              "--mamba-loss-weights", "2,1,1", *MAMBA_ARGS]) == 0
+    log = pd.read_csv(out / "mamba_train_log.csv")
+    np.testing.assert_allclose(log[["valid_loss_h1", "valid_loss_h5", "valid_loss_h20"]].to_numpy()
+                               @ np.array([0.5, 0.25, 0.25]), log["valid_loss"], rtol=1e-6)
+    with open(out / "run_config.json", encoding="utf-8") as f:
+        assert json.load(f)["mamba_loss_weights"] == [2.0, 1.0, 1.0]
+    assert run_pipeline.main([asset_csv, "--out", str(out), "--mamba-horizons", "1,5",
+                              "--mamba-loss-weights", "1,1,1", *MAMBA_ARGS]) == 1
 
 
 def test_cli_mamba_warmup_context(cpu_mamba, asset_csv, tmp_path):
