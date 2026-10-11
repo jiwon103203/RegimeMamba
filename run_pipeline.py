@@ -21,6 +21,7 @@
     python run_pipeline.py data.csv --inference
     python run_pipeline.py data.csv --encoder mamba --feature-set example --device cuda:0
     python run_pipeline.py data.csv --encoder mamba --n-seeds 5 --seed-mode both
+    python run_pipeline.py data.csv --encoder mamba --n-seeds 20 --seed-workers 8 --seed-devices cuda:0,cuda:1
     python run_pipeline.py data.csv --encoder mamba --mamba-horizons 1,5,20
     python run_pipeline.py data.csv --encoder mamba --mamba-horizons 5,20 --mamba-targets vol,mdd
 """
@@ -28,11 +29,14 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import dataclasses
 import json
 import logging
+import multiprocessing
 import os
 import sys
+from concurrent.futures import FIRST_EXCEPTION, ProcessPoolExecutor, wait
 from typing import Any, Dict, List, Optional, Sequence
 
 import numpy as np
@@ -51,6 +55,7 @@ from regime_jm.rolling import RollingJMResult, refit_schedule, run_rolling_jm, s
 from regime_jm.weights import current_weight_summary, group_weights, weight_groups_long
 
 logger = logging.getLogger("regime_jm")
+LOG_FORMAT = "%(asctime)s %(levelname)s %(name)s: %(message)s"
 
 
 # ---------------------------------------------------------------------------
@@ -337,8 +342,109 @@ def run_inference(cfg: Optional[PipelineConfig] = None, **overrides) -> Dict[str
 # 여러 시드 (--n-seeds / --seeds)
 # ---------------------------------------------------------------------------
 
-def _seed_cfg(cfg: PipelineConfig, seed: int, out_dir: str, **extra) -> PipelineConfig:
-    return dataclasses.replace(cfg, seed=seed, seeds=(), n_seeds=1, ensemble_bear_vote=None, out_dir=out_dir, **extra)
+def _seed_cfg(cfg: PipelineConfig, seed: int, out_dir: str, index: int = 0) -> PipelineConfig:
+    extra = {"device": cfg.seed_devices[index % len(cfg.seed_devices)]} if cfg.seed_devices else {}
+    return dataclasses.replace(cfg, seed=seed, seeds=(), n_seeds=1, ensemble_bear_vote=None, seed_workers=1,
+                               seed_devices=(), out_dir=out_dir, **extra)
+
+
+def _check_devices(cfg: PipelineConfig) -> None:
+    """GPU 가 없거나 --seed-devices 의 장치가 없으면 학습 전에 실패한다."""
+    if cfg.encoder == "mamba":
+        for device in cfg.seed_devices or (cfg.device,):
+            mamba_encoder.resolve_device(device)
+
+
+def _individual_job(scfg: PipelineConfig) -> Dict[str, Any]:
+    return (run_inference if scfg.inference else run_pipeline)(scfg)
+
+
+def _ensemble_job(scfg: PipelineConfig, X: pd.DataFrame, signal: pd.Series, start,
+                  context: Optional[pd.DataFrame] = None):
+    encoder = _make_encoder(scfg, context)
+    reg = _regime_table(_fit_rolling(scfg, X, signal, start=start, encoder=encoder), signal)
+    return reg, (encoder.history_frame().assign(seed=scfg.seed) if encoder is not None else None)
+
+
+class _SeedTag(logging.Filter):
+    """병렬 실행에서 로그 줄 앞에 [seed s] 를 붙인다."""
+
+    def __init__(self, seed: int):
+        super().__init__()
+        self.tag = f"[seed {seed}] "
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        record.msg = f"{self.tag}{record.msg}"
+        return True
+
+
+def _init_seed_worker(level: Optional[int]) -> None:
+    if level is not None:
+        logging.basicConfig(level=level, format=LOG_FORMAT, datefmt="%H:%M:%S")
+        logging.getLogger("matplotlib").setLevel(logging.WARNING)
+
+
+def _seed_worker(seed: int, fn, args):
+    for handler in logging.getLogger().handlers:
+        for f in [f for f in handler.filters if isinstance(f, _SeedTag)]:
+            handler.removeFilter(f)
+        handler.addFilter(_SeedTag(seed))
+    logger.info("start")
+    return fn(*args)
+
+
+_THREAD_VARS = ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS")
+
+
+@contextlib.contextmanager
+def _worker_threads(workers: int):
+    """작업 프로세스마다 BLAS/OpenMP 스레드를 CPU 코어 / workers 개로 제한한다 (이미 지정돼 있으면 그대로)."""
+    saved = {k: os.environ.get(k) for k in _THREAD_VARS}
+    n = str(max(1, (os.cpu_count() or 1) // workers))
+    for k in _THREAD_VARS:
+        os.environ.setdefault(k, n)
+    try:
+        yield
+    finally:
+        for k, v in saved.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+
+
+def _run_seed_jobs(cfg: PipelineConfig, jobs: Dict[int, tuple]) -> Dict[int, Any]:
+    """시드별 작업 {seed: (함수, 인자)} 을 실행해 {seed: 결과} 로 돌려준다.
+
+    seed_workers > 1 이면 spawn 프로세스 풀에서 시드 여러 개를 동시에 돌린다. 시드마다 별도 프로세스라
+    torch / numpy 난수 상태가 섞이지 않아 결과는 순차 실행과 같다.
+    """
+    seeds = list(jobs)
+    workers = min(cfg.seed_workers, len(seeds))
+    if workers <= 1:
+        results = {}
+        for i, s in enumerate(seeds, start=1):
+            logger.info("seed %d (%d/%d)", s, i, len(seeds))
+            fn, args = jobs[s]
+            results[s] = fn(*args)
+        return results
+
+    logger.info("running %d seeds on %d worker processes", len(seeds), workers)
+    level = logger.getEffectiveLevel() if logging.getLogger().handlers else None
+    with _worker_threads(workers), ProcessPoolExecutor(workers, mp_context=multiprocessing.get_context("spawn"),
+                                                       initializer=_init_seed_worker, initargs=(level,)) as pool:
+        futures = {pool.submit(_seed_worker, s, fn, args): s for s, (fn, args) in jobs.items()}
+        pending, n_done = set(futures), 0
+        while pending:
+            done, pending = wait(pending, return_when=FIRST_EXCEPTION)
+            for f in done:
+                if f.exception() is not None:
+                    for p in pending:
+                        p.cancel()
+                    raise f.exception()
+                n_done += 1
+                logger.info("seed %d done (%d/%d)", futures[f], n_done, len(seeds))
+        return {s: f.result() for f, s in sorted(futures.items(), key=lambda kv: seeds.index(kv[1]))}
 
 
 def ensemble_regimes(regimes: Dict[int, pd.DataFrame], n_states: int,
@@ -407,6 +513,7 @@ def run_multi_seed(cfg: PipelineConfig) -> Dict[str, Any]:
       ensemble    시드별 국면 확률을 평균한 앙상블 국면으로 한 번 백테스트해 ensemble/ 에 저장 (HMM · 에피소드 분석은 생략)
       both        둘 다 (앙상블은 individual 실행 결과를 재사용하므로 추가 학습이 없다)
     --inference 와 함께 쓰면 백테스트 대신 현재 반기 추론 결과를 시드별 · 앙상블로 저장한다.
+    seed_workers > 1 이면 시드 여러 개를 별도 프로세스에서 동시에 돌린다 (seed_devices 가 있으면 GPU 를 돌아가며 배정).
     """
     seeds = cfg.seed_list
     out = cfg.out_dir
@@ -421,15 +528,14 @@ def run_multi_seed(cfg: PipelineConfig) -> Dict[str, Any]:
     seed_results: Dict[int, Dict[str, Any]] = {}
     regimes: Dict[int, pd.DataFrame] = {}
     mamba_logs: List[pd.DataFrame] = []
+    _check_devices(cfg)  # GPU 가 없으면 데이터 처리 전에 실패
     if individual:
-        runner = run_inference if cfg.inference else run_pipeline
-        for i, s in enumerate(seeds, start=1):
-            logger.info("seed %d (%d/%d)", s, i, len(seeds))
-            seed_results[s] = runner(_seed_cfg(cfg, s, os.path.join(out, f"seed_{s}")))
-            regimes[s] = seed_results[s]["regimes"]
+        jobs = {s: (_individual_job, (_seed_cfg(cfg, s, os.path.join(out, f"seed_{s}"), i),))
+                for i, s in enumerate(seeds)}
+        seed_results = _run_seed_jobs(cfg, jobs)
+        regimes = {s: r["regimes"] for s, r in seed_results.items()}
         data = seed_results[seeds[0]]["data"]
     else:
-        _make_encoder(cfg)  # GPU 가 없으면 데이터 처리 전에 실패
         data, signal_col, X, context = prepare_features(cfg)
         signal = data[signal_col]
         start = cfg.oos_start
@@ -438,13 +544,10 @@ def run_multi_seed(cfg: PipelineConfig) -> Dict[str, Any]:
             if not dates:
                 raise ValueError("추론할 반기 시작점이 없습니다 (데이터 부족)")
             start = dates[-1]
-        for i, s in enumerate(seeds, start=1):
-            logger.info("seed %d (%d/%d)", s, i, len(seeds))
-            scfg = _seed_cfg(cfg, s, out)
-            encoder = _make_encoder(scfg, context)
-            regimes[s] = _regime_table(_fit_rolling(scfg, X, signal, start=start, encoder=encoder), signal)
-            if encoder is not None:
-                mamba_logs.append(encoder.history_frame().assign(seed=s))
+        fitted = _run_seed_jobs(cfg, {s: (_ensemble_job, (_seed_cfg(cfg, s, out, i), X, signal, start, context))
+                                      for i, s in enumerate(seeds)})
+        regimes = {s: reg for s, (reg, _) in fitted.items()}
+        mamba_logs = [log for _, log in fitted.values() if log is not None]
 
     result: Dict[str, Any] = {"config": cfg, "seeds": list(seeds), "seed_results": seed_results or None,
                               "seed_performance": None, "ensemble": None, "current_state": None,
@@ -570,6 +673,10 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--seeds", type=_int_list, help="시드 목록 (콤마, --n-seeds 대신)")
     g.add_argument("--seed-mode", choices=SEED_MODES, default=d.seed_mode,
                    help="ensemble: 국면 확률 평균으로 백테스트 / individual: 시드별 백테스트 후 성과 평균 / both")
+    g.add_argument("--seed-workers", type=int, default=d.seed_workers,
+                   help="동시에 실행할 시드 수 (시드마다 별도 프로세스; GPU 메모리 · CPU 코어에 맞춰 조정)")
+    g.add_argument("--seed-devices", type=_str_list, metavar="DEVS",
+                   help="(mamba) 시드를 돌아가며 배정할 GPU (콤마, 예: cuda:0,cuda:1). 기본: --device")
     g.add_argument("--ensemble-bear-vote", type=float, metavar="X",
                    help="앙상블에서 bear 로 판정한 시드 비율이 X 이상이면 bear (0~1, 예: 0.4). 기본: 확률 평균 argmax")
 
@@ -639,6 +746,7 @@ def config_from_args(args: argparse.Namespace) -> PipelineConfig:
     values["refit_months"] = tuple(values["refit_months"])
     values["delays"] = tuple(values["delays"])
     values["seeds"] = tuple(values["seeds"] or ())
+    values["seed_devices"] = tuple(values["seed_devices"] or ())
     values["mamba_horizons"] = tuple(values["mamba_horizons"])
     values["mamba_targets"] = tuple(values["mamba_targets"])
     for key in ("verbose", "quiet", "summary_file"):
@@ -668,7 +776,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     level = logging.WARNING if args.quiet else logging.DEBUG if args.verbose else logging.INFO
-    logging.basicConfig(level=level, format="%(asctime)s %(levelname)s %(name)s: %(message)s", datefmt="%H:%M:%S")
+    logging.basicConfig(level=level, format=LOG_FORMAT, datefmt="%H:%M:%S")
     logging.getLogger("matplotlib").setLevel(logging.WARNING)
     if not (args.input or args.input_opt):
         parser.error("입력 파일이 필요합니다")

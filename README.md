@@ -38,6 +38,7 @@ python run_pipeline.py sector.csv --relative-benchmark kospi.csv --backtest-ret 
 python run_pipeline.py data.csv --extra-features macro.csv:VIX:log macro.csv:USDKRW:logdiff
 python run_pipeline.py data.csv --inference                            # 현재 반기만 추론
 python run_pipeline.py data.csv --encoder mamba --n-seeds 5            # 시드 0~4: 개별 성과 평균 + 앙상블
+python run_pipeline.py data.csv --encoder mamba --n-seeds 20 --seed-workers 8   # 시드 8개씩 동시에 실행
 python run_pipeline.py data.csv --encoder mamba --mamba-horizons 1,5,20  # 다음 날·1주·1달 수익률을 동시에 예측하며 학습
 python run_pipeline.py data.csv --encoder mamba --mamba-horizons 5,20 --mamba-targets vol,mdd  # 1주·1달 변동성·MDD
 ```
@@ -54,7 +55,7 @@ python run_pipeline.py data.csv --encoder mamba --mamba-horizons 5,20 --mamba-ta
 | 모델 | `--model jm\|sjm`, `--discrete`, `--n-states 2`, `--jump-penalty 50`, `--max-feats`, `--pin-features`, `--n-init 10`, `--clip-mul 3`, `--center-distance` |
 | 재추정 | `--train-window 3000`, `--min-train 500`, `--refit-months 1,7`, `--oos-start` |
 | 백테스트 | `--delay 1`, `--delays 1,2,3,5,10`, `--min-cash 0`, `--max-cash 1`, `--cost-bps 10`, `--backtest-ret absolute\|relative` |
-| 여러 시드 | `--n-seeds 1` (`--seed`부터 연속), `--seeds 0,1,2,3,4`, `--seed-mode ensemble\|individual\|both` (both), `--ensemble-bear-vote 0.4` |
+| 여러 시드 | `--n-seeds 1` (`--seed`부터 연속), `--seeds 0,1,2,3,4`, `--seed-mode ensemble\|individual\|both` (both), `--ensemble-bear-vote 0.4`, `--seed-workers 1`, `--seed-devices cuda:0,cuda:1` |
 | HMM | `--hmm`, `--hmm-states 2`, `--hmm-refit 21`, `--hmm-median 5` |
 
 - 피처 세트: `paper` = DD-log_10, sortino_20, sortino_60 / `example` = ret·DD-log·sortino × 5·20·60일 (9개) / `extra` = 9개 계열 × 5·20·60일 (27개).
@@ -74,6 +75,8 @@ python run_pipeline.py data.csv --encoder mamba --mamba-horizons 5,20 --mamba-ta
   - `both`: 둘 다 하며, 앙상블은 개별 실행 결과를 재사용합니다. `seed_performance.csv`에 `ensemble` 행이 함께 들어갑니다.
   - `--ensemble-bear-vote X` (0~1): bear 국면에 더 빨리 반응하도록, bear로 판정한 시드 비율(`bear_vote`)이 X 이상인 날을 앙상블 bear로 삼습니다 (예: `0.4`면 5개 시드 중 2개). 나머지 날은 bear를 뺀 상태 중 평균 확률이 가장 큰 상태입니다. 상태 확률 평균(`prob_k`)은 그대로이고, 국면·전략·`current_state.json`(`bear_vote`, `bear_vote_threshold`)에 반영됩니다.
   - `--inference`와 함께 쓰면 시드별 · 앙상블 현재 국면만 저장합니다.
+  - `--seed-workers N`: 시드 N개를 별도 프로세스에서 동시에 실행합니다 (기본 1 = 순차). 시드마다 프로세스가 따로라 난수 상태가 섞이지 않고, 결과 파일은 순차 실행과 같습니다. Mamba 모델이 작아 시드 하나로는 GPU를 다 쓰지 못하므로 동시에 돌리면 전체 시간이 줄어듭니다. 프로세스마다 CUDA 컨텍스트(수백 MB)와 학습 메모리가 따로 들므로 `nvidia-smi`로 메모리를 보며 4~8부터 늘려 보세요. 작업 프로세스의 BLAS/OpenMP 스레드는 `CPU 코어 수 / N`개로 제한합니다(`OMP_NUM_THREADS` 등을 직접 지정했으면 그 값 사용). 로그 줄 앞에는 `[seed s]`가 붙습니다.
+  - `--seed-devices cuda:0,cuda:1` (`--encoder mamba`): 시드를 목록의 GPU에 돌아가며 배정합니다 (시드 0→cuda:0, 1→cuda:1, 2→cuda:0, …). 지정하지 않으면 모든 시드가 `--device`를 씁니다.
 
 ## 출력 (`--out`, 기본 `out/`)
 

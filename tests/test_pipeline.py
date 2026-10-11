@@ -15,6 +15,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
 import run_pipeline  # noqa: E402
+from regime_jm.config import PipelineConfig  # noqa: E402
 from regime_jm.backtest import (delay_robustness_table, max_drawdown, performance_metrics,  # noqa: E402
                                 performance_table, regime_to_weight, run_0_1_strategy, trade_legs)
 from regime_jm.data_io import (align_to_index, load_market_data, parse_extra_spec, prepare_inputs,  # noqa: E402
@@ -624,6 +625,53 @@ def test_multi_seed_inference(files, tmp_path):
     assert res["ensemble"]["regimes"].index[0] == last_refit
 
 
+def test_multi_seed_parallel_matches_sequential(files, tmp_path):
+    """--seed-workers 2: 시드를 별도 프로세스에서 동시에 돌려도 결과는 순차 실행과 같다."""
+    kw = dict(input=files["asset"], seeds=(1, 4, 6), plots=False, **PIPE_FAST)
+    seq = run_pipeline.run_pipeline(out_dir=str(tmp_path / "seq"), **kw)
+    par = run_pipeline.run_pipeline(out_dir=str(tmp_path / "par"), seed_workers=2, **kw)
+    assert par["seeds"] == [1, 4, 6] and list(par["seed_results"]) == [1, 4, 6]
+    pd.testing.assert_frame_equal(par["ensemble"]["regimes"], seq["ensemble"]["regimes"])
+    pd.testing.assert_frame_equal(par["seed_performance"], seq["seed_performance"])
+    for s in (1, 4, 6):
+        pd.testing.assert_frame_equal(pd.read_csv(tmp_path / "par" / f"seed_{s}" / "regimes.csv"),
+                                      pd.read_csv(tmp_path / "seq" / f"seed_{s}" / "regimes.csv"))
+    assert json.loads((tmp_path / "par" / "run_config.json").read_text(encoding="utf-8"))["seed_workers"] == 2
+    assert json.loads((tmp_path / "par" / "seed_4" / "run_config.json").read_text(encoding="utf-8"))["seed"] == 4
+
+    ens = run_pipeline.run_pipeline(out_dir=str(tmp_path / "ens"), seed_mode="ensemble", seed_workers=3, **kw)
+    pd.testing.assert_frame_equal(ens["ensemble"]["regimes"], seq["ensemble"]["regimes"])
+    inf = run_pipeline.run_pipeline(out_dir=str(tmp_path / "inf"), inference=True, seed_workers=2, **kw)
+    assert (tmp_path / "inf" / "seed_6" / "inference_summary.csv").exists()
+    assert inf["ensemble"]["regimes"].index[0] == refit_schedule(inf["seed_results"][1]["features"].index,
+                                                                 (1, 7), 250)[-1]
+
+
+def test_seed_workers_errors_and_options(files, tmp_path):
+    kw = dict(input=files["asset"], out_dir=str(tmp_path), seeds=(1, 2), plots=False, **PIPE_FAST)
+    with pytest.raises(ValueError, match="seed-workers"):
+        run_pipeline.run_pipeline(seed_workers=0, **kw)
+    with pytest.raises(ValueError, match="seed-devices"):
+        run_pipeline.run_pipeline(seed_devices=("cuda:0",), **kw)
+    with pytest.raises(ValueError, match="seed-devices"):
+        PipelineConfig(input="d.csv", encoder="mamba", seed_devices=("cpu",)).validate()
+    # 작업 프로세스의 예외는 호출한 쪽으로 그대로 올라온다
+    with pytest.raises(FileNotFoundError):
+        run_pipeline.run_pipeline(**{**kw, "input": str(tmp_path / "missing.csv")}, seed_workers=2)
+
+    cfg = PipelineConfig(input="d.csv", encoder="mamba", seeds=(0, 1, 2), seed_workers=3,
+                         seed_devices=("cuda:0", "cuda:1")).validate()
+    scfgs = [run_pipeline._seed_cfg(cfg, s, "o", i) for i, s in enumerate(cfg.seed_list)]
+    assert [c.device for c in scfgs] == ["cuda:0", "cuda:1", "cuda:0"]
+    assert all(c.seed_workers == 1 and c.seed_devices == () and c.seed_list == (c.seed,) for c in scfgs)
+
+    os.environ.pop("OPENBLAS_NUM_THREADS", None)
+    before = dict(os.environ)
+    with run_pipeline._worker_threads(4):
+        assert int(os.environ["OPENBLAS_NUM_THREADS"]) >= 1
+    assert dict(os.environ) == before
+
+
 def test_cli_multi_seed(files, tmp_path):
     base = [files["asset"], "--out", str(tmp_path), "--discrete", "--train-window", "400", "--min-train", "250",
             "--n-init", "2", "--delays", "1,2", "--no-plots", "-q"]
@@ -632,6 +680,12 @@ def test_cli_multi_seed(files, tmp_path):
     cfg = json.loads((tmp_path / "run_config.json").read_text(encoding="utf-8"))
     assert cfg["seeds"] == [3, 5] and cfg["seed_mode"] == "individual"
     assert run_pipeline.main([*base, "--seeds", "1,1"]) == 1
+    par = tmp_path / "par"
+    assert run_pipeline.main([*base, "--out", str(par), "--seeds", "3,5", "--seed-mode", "individual",
+                              "--seed-workers", "2"]) == 0
+    pd.testing.assert_frame_equal(pd.read_csv(par / "seed_performance.csv", index_col=0),
+                                  pd.read_csv(tmp_path / "seed_performance.csv", index_col=0))
+    assert run_pipeline.main([*base, "--n-seeds", "2", "--seed-devices", "cuda:0"]) == 1
 
 
 def test_cli_center_distance(files, tmp_path):

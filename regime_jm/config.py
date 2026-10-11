@@ -49,6 +49,8 @@ class PipelineConfig:
     n_seeds: int = 1
     seed_mode: str = "both"                # ensemble | individual | both
     ensemble_bear_vote: Optional[float] = None   # 앙상블: bear 표 비율이 이 값 이상이면 bear (기본: 확률 평균 argmax)
+    seed_workers: int = 1                  # 동시에 실행할 시드 수 (시드마다 별도 프로세스)
+    seed_devices: Tuple[str, ...] = ()     # (mamba) 시드를 돌아가며 배정할 GPU 목록, 예: ("cuda:0", "cuda:1")
 
     # 인코더: none 이면 피처 → JM, mamba 면 피처 → Mamba hidden 벡터 → JM (GPU 필요)
     encoder: str = "none"                  # none | mamba
@@ -159,6 +161,16 @@ class PipelineConfig:
             raise ValueError("--n-seeds 는 1 이상이어야 합니다")
         if len(set(self.seed_list)) != len(self.seed_list):
             raise ValueError("--seeds 에 중복된 시드가 있습니다")
+        if self.seed_workers < 1:
+            raise ValueError("--seed-workers 는 1 이상이어야 합니다")
+        if self.seed_devices:
+            from .mamba_encoder import DEVICE_RE
+            specs = [str(d).strip().lower() for d in self.seed_devices]
+            bad = [d for d in specs if not DEVICE_RE.match(d) or d == "cpu"]
+            if bad:
+                raise ValueError(f"--seed-devices 는 auto, cuda, cuda:N 목록이어야 합니다 (got {bad})")
+            if self.encoder != "mamba":
+                raise ValueError("--seed-devices 는 --encoder mamba 에서만 쓸 수 있습니다")
         if self.seed_mode not in SEED_MODES:
             raise ValueError(f"--seed-mode 는 {', '.join(SEED_MODES)} 중 하나여야 합니다")
         if self.ensemble_bear_vote is not None:
