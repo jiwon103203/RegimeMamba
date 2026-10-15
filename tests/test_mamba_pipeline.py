@@ -554,7 +554,10 @@ def test_cli_mamba_separate_features(cpu_mamba, asset_csv, tmp_path):
     with open(out / "run_config.json", encoding="utf-8") as f:
         assert json.load(f)["separate_features"] == {"mdd": ["DD-log_10", "sortino_20"], "return": ["sortino"]}
     assert (out / "separate_performance.csv").exists()
-    assert run_pipeline.main([asset_csv, "--out", str(out / "bad"), *SEP_ARGS, "--separate-features", "mdd=nope"]) == 1
+    # 두 번째 타깃의 피처 이름이 틀려도 첫 타깃을 학습하기 전에 실패한다
+    bad = tmp_path / "sepbad"
+    assert run_pipeline.main([asset_csv, "--out", str(bad), *SEP_ARGS, "--separate-features", "mdd=nope"]) == 1
+    assert not (bad / "target_return").exists()
 
 
 def test_cli_mamba_separate_multi_seed_inference(cpu_mamba, asset_csv, tmp_path):

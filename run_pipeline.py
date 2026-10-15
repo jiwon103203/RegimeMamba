@@ -664,6 +664,13 @@ def run_separate(cfg: PipelineConfig) -> Dict[str, Any]:
     _write_json(cfg.to_dict(), out, "run_config.json")
     _check_devices(cfg)  # GPU 가 없으면 데이터 처리 전에 실패
     targets = list(cfg.mamba_targets)
+    if cfg.separate_features:  # 피처 이름 오류는 첫 타깃 학습이 끝난 뒤가 아니라 학습 전에 낸다
+        columns = prepare_features(dataclasses.replace(cfg, use_features=(), mamba_warmup_context=False))[2].columns
+        for t, names in cfg.separate_features.items():
+            try:
+                expand_feature_names(columns, names)
+            except KeyError as e:
+                raise KeyError(f"--separate-features {t}: {e.args[0]}") from None
     logger.info("separate run: targets=%s, blends=%s%s", targets,
                 ["/".join(f"{v:.3g}" for v in w) for w in cfg.separate_blends], " (inference)" if cfg.inference else "")
 
