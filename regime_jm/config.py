@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import asdict, dataclass, field
 from typing import List, Optional, Tuple
 
@@ -71,6 +72,8 @@ class PipelineConfig:
     mamba_horizons: Tuple[int, ...] = (1,)  # 동시에 예측할 미래 기간 (거래일), 예: (1, 5, 20)
     mamba_targets: Tuple[str, ...] = ("return",)  # 예측할 값: return | vol | mdd (여러 개면 타깃 × horizon 출력)
     mamba_loss_weights: Tuple[float, ...] = ()  # 출력별 MSE 가중치 (horizon 수 또는 타깃 × horizon 수). 기본: 단순 평균
+    separate: bool = False                 # mamba_targets 를 타깃마다 따로 학습하고 국면 확률을 비중대로 섞음
+    separate_weights: Tuple[Tuple[float, ...], ...] = ()  # 섞을 타깃별 비중 목록 (여러 개면 비중마다 결과). 기본: 균등
 
     # 롤링 재추정
     train_window: int = 3000
@@ -106,6 +109,30 @@ class PipelineConfig:
         if self.seeds:
             return tuple(int(s) for s in self.seeds)
         return tuple(range(self.seed, self.seed + self.n_seeds))
+
+    @property
+    def separate_blends(self) -> Tuple[Tuple[float, ...], ...]:
+        """--separate 에서 섞을 타깃별 비중 목록 (각각 합 1 로 정규화, 중복 제거). 기본: 균등 비중 하나.
+
+        각 비중은 타깃 수만큼 주고 (mamba_targets 순서), 타깃이 2개면 한 값 w 를 (w, 1-w) 로 본다.
+        """
+        n = len(self.mamba_targets)
+        if not self.separate_weights:
+            return ((1.0 / n,) * n,)
+        blends: List[Tuple[float, ...]] = []
+        for raw in self.separate_weights:
+            w = tuple(float(v) for v in raw)
+            if len(w) == 1 and n == 2:
+                w = (w[0], 1.0 - w[0])
+            if len(w) != n:
+                raise ValueError(f"--separate-weights 는 비중마다 타깃 수({n})만큼 줘야 합니다 "
+                                 f"(타깃 2개면 첫 타깃 비중 하나도 가능, got {list(raw)})")
+            if not all(math.isfinite(v) and v >= 0 for v in w) or sum(w) <= 0:
+                raise ValueError(f"--separate-weights 는 0 이상이고 합이 0 보다 커야 합니다 (got {list(raw)})")
+            w = tuple(v / sum(w) for v in w)
+            if w not in blends:
+                blends.append(w)
+        return tuple(blends)
 
     @property
     def cost_buy(self) -> float:
@@ -162,6 +189,13 @@ class PipelineConfig:
             loss_weights(self)
         elif self.mamba_loss_weights:
             raise ValueError("--mamba-loss-weights 는 --encoder mamba 에서만 쓸 수 있습니다")
+        if self.separate:
+            if self.encoder != "mamba" or len(self.mamba_targets) < 2:
+                raise ValueError("--separate 는 --encoder mamba 와 --mamba-targets 2개 이상(예: return,mdd)에서만 "
+                                 "쓸 수 있습니다")
+            self.separate_blends
+        elif self.separate_weights:
+            raise ValueError("--separate-weights 는 --separate 에서만 쓸 수 있습니다")
         if self.n_seeds < 1:
             raise ValueError("--n-seeds 는 1 이상이어야 합니다")
         if len(set(self.seed_list)) != len(self.seed_list):
@@ -181,8 +215,9 @@ class PipelineConfig:
         if self.ensemble_bear_vote is not None:
             if not 0.0 < self.ensemble_bear_vote <= 1.0:
                 raise ValueError("--ensemble-bear-vote 는 0 초과 1 이하의 비율이어야 합니다 (예: 0.4 = 40%)")
-            if len(self.seed_list) < 2 or self.seed_mode == "individual":
-                raise ValueError("--ensemble-bear-vote 는 시드 2개 이상의 ensemble/both 실행에서만 쓸 수 있습니다")
+            if not self.separate and (len(self.seed_list) < 2 or self.seed_mode == "individual"):
+                raise ValueError("--ensemble-bear-vote 는 시드 2개 이상의 ensemble/both 실행 또는 --separate 에서만 "
+                                 "쓸 수 있습니다")
         if self.delay < 0 or any(d < 0 for d in self.delays):
             raise ValueError("delay 는 0 이상이어야 합니다")
         return self

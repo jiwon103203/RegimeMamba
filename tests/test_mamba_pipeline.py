@@ -413,3 +413,111 @@ def test_cli_mamba_warmup_context(cpu_mamba, asset_csv, tmp_path):
     log = pd.read_csv(out / "mamba_train_log.csv")
     assert (log["n_zero_pad"] == 0).all() and log["n_context_rows"].iloc[0] == 9
     assert json.load(open(out / "run_config.json"))["mamba_warmup_context"] is True
+
+
+def test_separate_config():
+    args = run_pipeline.build_parser().parse_args(["d.csv", "--encoder", "mamba", "--mamba-targets", "return,mdd",
+                                                   "--separate", "--separate-weights", "0.3", "1,1", "2,0", "0.5"])
+    cfg = run_pipeline.config_from_args(args).validate()
+    assert cfg.separate and cfg.separate_weights == ((0.3,), (1.0, 1.0), (2.0, 0.0), (0.5,))
+    np.testing.assert_allclose(cfg.separate_blends, [(0.3, 0.7), (0.5, 0.5), (1.0, 0.0)])  # 정규화 · 중복 제거
+    sep = PipelineConfig(input="d.csv", encoder="mamba", mamba_targets=("return", "vol", "mdd"), separate=True)
+    np.testing.assert_allclose(sep.validate().separate_blends, [(1 / 3,) * 3])  # 기본: 균등
+    for bad in [((0.5,),), ((1, 2),), ((1, -1, 1),), ((0, 0, 0),), ((1, float("nan"), 1),)]:
+        with pytest.raises(ValueError, match="separate-weights"):
+            dataclasses.replace(sep, separate_weights=bad).validate()
+    with pytest.raises(ValueError, match="separate"):
+        PipelineConfig(input="d.csv", encoder="mamba", separate=True).validate()  # 타깃 1개
+    with pytest.raises(ValueError, match="separate"):
+        PipelineConfig(input="d.csv", mamba_targets=("return", "mdd"), separate=True).validate()  # encoder none
+    with pytest.raises(ValueError, match="separate-weights"):
+        PipelineConfig(input="d.csv", encoder="mamba", separate_weights=((0.5,),)).validate()
+    # 시드 1개여도 --separate 면 (타깃 사이) bear 표 기준을 쓸 수 있다
+    dataclasses.replace(sep, ensemble_bear_vote=0.5).validate()
+
+    # 타깃별 설정: 그 타깃만, 출력별 손실 가중치는 그 타깃 몫, horizon 별 가중치는 그대로
+    two = dataclasses.replace(sep, mamba_targets=("return", "mdd"), mamba_horizons=(5, 20),
+                              mamba_loss_weights=(1, 2, 3, 4), ensemble_bear_vote=0.5)
+    t1 = run_pipeline._target_cfg(two, 1, "x")
+    assert (t1.mamba_targets, t1.mamba_loss_weights, t1.separate, t1.ensemble_bear_vote) == (("mdd",), (3, 4), False,
+                                                                                             None)
+    t1.validate()
+    hw = run_pipeline._target_cfg(dataclasses.replace(two, mamba_loss_weights=(1, 3), n_seeds=2), 0, "x")
+    assert hw.mamba_loss_weights == (1, 3) and hw.ensemble_bear_vote == 0.5
+    assert run_pipeline.blend_name(["return", "mdd"], (0.7, 0.3)) == "return0.7_mdd0.3"
+    assert run_pipeline.blend_name(["return", "mdd"], (0.0, 1.0)) == "mdd"
+
+
+def _reg(probs_bear, start="2020-01-01"):
+    p = np.asarray(probs_bear, dtype=float)
+    idx = pd.bdate_range(start, periods=len(p))
+    return pd.DataFrame({"regime": (p > 0.5).astype(int), "prob_0": 1 - p, "prob_1": p,
+                         "refit_date": idx[0]}, index=idx)
+
+
+def test_weighted_ensemble_regimes():
+    a, b = _reg([0.9, 0.6, 0.2, 0.1]), _reg([0.1, 0.1, 0.7, 0.4])
+    ens = run_pipeline.ensemble_regimes({"a": a, "b": b}, 2, weights={"a": 3, "b": 1}, column="regime_{}")
+    np.testing.assert_allclose(ens["prob_1"], [0.7, 0.475, 0.325, 0.175])
+    assert list(ens["regime"]) == [1, 0, 0, 0] and list(ens["regime_b"]) == [0, 0, 1, 0]
+    np.testing.assert_allclose(ens["bear_vote"], [0.75, 0.75, 0.25, 0])
+    np.testing.assert_allclose(ens["agreement"], [0.75, 0.25, 0.75, 1])
+    voted = run_pipeline.ensemble_regimes({"a": a, "b": b}, 2, bear_vote=0.5, weights={"a": 3, "b": 1})
+    assert list(voted["regime"]) == [1, 1, 0, 0]
+    # 비중이 없으면 기존 시드 평균과 같다
+    plain = run_pipeline.ensemble_regimes({0: a, 1: b}, 2)
+    np.testing.assert_allclose(plain["prob_1"], [0.5, 0.35, 0.45, 0.25])
+    assert {"regime_seed0", "regime_seed1"} <= set(plain.columns)
+
+
+SEP_ARGS = ["--mamba-targets", "return,mdd", "--mamba-horizons", "1,5", "--separate", *MAMBA_ARGS]
+
+
+def test_cli_mamba_separate(cpu_mamba, asset_csv, tmp_path):
+    """타깃마다 따로 학습한 결과(target_<t>/)의 상태 확률을 비중대로 섞어 비중마다 백테스트한다."""
+    out = tmp_path / "sep"
+    assert run_pipeline.main([asset_csv, "--out", str(out), *SEP_ARGS, "--separate-weights", "0.7", "0.5", "1"]) == 0
+    for t in ("return", "mdd"):
+        log = pd.read_csv(out / f"target_{t}" / "mamba_train_log.csv")
+        labels = mamba_encoder.target_labels([t], (1, 5))  # 타깃 하나만 학습
+        assert {f"valid_loss_{k}" for k in labels} <= set(log.columns) and len(labels) == 2
+        with open(out / f"target_{t}" / "run_config.json", encoding="utf-8") as f:
+            assert json.load(f)["mamba_targets"] == [t]
+    ret = pd.read_csv(out / "target_return" / "regimes.csv", index_col=0, parse_dates=True)
+    mdd = pd.read_csv(out / "target_mdd" / "regimes.csv", index_col=0, parse_dates=True)
+
+    table = pd.read_csv(out / "separate_performance.csv", index_col=0)
+    assert list(table.index[:4]) == ["return", "mdd", "return0.7_mdd0.3", "return0.5_mdd0.5"]  # 1 = return 단독
+    assert "Buy & Hold" in table.index and {"w_return", "w_mdd"} <= set(table.columns)
+    np.testing.assert_allclose(table.loc["return0.7_mdd0.3", ["w_return", "w_mdd"]].astype(float), [0.7, 0.3])
+    # 타깃 단독 행은 그 타깃 run 의 성과와 같다
+    solo = pd.read_csv(out / "target_mdd" / "performance.csv", index_col=0).loc["JM strategy"]
+    assert float(table.loc["mdd", "sharpe"]) == pytest.approx(float(solo["sharpe"]))
+
+    blend = pd.read_csv(out / "blend_return0.7_mdd0.3" / "regimes.csv", index_col=0, parse_dates=True)
+    idx = blend.index
+    np.testing.assert_allclose(blend["prob_1"], 0.7 * ret.loc[idx, "prob_1"] + 0.3 * mdd.loc[idx, "prob_1"])
+    np.testing.assert_allclose(blend["prob_1_mdd"], mdd.loc[idx, "prob_1"])
+    assert (blend["regime"] == blend[["prob_0", "prob_1"]].to_numpy().argmax(axis=1)).all()
+    assert {"regime_return", "regime_mdd", "agreement", "bear_vote"} <= set(blend.columns)
+    assert (out / "blend_return0.5_mdd0.5" / "performance.csv").exists()
+    assert not (out / "blend_return").exists()
+    states = pd.read_csv(out / "separate_current_state.csv")
+    assert list(states["name"]) == list(table.index[:4])
+    with open(out / "blend_return0.5_mdd0.5" / "current_state.json", encoding="utf-8") as f:
+        assert json.load(f)["weights"] == {"return": 0.5, "mdd": 0.5}
+
+
+def test_cli_mamba_separate_multi_seed_inference(cpu_mamba, asset_csv, tmp_path):
+    """여러 시드면 타깃마다 시드 평균 확률을 섞는다 (--inference: 현재 반기만)."""
+    out = tmp_path / "sepinf"
+    assert run_pipeline.main([asset_csv, "--out", str(out), *SEP_ARGS, "--n-seeds", "2", "--seed-mode", "ensemble",
+                              "--inference"]) == 0
+    ens = {t: pd.read_csv(out / f"target_{t}" / "ensemble" / "inference_regimes.csv", index_col=0, parse_dates=True)
+           for t in ("return", "mdd")}
+    blend = pd.read_csv(out / "blend_return0.5_mdd0.5" / "inference_regimes.csv", index_col=0, parse_dates=True)
+    np.testing.assert_allclose(blend["prob_1"], 0.5 * ens["return"].loc[blend.index, "prob_1"]
+                               + 0.5 * ens["mdd"].loc[blend.index, "prob_1"])
+    assert {"regime_return_seed0", "regime_mdd_seed1"} <= set(blend.columns)
+    assert not (out / "separate_performance.csv").exists()
+    assert len(pd.read_csv(out / "separate_current_state.csv")) == 3

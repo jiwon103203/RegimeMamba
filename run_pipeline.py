@@ -24,6 +24,7 @@
     python run_pipeline.py data.csv --encoder mamba --n-seeds 20 --seed-workers 8 --seed-devices cuda:0,cuda:1
     python run_pipeline.py data.csv --encoder mamba --mamba-horizons 1,5,20
     python run_pipeline.py data.csv --encoder mamba --mamba-horizons 5,20 --mamba-targets vol,mdd
+    python run_pipeline.py data.csv --encoder mamba --mamba-targets return,mdd --separate --separate-weights 0.3 0.5 0.7
 """
 
 from __future__ import annotations
@@ -181,6 +182,8 @@ def _write_json(obj, out_dir: str, name: str):
 def run_pipeline(cfg: Optional[PipelineConfig] = None, **overrides) -> Dict[str, Any]:
     """전체 파이프라인을 실행하고 결과 DataFrame 들을 dict 로 돌려준다 (파일은 cfg.out_dir 에 저장)."""
     cfg = _resolve_cfg(cfg, overrides)
+    if cfg.separate:
+        return run_separate(cfg)
     if len(cfg.seed_list) > 1:
         return run_multi_seed(cfg)
     if cfg.inference:
@@ -292,6 +295,8 @@ def run_inference(cfg: Optional[PipelineConfig] = None, **overrides) -> Dict[str
     과거 전체 백테스트와 전략 성과는 계산하지 않는다.
     """
     cfg = _resolve_cfg(cfg, overrides)
+    if cfg.separate:
+        return run_separate(dataclasses.replace(cfg, inference=True))
     if len(cfg.seed_list) > 1:
         return run_multi_seed(dataclasses.replace(cfg, inference=True))
     out = cfg.out_dir
@@ -449,8 +454,8 @@ def _run_seed_jobs(cfg: PipelineConfig, jobs: Dict[int, tuple]) -> Dict[int, Any
         return {s: f.result() for f, s in sorted(futures.items(), key=lambda kv: seeds.index(kv[1]))}
 
 
-def ensemble_regimes(regimes: Dict[int, pd.DataFrame], n_states: int,
-                     bear_vote: Optional[float] = None) -> pd.DataFrame:
+def ensemble_regimes(regimes: Dict[Any, pd.DataFrame], n_states: int, bear_vote: Optional[float] = None,
+                     weights: Optional[Dict[Any, float]] = None, column: str = "regime_seed{}") -> pd.DataFrame:
     """시드별 국면표의 상태 확률을 날짜마다 평균내고 argmax 를 앙상블 국면으로 삼는다.
 
     상태는 시드마다 같은 규칙(상태 0 = bull, 마지막 = bear, sort_by='cumret')으로 정렬돼 있어 바로 평균낼 수 있다.
@@ -458,16 +463,20 @@ def ensemble_regimes(regimes: Dict[int, pd.DataFrame], n_states: int,
     bear_vote 는 bear 로 판정한 시드의 비율.
     bear_vote 기준을 주면 bear 표 비율이 그 값 이상인 날을 bear 로, 나머지 날은 bear 를 뺀 상태 중 평균 확률
     argmax 로 정한다 (예: 0.4 면 5개 시드 중 2개만 bear 여도 bear).
+    weights 를 주면 평균 · agreement · bear_vote 를 그 비중(합으로 정규화)의 가중평균으로 계산한다 (--separate).
+    column 은 모델별 국면 열 이름 형식.
     """
     seeds = list(regimes)
     idx = regimes[seeds[0]].index
     for r in regimes.values():
         idx = idx.intersection(r.index)
+    w = np.ones(len(seeds)) if weights is None else np.array([weights[s] for s in seeds], dtype=float)
+    w = w / w.sum()
     prob_cols = [f"prob_{k}" for k in range(n_states)]
-    avg = sum(regimes[s].loc[idx, prob_cols].to_numpy(dtype=float) for s in seeds) / len(seeds)
-    by_seed = pd.DataFrame({f"regime_seed{s}": regimes[s].loc[idx, "regime"].astype(int) for s in seeds}, index=idx)
+    avg = sum(wi * regimes[s].loc[idx, prob_cols].to_numpy(dtype=float) for wi, s in zip(w, seeds))
+    by_seed = pd.DataFrame({column.format(s): regimes[s].loc[idx, "regime"].astype(int) for s in seeds}, index=idx)
     bear = n_states - 1
-    votes = (by_seed.to_numpy() == bear).mean(axis=1)
+    votes = (by_seed.to_numpy() == bear) @ w
     if bear_vote is None:
         state = avg.argmax(axis=1)
     else:
@@ -479,7 +488,7 @@ def ensemble_regimes(regimes: Dict[int, pd.DataFrame], n_states: int,
     ens["refit_date"] = first["refit_date"]
     if "signal_ret" in first.columns:
         ens["signal_ret"] = first["signal_ret"]
-    ens["agreement"] = (by_seed.to_numpy() == state[:, None]).mean(axis=1)
+    ens["agreement"] = (by_seed.to_numpy() == state[:, None]) @ w
     ens["bear_vote"] = votes
     ens.index.name = "date"
     return pd.concat([ens, by_seed], axis=1)
@@ -552,8 +561,8 @@ def run_multi_seed(cfg: PipelineConfig) -> Dict[str, Any]:
         mamba_logs = [log for _, log in fitted.values() if log is not None]
 
     result: Dict[str, Any] = {"config": cfg, "seeds": list(seeds), "seed_results": seed_results or None,
-                              "seed_performance": None, "ensemble": None, "current_state": None,
-                              "performance": None}
+                              "seed_regimes": regimes, "data": data, "seed_performance": None, "ensemble": None,
+                              "current_state": None, "performance": None}
     if individual:
         states = _seed_states(seed_results)
         _save(states, out, "seed_current_state.csv", index=False)
@@ -608,6 +617,136 @@ def run_multi_seed(cfg: PipelineConfig) -> Dict[str, Any]:
         _save(table, out, "seed_performance.csv")
         result["seed_performance"] = table
     return result
+
+
+# ---------------------------------------------------------------------------
+# 타깃별 분리 학습 (--separate)
+# ---------------------------------------------------------------------------
+
+def _target_cfg(cfg: PipelineConfig, index: int, out_dir: str) -> PipelineConfig:
+    """--separate 에서 index 번째 타깃 하나만 예측하도록 학습하는 설정 (출력별 손실 가중치는 그 타깃 몫만)."""
+    n_h = len(cfg.mamba_horizons)
+    lw = cfg.mamba_loss_weights
+    if len(lw) != n_h:
+        lw = lw[index * n_h:(index + 1) * n_h]
+    vote = cfg.ensemble_bear_vote if len(cfg.seed_list) > 1 and cfg.seed_mode != "individual" else None
+    return dataclasses.replace(cfg, mamba_targets=(cfg.mamba_targets[index],), mamba_loss_weights=tuple(lw),
+                               separate=False, separate_weights=(), ensemble_bear_vote=vote, out_dir=out_dir)
+
+
+def blend_name(targets: Sequence[str], weights: Sequence[float]) -> str:
+    """비중 이름: 한 타깃만 쓰면 그 타깃 이름, 아니면 return0.7_mdd0.3 처럼 타깃과 비중."""
+    used = [t for t, w in zip(targets, weights) if w > 0]
+    if len(used) == 1:
+        return used[0]
+    return "_".join(f"{t}{w:.4g}" for t, w in zip(targets, weights))
+
+
+def run_separate(cfg: PipelineConfig) -> Dict[str, Any]:
+    """--separate: mamba_targets 를 타깃마다 따로 학습하고 국면 확률을 비중대로 섞는다.
+
+    타깃마다 그 타깃 하나만 예측하도록 학습한 Mamba → Jump Model 을 target_<타깃>/ 에 따로 돌린다
+    (시드가 여러 개면 run_multi_seed 그대로). 상태 순서는 모두 같은 규칙(0 = bull, 마지막 = bear)이라
+    날짜마다 Σ 타깃 비중 × (그 타깃의 시드 평균 상태 확률) 로 섞고 argmax 를 국면으로 삼는다
+    (--ensemble-bear-vote 면 비중으로 가중한 bear 표 비율). separate_blends 의 비중마다 blend_<이름>/ 에 저장하고,
+    타깃 단독(비중 1)과 함께 separate_performance.csv · separate_current_state.csv 로 한 번에 비교한다.
+    --inference 와 함께 쓰면 백테스트 없이 현재 반기 국면만 섞는다.
+    """
+    out = cfg.out_dir
+    os.makedirs(out, exist_ok=True)
+    _write_json(cfg.to_dict(), out, "run_config.json")
+    _check_devices(cfg)  # GPU 가 없으면 데이터 처리 전에 실패
+    targets = list(cfg.mamba_targets)
+    logger.info("separate run: targets=%s, blends=%s%s", targets,
+                ["/".join(f"{v:.3g}" for v in w) for w in cfg.separate_blends], " (inference)" if cfg.inference else "")
+
+    target_results: Dict[str, Dict[str, Any]] = {}
+    members: Dict[str, pd.DataFrame] = {}  # 섞을 개별 모델 (타깃 × 시드) 의 국면표
+    owner: Dict[str, int] = {}             # 모델 → 타깃 번호
+    for i, t in enumerate(targets):
+        logger.info("target %s (%d/%d)", t, i + 1, len(targets))
+        tcfg = _target_cfg(cfg, i, os.path.join(out, f"target_{t}"))
+        res = run_pipeline(tcfg)
+        target_results[t] = res
+        regs = res["seed_regimes"] if len(tcfg.seed_list) > 1 else {None: res["regimes"]}
+        for s, reg in regs.items():
+            key = t if s is None else f"{t}_seed{s}"
+            members[key], owner[key] = reg, i
+    data = target_results[targets[0]]["data"]
+    n_states, bear = cfg.n_states, cfg.n_states - 1
+    n_own = [sum(o == i for o in owner.values()) for i in range(len(targets))]
+
+    # 타깃 단독(one-hot) + 섞는 비중 (one-hot 비중은 타깃 단독과 같으므로 한 번만)
+    entries = [(t, tuple(float(j == i) for j in range(len(targets)))) for i, t in enumerate(targets)]
+    entries += [(blend_name(targets, w), w) for w in cfg.separate_blends if max(w) < 1.0]
+    prefix = "inference_" if cfg.inference else ""
+    kw = _strategy_kwargs(cfg, bear)
+    runs: Dict[str, Dict[str, Any]] = {}
+    for name, w in entries:
+        reg = ensemble_regimes(members, n_states, cfg.ensemble_bear_vote, column="regime_{}",
+                               weights={m: w[owner[m]] / n_own[owner[m]] for m in members})
+        for i, t in enumerate(targets):  # 타깃별 (시드 평균) 상태 확률
+            own = [m for m in members if owner[m] == i]
+            for k in range(n_states):
+                reg[f"prob_{k}_{t}"] = sum(members[m].loc[reg.index, f"prob_{k}"] for m in own) / len(own)
+        current = _current_state(reg, n_states)
+        current.update({"weights": dict(zip(targets, w)), "agreement": float(reg["agreement"].iloc[-1]),
+                        "bear_vote": float(reg["bear_vote"].iloc[-1]), "bear_vote_threshold": cfg.ensemble_bear_vote,
+                        "target_prob_bear": {t: float(reg[f"prob_{bear}_{t}"].iloc[-1]) for t in targets}})
+        run: Dict[str, Any] = {"weights": w, "regimes": reg, "current_state": current}
+        if not cfg.inference:
+            run["strategy"] = run_0_1_strategy(reg["regime"], data, delay=cfg.delay, **kw)
+            run["performance"] = performance_table(run["strategy"], name="Blend strategy")
+        runs[name] = run
+
+    blends = [name for name, _ in entries[len(targets):]]
+    for name in blends:
+        run, d = runs[name], os.path.join(out, f"blend_{name}")
+        os.makedirs(d, exist_ok=True)
+        _save(run["regimes"], d, f"{prefix}regimes.csv")
+        _write_json(run["current_state"], d, "current_state.json")
+        if cfg.inference:
+            if cfg.plots:
+                plotting.plot_inference(run["regimes"], data["close"], bear, os.path.join(d, "inference.png"))
+            continue
+        run["regime_summary"] = regime_summary(run["regimes"]["regime"], run["regimes"]["signal_ret"], n_states)
+        run["delay_robustness"] = delay_robustness_table(run["regimes"]["regime"], data, cfg.delays, **kw)
+        _save(run["strategy"], d, "strategy.csv")
+        _save(run["performance"], d, "performance.csv")
+        _save(run["regime_summary"], d, "regime_summary.csv", index=False)
+        _save(run["delay_robustness"], d, "delay_robustness.csv")
+        if cfg.plots:
+            desc = ", ".join(f"{t} {v:.0%}" for t, v in zip(targets, run["weights"]))
+            plotting.plot_regimes_cumret(run["strategy"], bear, os.path.join(d, "regimes_cumret.png"),
+                                         {t: runs[t]["strategy"] for t in targets},
+                                         title=f"Separate targets blend ({desc})", label="Blend strategy")
+            plotting.plot_delay_robustness(run["delay_robustness"], os.path.join(d, "delay_robustness.png"))
+
+    wcols = [f"w_{t}" for t in targets]
+    states = pd.DataFrame([{"name": n, **dict(zip(wcols, r["weights"])),
+                            **{k: r["current_state"][k] for k in ("asof", "label", "prob_bear", "days_in_regime",
+                                                                  "bear_vote")}}
+                           for n, r in runs.items()])
+    _save(states, out, "separate_current_state.csv", index=False)
+    table = None
+    if not cfg.inference:
+        per = pd.DataFrame({n: r["performance"].loc["Blend strategy"] for n, r in runs.items()}).T
+        per = pd.concat([pd.DataFrame([r["weights"] for r in runs.values()], index=per.index, columns=wcols), per],
+                        axis=1)
+        table = pd.concat([per, runs[targets[0]]["performance"].drop(index="Blend strategy")])
+        table.index.name = "portfolio"
+        _save(table, out, "separate_performance.csv")
+        if cfg.plots:
+            main = blends[0] if blends else targets[0]
+            plotting.plot_regimes_cumret(runs[main]["strategy"], bear, os.path.join(out, "separate_cumret.png"),
+                                         {n: r["strategy"] for n, r in runs.items() if n != main},
+                                         title=f"Separate targets ({', '.join(targets)})", label=main)
+
+    first = runs[blends[0]] if blends else None
+    return {"config": cfg, "targets": targets, "target_results": target_results, "data": data, "blends": runs,
+            "separate_current_state": states, "separate_performance": table,
+            "current_state": first["current_state"] if first else None,
+            "performance": first.get("performance") if first else None}
 
 
 # ---------------------------------------------------------------------------
@@ -712,6 +851,11 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--mamba-loss-weights", type=_float_list, metavar="W",
                    help="출력별 MSE 가중치 (콤마). horizon 수만큼 주면 horizon 별(예: 0.5,0.25,0.25), "
                         "타깃 × horizon 수만큼 주면 출력별(타깃 → horizon 순). 합으로 정규화. 기본: 단순 평균")
+    g.add_argument("--separate", action="store_true",
+                   help="--mamba-targets 를 함께 학습하지 않고 타깃마다 따로 학습한 뒤 국면 확률을 비중대로 섞음")
+    g.add_argument("--separate-weights", type=_float_list, nargs="+", action="extend", default=[], metavar="W",
+                   help="(--separate) 섞을 타깃별 비중 (콤마, 타깃 순서, 합으로 정규화). 여러 개 주면 비중마다 결과. "
+                        "타깃 2개면 첫 타깃 비중 하나로도 가능 (예: 0 0.3 0.5 0.7 1). 기본: 균등")
 
     g = p.add_argument_group("롤링 재추정")
     g.add_argument("--train-window", type=int, default=d.train_window, help="최대 학습창 (거래일)")
@@ -759,6 +903,7 @@ def config_from_args(args: argparse.Namespace) -> PipelineConfig:
     values["mamba_horizons"] = tuple(values["mamba_horizons"])
     values["mamba_targets"] = tuple(values["mamba_targets"])
     values["mamba_loss_weights"] = tuple(values["mamba_loss_weights"] or ())
+    values["separate_weights"] = tuple(tuple(w) for w in values["separate_weights"])
     for key in ("verbose", "quiet", "summary_file"):
         values.pop(key)
     return PipelineConfig(input=input_path or "", **values)
@@ -803,20 +948,26 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     for _, row in result.get("seed_current_state", pd.DataFrame()).iterrows():
         print(f"[{row['asof']}] seed {row['seed']}: {row['label']} (bear 확률 {row['prob_bear']:.1%}, "
               f"{row['days_in_regime']}일째)")
+    for _, row in result.get("separate_current_state", pd.DataFrame()).iterrows():
+        print(f"[{row['asof']}] {row['name']}: {row['label']} (bear 확률 {row['prob_bear']:.1%}, "
+              f"{row['days_in_regime']}일째)")
     cur = result["current_state"]
-    if cur:
-        name = f"앙상블({len(cur['seeds'])}개 시드) 국면" if "seeds" in cur else "현재 국면"
+    if cur and "separate_current_state" not in result:
+        name =f"앙상블({len(cur['seeds'])}개 시드) 국면" if "seeds" in cur else "현재 국면"
         agree = f", 시드 일치 {cur['seed_agreement']:.0%}" if "seed_agreement" in cur else ""
         if cur.get("bear_vote_threshold") is not None:
             agree += f", bear 표 {cur['bear_vote']:.0%} (기준 {cur['bear_vote_threshold']:.0%})"
         print(f"[{cur['asof']}] {name}: {cur['label']} (bear 확률 {cur['prob_bear']:.1%}, "
               f"{cur['days_in_regime']}일째, 재추정 {cur['refit_date']}{agree})")
-    perf = result.get("seed_performance")
+    perf = result.get("separate_performance")
+    if perf is None:
+        perf = result.get("seed_performance")
     if perf is None:
         perf = result.get("performance")
     table = None
     if perf is not None:
-        cols = [c for c in ("cagr", "ann_vol", "sharpe", "max_drawdown", "information_ratio", "n_trades")
+        cols = [c for c in perf.columns if c.startswith("w_")]
+        cols += [c for c in ("cagr", "ann_vol", "sharpe", "max_drawdown", "information_ratio", "n_trades")
                 if c in perf.columns]
         table = perf[cols].apply(pd.to_numeric, errors="coerce")
         with pd.option_context("display.float_format", "{:.4f}".format, "display.width", 120):
