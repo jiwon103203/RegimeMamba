@@ -43,6 +43,8 @@ python run_pipeline.py data.csv --encoder mamba --mamba-horizons 1,5,20  # 다�
 python run_pipeline.py data.csv --encoder mamba --mamba-horizons 1,5,20 --mamba-loss-weights 0.5,0.25,0.25  # 손실 가중치
 python run_pipeline.py data.csv --encoder mamba --mamba-horizons 5,20 --mamba-targets vol,mdd  # 1주·1달 변동성·MDD
 python run_pipeline.py data.csv --encoder mamba --mamba-targets return,mdd --separate --separate-weights 0.3 0.5 0.7  # 따로 학습 → 비중별로 섞기
+python run_pipeline.py data.csv --encoder mamba --feature-set example --mamba-targets return,mdd --separate \
+    --separate-features mdd=DD-log,sortino_20 return=ret,sortino   # 타깃마다 다른 입력 피처
 ```
 
 `--encoder`는 Jump Model 앞에 붙는 단계일 뿐이라, 아래 데이터·피처·모델·재추정·백테스트 옵션은 `--encoder none`과 `mamba`에서 똑같이 동작합니다.
@@ -53,7 +55,7 @@ python run_pipeline.py data.csv --encoder mamba --mamba-targets return,mdd --sep
 |---|---|
 | 데이터 | `--date-col/--close-col/--rf-col` (자동 인식), `--rf-unit annual_pct`, `--rf-const`, `--relative-benchmark`, `--signal-ret auto`, `--start/--end` |
 | 피처 | `--feature-set paper\|example\|extra\|none`, `--extra-features 파일:열:변환`, `--remove-series`, `--warmup 252` |
-| 인코더 | `--encoder none\|mamba`, `--device auto\|cuda\|cuda:N`, `--mamba-seq-len 60`, `--mamba-warmup-context`, `--mamba-d-model 8`, `--mamba-d-state 32`, `--mamba-d-conv 4`, `--mamba-expand 2`, `--mamba-layers 4`, `--mamba-dropout 0.1`, `--mamba-epochs 100`, `--mamba-patience 10`, `--mamba-batch-size 1024`, `--mamba-lr 5e-4`, `--mamba-valid-frac 0.2`, `--mamba-horizons 1`, `--mamba-targets return`, `--mamba-loss-weights`, `--separate`, `--separate-weights` |
+| 인코더 | `--encoder none\|mamba`, `--device auto\|cuda\|cuda:N`, `--mamba-seq-len 60`, `--mamba-warmup-context`, `--mamba-d-model 8`, `--mamba-d-state 32`, `--mamba-d-conv 4`, `--mamba-expand 2`, `--mamba-layers 4`, `--mamba-dropout 0.1`, `--mamba-epochs 100`, `--mamba-patience 10`, `--mamba-batch-size 1024`, `--mamba-lr 5e-4`, `--mamba-valid-frac 0.2`, `--mamba-horizons 1`, `--mamba-targets return`, `--mamba-loss-weights`, `--separate`, `--separate-weights`, `--separate-features` |
 | 모델 | `--model jm\|sjm`, `--discrete`, `--n-states 2`, `--jump-penalty 50`, `--max-feats`, `--pin-features`, `--n-init 10`, `--clip-mul 3`, `--center-distance` |
 | 재추정 | `--train-window 3000`, `--min-train 500`, `--refit-months 1,7`, `--oos-start` |
 | 백테스트 | `--delay 1`, `--delays 1,2,3,5,10`, `--min-cash 0`, `--max-cash 1`, `--cost-bps 10`, `--backtest-ret absolute\|relative` |
@@ -75,6 +77,8 @@ python run_pipeline.py data.csv --encoder mamba --mamba-targets return,mdd --sep
   - `--separate-weights 0.7,0.3 0.5,0.5`: 섞을 비중 목록입니다. 비중마다 타깃 수만큼 콤마로 주고(`--mamba-targets` 순서, 합으로 정규화), 타깃이 2개면 첫 타깃 비중 하나만 줘도 됩니다(`0.3` = `0.3,0.7`). 여러 개 주면 학습은 한 번만 하고 비중마다 결과를 `blend_<이름>/`(예: `blend_return0.7_mdd0.3/`)에 저장합니다. 기본은 균등 비중 하나입니다.
   - `separate_performance.csv`에 타깃 단독(`return`, `mdd`)과 비중별 결과가 `w_<타깃>` 열과 함께 한 표로 정리되고, `separate_current_state.csv`에 각각의 현재 국면이, `separate_cumret.png`에 누적수익률이 함께 그려집니다. 비중 `1`(또는 `0`)은 타깃 단독 행과 같아 따로 폴더를 만들지 않습니다.
   - 여러 시드(`--n-seeds`)와 함께 쓰면 타깃마다 시드 실행을 그대로 하고(`target_<타깃>/seed_<s>/`, `ensemble/`), 섞을 때는 타깃 비중을 그 타깃의 시드 수로 나눠 시드별 확률에 줍니다. `--ensemble-bear-vote X`를 주면 비중으로 가중한 bear 표 비율(`bear_vote`)이 X 이상인 날을 bear로 삼습니다(시드가 하나여도 사용 가능). `--inference`와 함께 쓰면 현재 반기 국면만 섞습니다.
+  - `--separate-features mdd=a,b,c return=b,c,d`: 타깃마다 Mamba에 넣을 입력 피처를 따로 정합니다. `타깃=피처,피처` 형식(`타깃:피처,..`도 가능)으로 타깃마다 하나씩 주고, 피처는 `--feature-set` · `--extra-features`로 만든(`--remove-series` 뒤) 피처 중에서 정확한 이름(`sortino_20`, `VIX[log]`) 또는 계열 이름(`sortino` = `sortino_5,sortino_20,sortino_60`)으로 고릅니다. 이름이 없으면 사용 가능한 피처 목록과 함께 오류가 납니다. 주지 않은 타깃은 피처를 전부 씁니다. 각 타깃의 `target_<타깃>/features.csv`에 실제 입력이, `run_config.json`의 `use_features`에 고른 이름이 남습니다.
+    - 결측 행은 그 타깃이 고른 피처로만 판단하므로(예: 늦게 시작하는 사용자 변수를 안 쓰는 타깃은 그 앞 날짜도 사용) 타깃마다 시작일·재추정일이 다를 수 있고, 섞을 때는 모든 타깃에 있는 날짜만 씁니다.
   - `--mamba-loss-weights`는 horizon 수만큼 주면 각 타깃 모델에 그대로, 타깃 × horizon 수만큼 주면 각 타깃 모델에 자기 몫만 씁니다. 타깃은 순서대로 하나씩 학습하며, 시드 병렬(`--seed-workers`)은 타깃마다 적용됩니다.
 - `--center-distance`: `regimes.csv`(`--inference`면 `inference_regimes.csv`)에 날짜별 상태 중심점과의 유클리드 거리 `dist_0..`를 추가합니다. 거리는 모델이 손실을 재는 공간(학습창 기준 클리핑·표준화, `sjm`이면 피처 가중치를 곱한 공간, `--encoder mamba`면 hidden 벡터)에서 그 반기를 맡은 재추정 모델의 중심점으로 계산합니다. Jump Model의 손실은 `0.5 × dist²`이며, jump penalty 때문에 국면이 항상 가장 가까운 중심점과 일치하지는 않습니다. 개별 모델의 값이라 여러 시드 실행에서는 `seed_<s>/`에만 들어가고 앙상블 표에는 없습니다.
 - 여러 시드 (`--n-seeds`/`--seeds`가 2개 이상): 시드는 Jump Model 초기값(`--n-init`)과 Mamba 가중치 초기화·배치 순서를 바꿉니다.

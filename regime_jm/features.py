@@ -229,7 +229,8 @@ def expand_feature_names(columns: Sequence[str], names: Optional[Iterable[str]])
 # ---------------------------------------------------------------------------
 
 def build_features(ret: pd.Series, feature_set: str = "paper", extra: Optional[pd.DataFrame] = None,
-                   remove: Optional[Iterable[str]] = None, warmup: int = 252, return_context: bool = False):
+                   remove: Optional[Iterable[str]] = None, warmup: int = 252, return_context: bool = False,
+                   keep: Optional[Iterable[str]] = None):
     """수익률 → 피처 행렬.
 
     Args:
@@ -238,6 +239,7 @@ def build_features(ret: pd.Series, feature_set: str = "paper", extra: Optional[p
         extra: 이미 변환·정렬된 사용자 변수 (index = ret.index)
         remove: 제거할 계열 / 피처 이름
         warmup: 앞에서 버릴 행 수 (EWM·롤링 통계 안정화용)
+        keep: 남길 계열 / 피처 이름 (주면 remove 뒤에 이것만 남긴다. --separate-features 의 타깃별 입력)
         return_context: True 면 (X, context) 를 돌려준다. context 는 X 첫 행 직전까지 버려진 행 중
             결측 없이 이어지는 뒤쪽 부분 (Mamba 시퀀스 앞부분을 0 대신 채우는 용도, --mamba-warmup-context)
     """
@@ -259,6 +261,9 @@ def build_features(ret: pd.Series, feature_set: str = "paper", extra: Optional[p
     X = remove_series(X, remove)
     if X.shape[1] == 0:
         raise ValueError("--remove-series 로 모든 피처가 제거되었습니다")
+    if keep:
+        kept = set(expand_feature_names(X.columns, keep))
+        X = X[[c for c in X.columns if c in kept]]
 
     # 중간 결측은 직전 값으로 채우고(과거 값만 사용), 앞쪽 결측 행만 버린다
     filled = X.ffill()

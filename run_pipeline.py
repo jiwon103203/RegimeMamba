@@ -25,6 +25,8 @@
     python run_pipeline.py data.csv --encoder mamba --mamba-horizons 1,5,20
     python run_pipeline.py data.csv --encoder mamba --mamba-horizons 5,20 --mamba-targets vol,mdd
     python run_pipeline.py data.csv --encoder mamba --mamba-targets return,mdd --separate --separate-weights 0.3 0.5 0.7
+    python run_pipeline.py data.csv --encoder mamba --feature-set example --mamba-targets return,mdd --separate \
+        --separate-features mdd=DD-log,sortino_20 return=ret,sortino
 """
 
 from __future__ import annotations
@@ -103,7 +105,7 @@ def prepare_features(cfg: PipelineConfig):
     extra = load_extra_features(cfg.extra_features, cfg.input, data.index, cfg.date_col)
     use_context = cfg.encoder == "mamba" and cfg.mamba_warmup_context
     X = build_features(data[signal_col], cfg.feature_set, extra=extra, remove=cfg.remove_series,
-                       warmup=cfg.warmup, return_context=use_context)
+                       warmup=cfg.warmup, return_context=use_context, keep=cfg.use_features)
     context = None
     if use_context:
         X, context = X
@@ -624,14 +626,18 @@ def run_multi_seed(cfg: PipelineConfig) -> Dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 def _target_cfg(cfg: PipelineConfig, index: int, out_dir: str) -> PipelineConfig:
-    """--separate 에서 index 번째 타깃 하나만 예측하도록 학습하는 설정 (출력별 손실 가중치는 그 타깃 몫만)."""
+    """--separate 에서 index 번째 타깃 하나만 예측하도록 학습하는 설정 (출력별 손실 가중치는 그 타깃 몫만,
+    입력 피처는 --separate-features 에 준 그 타깃의 피처, 없으면 전부)."""
     n_h = len(cfg.mamba_horizons)
     lw = cfg.mamba_loss_weights
     if len(lw) != n_h:
         lw = lw[index * n_h:(index + 1) * n_h]
     vote = cfg.ensemble_bear_vote if len(cfg.seed_list) > 1 and cfg.seed_mode != "individual" else None
-    return dataclasses.replace(cfg, mamba_targets=(cfg.mamba_targets[index],), mamba_loss_weights=tuple(lw),
-                               separate=False, separate_weights=(), ensemble_bear_vote=vote, out_dir=out_dir)
+    target = cfg.mamba_targets[index]
+    use = tuple(cfg.separate_features.get(target, cfg.use_features))
+    return dataclasses.replace(cfg, mamba_targets=(target,), mamba_loss_weights=tuple(lw), use_features=use,
+                               separate=False, separate_weights=(), separate_features={}, ensemble_bear_vote=vote,
+                               out_dir=out_dir)
 
 
 def blend_name(targets: Sequence[str], weights: Sequence[float]) -> str:
@@ -646,7 +652,8 @@ def run_separate(cfg: PipelineConfig) -> Dict[str, Any]:
     """--separate: mamba_targets 를 타깃마다 따로 학습하고 국면 확률을 비중대로 섞는다.
 
     타깃마다 그 타깃 하나만 예측하도록 학습한 Mamba → Jump Model 을 target_<타깃>/ 에 따로 돌린다
-    (시드가 여러 개면 run_multi_seed 그대로). 상태 순서는 모두 같은 규칙(0 = bull, 마지막 = bear)이라
+    (시드가 여러 개면 run_multi_seed 그대로). --separate-features 를 주면 타깃마다 그 피처만 입력으로 쓴다
+    (타깃마다 남는 날짜가 다르면 섞을 때는 공통 날짜만). 상태 순서는 모두 같은 규칙(0 = bull, 마지막 = bear)이라
     날짜마다 Σ 타깃 비중 × (그 타깃의 시드 평균 상태 확률) 로 섞고 argmax 를 국면으로 삼는다
     (--ensemble-bear-vote 면 비중으로 가중한 bear 표 비율). separate_blends 의 비중마다 blend_<이름>/ 에 저장하고,
     타깃 단독(비중 1)과 함께 separate_performance.csv · separate_current_state.csv 로 한 번에 비교한다.
@@ -664,8 +671,8 @@ def run_separate(cfg: PipelineConfig) -> Dict[str, Any]:
     members: Dict[str, pd.DataFrame] = {}  # 섞을 개별 모델 (타깃 × 시드) 의 국면표
     owner: Dict[str, int] = {}             # 모델 → 타깃 번호
     for i, t in enumerate(targets):
-        logger.info("target %s (%d/%d)", t, i + 1, len(targets))
         tcfg = _target_cfg(cfg, i, os.path.join(out, f"target_{t}"))
+        logger.info("target %s (%d/%d), features: %s", t, i + 1, len(targets), ",".join(tcfg.use_features) or "all")
         res = run_pipeline(tcfg)
         target_results[t] = res
         regs = res["seed_regimes"] if len(tcfg.seed_list) > 1 else {None: res["regimes"]}
@@ -765,6 +772,16 @@ def _str_list(text: str) -> List[str]:
     return [t for t in str(text).replace(" ", "").lower().split(",") if t]
 
 
+def _target_features(text: str) -> tuple:
+    """``타깃=피처,피처`` (또는 ``타깃:피처,..``) → (타깃, (피처, ..)). 피처 이름은 대소문자를 그대로 둔다."""
+    text = str(text).strip()
+    cut = min((i for i in (text.find("="), text.find(":")) if i > 0), default=-1)
+    if cut < 0:
+        raise argparse.ArgumentTypeError(f"타깃=피처,피처 형식이어야 합니다 (예: mdd=DD-log_10,sortino_20), got {text!r}")
+    names = tuple(t.strip() for t in text[cut + 1:].split(",") if t.strip())
+    return text[:cut].strip().lower(), names
+
+
 def build_parser() -> argparse.ArgumentParser:
     d = PipelineConfig()
     p = argparse.ArgumentParser(description="Jump Model 국면 파이프라인",
@@ -856,6 +873,10 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--separate-weights", type=_float_list, nargs="+", action="extend", default=[], metavar="W",
                    help="(--separate) 섞을 타깃별 비중 (콤마, 타깃 순서, 합으로 정규화). 여러 개 주면 비중마다 결과. "
                         "타깃 2개면 첫 타깃 비중 하나로도 가능 (예: 0 0.3 0.5 0.7 1). 기본: 균등")
+    g.add_argument("--separate-features", type=_target_features, nargs="+", action="extend", default=[],
+                   metavar="TARGET=FEATS",
+                   help="(--separate) 타깃별 Mamba 입력 피처/계열 (콤마; --feature-set · --extra-features 로 만든 피처 중). "
+                        "예: mdd=DD-log_10,sortino_20 return=sortino,VIX[log]. 안 준 타깃은 전부 사용")
 
     g = p.add_argument_group("롤링 재추정")
     g.add_argument("--train-window", type=int, default=d.train_window, help="최대 학습창 (거래일)")
@@ -904,6 +925,12 @@ def config_from_args(args: argparse.Namespace) -> PipelineConfig:
     values["mamba_targets"] = tuple(values["mamba_targets"])
     values["mamba_loss_weights"] = tuple(values["mamba_loss_weights"] or ())
     values["separate_weights"] = tuple(tuple(w) for w in values["separate_weights"])
+    separate_features: Dict[str, tuple] = {}
+    for target, names in values["separate_features"]:
+        if target in separate_features:
+            raise ValueError(f"--separate-features 에 타깃 '{target}' 이 두 번 있습니다")
+        separate_features[target] = names
+    values["separate_features"] = separate_features
     for key in ("verbose", "quiet", "summary_file"):
         values.pop(key)
     return PipelineConfig(input=input_path or "", **values)

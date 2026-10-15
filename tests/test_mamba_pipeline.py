@@ -445,6 +445,39 @@ def test_separate_config():
     hw = run_pipeline._target_cfg(dataclasses.replace(two, mamba_loss_weights=(1, 3), n_seeds=2), 0, "x")
     assert hw.mamba_loss_weights == (1, 3) and hw.ensemble_bear_vote == 0.5
     assert run_pipeline.blend_name(["return", "mdd"], (0.7, 0.3)) == "return0.7_mdd0.3"
+
+
+def test_separate_features_config():
+    args = run_pipeline.build_parser().parse_args(["d.csv", "--encoder", "mamba", "--mamba-targets", "return,vol,mdd",
+                                                   "--separate", "--separate-features", "MDD=DD-log_10, sortino_20",
+                                                   "return:sortino,VIX[log]"])
+    cfg = run_pipeline.config_from_args(args).validate()
+    assert cfg.separate_features == {"mdd": ("DD-log_10", "sortino_20"), "return": ("sortino", "VIX[log]")}
+    assert run_pipeline._target_cfg(cfg, 2, "x").use_features == ("DD-log_10", "sortino_20")
+    vol = run_pipeline._target_cfg(cfg, 1, "x")  # 안 준 타깃은 전부
+    assert vol.use_features == () and vol.separate_features == {}
+    vol.validate()
+    with pytest.raises(SystemExit):
+        run_pipeline.build_parser().parse_args(["d.csv", "--separate-features", "mdd"])
+    dup = run_pipeline.build_parser().parse_args(["d.csv", "--separate-features", "mdd=a", "mdd=b"])
+    with pytest.raises(ValueError, match="두 번"):
+        run_pipeline.config_from_args(dup)
+    for bad, match in [({"sharpe": ("a",)}, "타깃"), ({"mdd": ()}, "비어")]:
+        with pytest.raises(ValueError, match=match):
+            dataclasses.replace(cfg, separate_features=bad).validate()
+    with pytest.raises(ValueError, match="--separate 에서만"):
+        PipelineConfig(input="d.csv", encoder="mamba", separate_features={"return": ("a",)}).validate()
+
+
+def test_build_features_keep():
+    ret = simulate()
+    extra = pd.DataFrame({"late": np.where(np.arange(len(ret)) < 400, np.nan, 1.0)}, index=ret.index)
+    X = build_features(ret, "paper", extra=extra, warmup=10, keep=["sortino", "DD-log_10"])
+    assert list(X.columns) == ["DD-log_10", "sortino_20", "sortino_60"]  # 원래 열 순서
+    assert len(X) == len(ret) - 10  # 안 쓰는 늦게 시작하는 변수 때문에 행을 버리지 않는다
+    assert len(build_features(ret, "paper", extra=extra, warmup=10, keep=["late"])) == len(ret) - 400
+    with pytest.raises(KeyError, match="사용 가능한 피처"):
+        build_features(ret, "paper", keep=["nope"])
     assert run_pipeline.blend_name(["return", "mdd"], (0.0, 1.0)) == "mdd"
 
 
@@ -506,6 +539,22 @@ def test_cli_mamba_separate(cpu_mamba, asset_csv, tmp_path):
     assert list(states["name"]) == list(table.index[:4])
     with open(out / "blend_return0.5_mdd0.5" / "current_state.json", encoding="utf-8") as f:
         assert json.load(f)["weights"] == {"return": 0.5, "mdd": 0.5}
+
+
+def test_cli_mamba_separate_features(cpu_mamba, asset_csv, tmp_path):
+    """--separate-features: 타깃마다 고른 피처만 그 타깃 Mamba 의 입력으로 쓴다."""
+    out = tmp_path / "sepfeat"
+    assert run_pipeline.main([asset_csv, "--out", str(out), *SEP_ARGS,
+                              "--separate-features", "mdd=DD-log_10,sortino_20", "return=sortino"]) == 0
+    feats = {t: pd.read_csv(out / f"target_{t}" / "features.csv", index_col=0).columns.tolist()
+             for t in ("return", "mdd")}
+    assert feats == {"return": ["sortino_20", "sortino_60"], "mdd": ["DD-log_10", "sortino_20"]}
+    with open(out / "target_mdd" / "run_config.json", encoding="utf-8") as f:
+        assert json.load(f)["use_features"] == ["DD-log_10", "sortino_20"]
+    with open(out / "run_config.json", encoding="utf-8") as f:
+        assert json.load(f)["separate_features"] == {"mdd": ["DD-log_10", "sortino_20"], "return": ["sortino"]}
+    assert (out / "separate_performance.csv").exists()
+    assert run_pipeline.main([asset_csv, "--out", str(out / "bad"), *SEP_ARGS, "--separate-features", "mdd=nope"]) == 1
 
 
 def test_cli_mamba_separate_multi_seed_inference(cpu_mamba, asset_csv, tmp_path):

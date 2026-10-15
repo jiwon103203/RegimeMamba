@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import asdict, dataclass, field
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 SEED_MODES = ("ensemble", "individual", "both")
 
@@ -31,6 +31,7 @@ class PipelineConfig:
     feature_set: str = "paper"             # paper | example | extra | none
     extra_features: List[str] = field(default_factory=list)   # 파일:열:변환
     remove_series: List[str] = field(default_factory=list)
+    use_features: Tuple[str, ...] = ()     # 이 피처/계열만 남김 (기본: 전부). --separate-features 가 타깃마다 채움
     warmup: int = 252
 
     # 모델
@@ -74,6 +75,7 @@ class PipelineConfig:
     mamba_loss_weights: Tuple[float, ...] = ()  # 출력별 MSE 가중치 (horizon 수 또는 타깃 × horizon 수). 기본: 단순 평균
     separate: bool = False                 # mamba_targets 를 타깃마다 따로 학습하고 국면 확률을 비중대로 섞음
     separate_weights: Tuple[Tuple[float, ...], ...] = ()  # 섞을 타깃별 비중 목록 (여러 개면 비중마다 결과). 기본: 균등
+    separate_features: Dict[str, Tuple[str, ...]] = field(default_factory=dict)  # 타깃 → 입력 피처/계열 (없으면 전부)
 
     # 롤링 재추정
     train_window: int = 3000
@@ -194,8 +196,17 @@ class PipelineConfig:
                 raise ValueError("--separate 는 --encoder mamba 와 --mamba-targets 2개 이상(예: return,mdd)에서만 "
                                  "쓸 수 있습니다")
             self.separate_blends
+            bad = [t for t in self.separate_features if t not in self.mamba_targets]
+            if bad:
+                raise ValueError(f"--separate-features 의 타깃 {bad} 이 --mamba-targets {list(self.mamba_targets)} "
+                                 "에 없습니다")
+            empty = [t for t, names in self.separate_features.items() if not names]
+            if empty:
+                raise ValueError(f"--separate-features 에서 타깃 {empty} 의 피처가 비어 있습니다")
         elif self.separate_weights:
             raise ValueError("--separate-weights 는 --separate 에서만 쓸 수 있습니다")
+        elif self.separate_features:
+            raise ValueError("--separate-features 는 --separate 에서만 쓸 수 있습니다")
         if self.n_seeds < 1:
             raise ValueError("--n-seeds 는 1 이상이어야 합니다")
         if len(set(self.seed_list)) != len(self.seed_list):
