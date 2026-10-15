@@ -18,6 +18,7 @@
     python run_pipeline.py data.csv --model sjm --feature-set extra --pin-features sortino_20 --hmm
     python run_pipeline.py sector.csv --relative-benchmark kospi.csv --backtest-ret relative
     python run_pipeline.py data.csv --extra-features macro.csv:VIX:log macro.csv:USDKRW:logdiff
+    python run_pipeline.py data.csv --feature-set extra --use-features sortino DD_20 vol-log
     python run_pipeline.py data.csv --inference
     python run_pipeline.py data.csv --encoder mamba --feature-set example --device cuda:0
     python run_pipeline.py data.csv --encoder mamba --n-seeds 5 --seed-mode both
@@ -664,13 +665,14 @@ def run_separate(cfg: PipelineConfig) -> Dict[str, Any]:
     _write_json(cfg.to_dict(), out, "run_config.json")
     _check_devices(cfg)  # GPU 가 없으면 데이터 처리 전에 실패
     targets = list(cfg.mamba_targets)
-    if cfg.separate_features:  # 피처 이름 오류는 첫 타깃 학습이 끝난 뒤가 아니라 학습 전에 낸다
+    if cfg.separate_features or cfg.use_features:  # 피처 이름 오류는 첫 타깃 학습이 끝난 뒤가 아니라 학습 전에 낸다
         columns = prepare_features(dataclasses.replace(cfg, use_features=(), mamba_warmup_context=False))[2].columns
-        for t, names in cfg.separate_features.items():
+        for t in targets:
+            opt = "--separate-features" if t in cfg.separate_features else "--use-features"
             try:
-                expand_feature_names(columns, names)
+                expand_feature_names(columns, cfg.separate_features.get(t, cfg.use_features))
             except KeyError as e:
-                raise KeyError(f"--separate-features {t}: {e.args[0]}") from None
+                raise KeyError(f"{opt} {t}: {e.args[0]}") from None
     logger.info("separate run: targets=%s, blends=%s%s", targets,
                 ["/".join(f"{v:.3g}" for v in w) for w in cfg.separate_blends], " (inference)" if cfg.inference else "")
 
@@ -820,6 +822,9 @@ def build_parser() -> argparse.ArgumentParser:
                         "zscore_w, ewm_hl, lag_n ('+' 로 연결)")
     g.add_argument("--remove-series", nargs="+", action="extend", default=[], metavar="NAME",
                    help="제거할 피처 계열(예: var DD-log) 또는 피처 이름")
+    g.add_argument("--use-features", nargs="+", action="extend", default=[], metavar="NAME",
+                   help="이 피처(예: sortino_20) / 계열(예: sortino)만 입력으로 씀 (콤마 가능, --remove-series 뒤). "
+                        "기본: 전부. --separate 에서는 --separate-features 를 안 준 타깃에 적용")
     g.add_argument("--warmup", type=int, default=d.warmup, help="앞에서 버릴 행 수")
 
     g = p.add_argument_group("모델")
@@ -931,6 +936,7 @@ def config_from_args(args: argparse.Namespace) -> PipelineConfig:
     values["mamba_horizons"] = tuple(values["mamba_horizons"])
     values["mamba_targets"] = tuple(values["mamba_targets"])
     values["mamba_loss_weights"] = tuple(values["mamba_loss_weights"] or ())
+    values["use_features"] = tuple(values["use_features"])
     values["separate_weights"] = tuple(tuple(w) for w in values["separate_weights"])
     separate_features: Dict[str, tuple] = {}
     for target, names in values["separate_features"]:

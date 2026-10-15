@@ -499,6 +499,24 @@ def test_cli_main(files, tmp_path):
     assert run_pipeline.main([str(tmp_path / "missing.csv"), "--out", str(tmp_path), "-q"]) == 1
 
 
+def test_cli_use_features(files, tmp_path):
+    """--use-features: 고른 피처 / 계열만 모델 입력으로 쓴다 (원래 열 순서)."""
+    base = [files["asset"], "--discrete", "--train-window", "400", "--min-train", "250", "--n-init", "2",
+            "--delays", "1", "--no-plots", "-q", "--extra-features", f"{files['macro']}:VIX:log"]
+    out = tmp_path / "use"
+    assert run_pipeline.main([*base, "--out", str(out), "--use-features", "VIX[log],sortino", "DD-log_10"]) == 0
+    assert pd.read_csv(out / "features.csv", index_col=0).columns.tolist() == ["DD-log_10", "sortino_20",
+                                                                                "sortino_60", "VIX[log]"]
+    cfg = json.loads((out / "run_config.json").read_text(encoding="utf-8"))
+    assert cfg["use_features"] == ["VIX[log],sortino", "DD-log_10"]
+    args = run_pipeline.build_parser().parse_args(["d.csv"])
+    assert run_pipeline.config_from_args(args).use_features == ()  # 기본: 전부
+    assert run_pipeline.main([*base, "--out", str(tmp_path / "bad"), "--use-features", "nope"]) == 1
+    # sjm 에서 꼭 남길 피처는 고른 피처 안에 있어야 한다
+    assert run_pipeline.main([*base, "--out", str(tmp_path / "pin"), "--model", "sjm", "--use-features", "sortino",
+                              "--pin-features", "DD-log_10"]) == 1
+
+
 # ---------------------------------------------------------------------------
 # 여러 시드
 # ---------------------------------------------------------------------------

@@ -31,7 +31,7 @@ class PipelineConfig:
     feature_set: str = "paper"             # paper | example | extra | none
     extra_features: List[str] = field(default_factory=list)   # 파일:열:변환
     remove_series: List[str] = field(default_factory=list)
-    use_features: Tuple[str, ...] = ()     # 이 피처/계열만 남김 (기본: 전부). --separate-features 가 타깃마다 채움
+    use_features: Tuple[str, ...] = ()     # 이 피처/계열만 남김 (기본: 전부). --separate 에선 --separate-features 가 우선
     warmup: int = 252
 
     # 모델

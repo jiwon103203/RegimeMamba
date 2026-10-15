@@ -457,6 +457,9 @@ def test_separate_features_config():
     vol = run_pipeline._target_cfg(cfg, 1, "x")  # 안 준 타깃은 전부
     assert vol.use_features == () and vol.separate_features == {}
     vol.validate()
+    glob = dataclasses.replace(cfg, use_features=("sortino",))  # 안 준 타깃은 --use-features, 준 타깃은 그대로
+    assert run_pipeline._target_cfg(glob, 1, "x").use_features == ("sortino",)
+    assert run_pipeline._target_cfg(glob, 2, "x").use_features == ("DD-log_10", "sortino_20")
     with pytest.raises(SystemExit):
         run_pipeline.build_parser().parse_args(["d.csv", "--separate-features", "mdd"])
     dup = run_pipeline.build_parser().parse_args(["d.csv", "--separate-features", "mdd=a", "mdd=b"])
@@ -557,6 +560,11 @@ def test_cli_mamba_separate_features(cpu_mamba, asset_csv, tmp_path):
     # 두 번째 타깃의 피처 이름이 틀려도 첫 타깃을 학습하기 전에 실패한다
     bad = tmp_path / "sepbad"
     assert run_pipeline.main([asset_csv, "--out", str(bad), *SEP_ARGS, "--separate-features", "mdd=nope"]) == 1
+    assert not (bad / "target_return").exists()
+    # --use-features 가 틀려도 (그걸 쓰는 타깃이 뒤에 있어도) 학습 전에 실패한다
+    bad = tmp_path / "usebad"
+    assert run_pipeline.main([asset_csv, "--out", str(bad), *SEP_ARGS, "--separate-features", "return=sortino",
+                              "--use-features", "nope"]) == 1
     assert not (bad / "target_return").exists()
 
 
