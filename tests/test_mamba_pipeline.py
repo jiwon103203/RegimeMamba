@@ -472,6 +472,29 @@ def test_separate_features_config():
         PipelineConfig(input="d.csv", encoder="mamba", separate_features={"return": ("a",)}).validate()
 
 
+def test_separate_jump_penalty_config():
+    args = run_pipeline.build_parser().parse_args(["d.csv", "--encoder", "mamba", "--mamba-targets", "return,vol,mdd",
+                                                   "--jump-penalty", "40", "--separate",
+                                                   "--separate-jump-penalty", "MDD=30", "return:80.5"])
+    cfg = run_pipeline.config_from_args(args).validate()
+    assert cfg.separate_jump_penalty == {"mdd": 30.0, "return": 80.5}
+    jps = [run_pipeline._target_cfg(cfg, i, "x") for i in range(3)]
+    assert [t.jump_penalty for t in jps] == [80.5, 40.0, 30.0]  # 안 준 타깃(vol)은 --jump-penalty
+    assert all(t.separate_jump_penalty == {} for t in jps)
+    jps[2].validate()
+    for bad in (["mdd"], ["mdd=x"], ["=3"]):
+        with pytest.raises(SystemExit):
+            run_pipeline.build_parser().parse_args(["d.csv", "--separate-jump-penalty", *bad])
+    dup = run_pipeline.build_parser().parse_args(["d.csv", "--separate-jump-penalty", "mdd=1", "mdd=2"])
+    with pytest.raises(ValueError, match="두 번"):
+        run_pipeline.config_from_args(dup)
+    for bad, match in [({"sharpe": 1.0}, "타깃"), ({"mdd": -1.0}, "0 이상"), ({"mdd": float("nan")}, "0 이상")]:
+        with pytest.raises(ValueError, match=match):
+            dataclasses.replace(cfg, separate_jump_penalty=bad).validate()
+    with pytest.raises(ValueError, match="--separate 에서만"):
+        PipelineConfig(input="d.csv", encoder="mamba", separate_jump_penalty={"return": 1.0}).validate()
+
+
 def test_build_features_keep():
     ret = simulate()
     extra = pd.DataFrame({"late": np.where(np.arange(len(ret)) < 400, np.nan, 1.0)}, index=ret.index)
@@ -566,6 +589,21 @@ def test_cli_mamba_separate_features(cpu_mamba, asset_csv, tmp_path):
     assert run_pipeline.main([asset_csv, "--out", str(bad), *SEP_ARGS, "--separate-features", "return=sortino",
                               "--use-features", "nope"]) == 1
     assert not (bad / "target_return").exists()
+
+
+def test_cli_mamba_separate_jump_penalty(cpu_mamba, asset_csv, tmp_path):
+    """--separate-jump-penalty: 타깃마다 그 jump penalty 로 Jump Model 을 학습한다."""
+    out = tmp_path / "sepjp"
+    assert run_pipeline.main([asset_csv, "--out", str(out), *SEP_ARGS, "--jump-penalty", "50",
+                              "--separate-jump-penalty", "mdd=0"]) == 0
+    jp = {}
+    for t in ("return", "mdd"):
+        with open(out / f"target_{t}" / "run_config.json", encoding="utf-8") as f:
+            jp[t] = json.load(f)["jump_penalty"]
+    assert jp == {"return": 50.0, "mdd": 0.0}
+    with open(out / "run_config.json", encoding="utf-8") as f:
+        assert json.load(f)["separate_jump_penalty"] == {"mdd": 0.0}
+    assert (out / "separate_performance.csv").exists()
 
 
 def test_cli_mamba_separate_multi_seed_inference(cpu_mamba, asset_csv, tmp_path):

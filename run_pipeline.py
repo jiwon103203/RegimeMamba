@@ -28,6 +28,8 @@
     python run_pipeline.py data.csv --encoder mamba --mamba-targets return,mdd --separate --separate-weights 0.3 0.5 0.7
     python run_pipeline.py data.csv --encoder mamba --feature-set example --mamba-targets return,mdd --separate \
         --separate-features mdd=DD-log,sortino_20 return=ret,sortino
+    python run_pipeline.py data.csv --encoder mamba --mamba-targets return,mdd --separate \
+        --separate-jump-penalty return=80 mdd=30
 """
 
 from __future__ import annotations
@@ -628,7 +630,8 @@ def run_multi_seed(cfg: PipelineConfig) -> Dict[str, Any]:
 
 def _target_cfg(cfg: PipelineConfig, index: int, out_dir: str) -> PipelineConfig:
     """--separate 에서 index 번째 타깃 하나만 예측하도록 학습하는 설정 (출력별 손실 가중치는 그 타깃 몫만,
-    입력 피처는 --separate-features 에 준 그 타깃의 피처, 없으면 전부)."""
+    입력 피처는 --separate-features 에 준 그 타깃의 피처, 없으면 전부, jump penalty 는 --separate-jump-penalty 에
+    준 그 타깃의 값, 없으면 --jump-penalty)."""
     n_h = len(cfg.mamba_horizons)
     lw = cfg.mamba_loss_weights
     if len(lw) != n_h:
@@ -636,9 +639,10 @@ def _target_cfg(cfg: PipelineConfig, index: int, out_dir: str) -> PipelineConfig
     vote = cfg.ensemble_bear_vote if len(cfg.seed_list) > 1 and cfg.seed_mode != "individual" else None
     target = cfg.mamba_targets[index]
     use = tuple(cfg.separate_features.get(target, cfg.use_features))
+    jp = float(cfg.separate_jump_penalty.get(target, cfg.jump_penalty))
     return dataclasses.replace(cfg, mamba_targets=(target,), mamba_loss_weights=tuple(lw), use_features=use,
-                               separate=False, separate_weights=(), separate_features={}, ensemble_bear_vote=vote,
-                               out_dir=out_dir)
+                               jump_penalty=jp, separate=False, separate_weights=(), separate_features={},
+                               separate_jump_penalty={}, ensemble_bear_vote=vote, out_dir=out_dir)
 
 
 def blend_name(targets: Sequence[str], weights: Sequence[float]) -> str:
@@ -654,7 +658,8 @@ def run_separate(cfg: PipelineConfig) -> Dict[str, Any]:
 
     타깃마다 그 타깃 하나만 예측하도록 학습한 Mamba → Jump Model 을 target_<타깃>/ 에 따로 돌린다
     (시드가 여러 개면 run_multi_seed 그대로). --separate-features 를 주면 타깃마다 그 피처만 입력으로 쓴다
-    (타깃마다 남는 날짜가 다르면 섞을 때는 공통 날짜만). 상태 순서는 모두 같은 규칙(0 = bull, 마지막 = bear)이라
+    (타깃마다 남는 날짜가 다르면 섞을 때는 공통 날짜만), --separate-jump-penalty 를 주면 타깃마다 그 jump penalty
+    로 Jump Model 을 학습한다. 상태 순서는 모두 같은 규칙(0 = bull, 마지막 = bear)이라
     날짜마다 Σ 타깃 비중 × (그 타깃의 시드 평균 상태 확률) 로 섞고 argmax 를 국면으로 삼는다
     (--ensemble-bear-vote 면 비중으로 가중한 bear 표 비율). separate_blends 의 비중마다 blend_<이름>/ 에 저장하고,
     타깃 단독(비중 1)과 함께 separate_performance.csv · separate_current_state.csv 로 한 번에 비교한다.
@@ -681,7 +686,8 @@ def run_separate(cfg: PipelineConfig) -> Dict[str, Any]:
     owner: Dict[str, int] = {}             # 모델 → 타깃 번호
     for i, t in enumerate(targets):
         tcfg = _target_cfg(cfg, i, os.path.join(out, f"target_{t}"))
-        logger.info("target %s (%d/%d), features: %s", t, i + 1, len(targets), ",".join(tcfg.use_features) or "all")
+        logger.info("target %s (%d/%d), jump penalty %g, features: %s", t, i + 1, len(targets), tcfg.jump_penalty,
+                    ",".join(tcfg.use_features) or "all")
         res = run_pipeline(tcfg)
         target_results[t] = res
         regs = res["seed_regimes"] if len(tcfg.seed_list) > 1 else {None: res["regimes"]}
@@ -791,6 +797,18 @@ def _target_features(text: str) -> tuple:
     return text[:cut].strip().lower(), names
 
 
+def _target_value(text: str) -> tuple:
+    """``타깃=값`` (또는 ``타깃:값``) → (타깃, 값)."""
+    text = str(text).strip()
+    cut = min((i for i in (text.find("="), text.find(":")) if i > 0), default=-1)
+    try:
+        if cut < 0:
+            raise ValueError
+        return text[:cut].strip().lower(), float(text[cut + 1:])
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"타깃=값 형식이어야 합니다 (예: mdd=30), got {text!r}") from None
+
+
 def build_parser() -> argparse.ArgumentParser:
     d = PipelineConfig()
     p = argparse.ArgumentParser(description="Jump Model 국면 파이프라인",
@@ -889,6 +907,9 @@ def build_parser() -> argparse.ArgumentParser:
                    metavar="TARGET=FEATS",
                    help="(--separate) 타깃별 Mamba 입력 피처/계열 (콤마; --feature-set · --extra-features 로 만든 피처 중). "
                         "예: mdd=DD-log_10,sortino_20 return=sortino,VIX[log]. 안 준 타깃은 전부 사용")
+    g.add_argument("--separate-jump-penalty", type=_target_value, nargs="+", action="extend", default=[],
+                   metavar="TARGET=JP",
+                   help="(--separate) 타깃별 Jump Model jump penalty. 예: return=80 mdd=30. 안 준 타깃은 --jump-penalty")
 
     g = p.add_argument_group("롤링 재추정")
     g.add_argument("--train-window", type=int, default=d.train_window, help="최대 학습창 (거래일)")
@@ -944,6 +965,12 @@ def config_from_args(args: argparse.Namespace) -> PipelineConfig:
             raise ValueError(f"--separate-features 에 타깃 '{target}' 이 두 번 있습니다")
         separate_features[target] = names
     values["separate_features"] = separate_features
+    separate_jp: Dict[str, float] = {}
+    for target, value in values["separate_jump_penalty"]:
+        if target in separate_jp:
+            raise ValueError(f"--separate-jump-penalty 에 타깃 '{target}' 이 두 번 있습니다")
+        separate_jp[target] = value
+    values["separate_jump_penalty"] = separate_jp
     for key in ("verbose", "quiet", "summary_file"):
         values.pop(key)
     return PipelineConfig(input=input_path or "", **values)

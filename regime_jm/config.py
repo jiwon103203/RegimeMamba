@@ -76,6 +76,7 @@ class PipelineConfig:
     separate: bool = False                 # mamba_targets 를 타깃마다 따로 학습하고 국면 확률을 비중대로 섞음
     separate_weights: Tuple[Tuple[float, ...], ...] = ()  # 섞을 타깃별 비중 목록 (여러 개면 비중마다 결과). 기본: 균등
     separate_features: Dict[str, Tuple[str, ...]] = field(default_factory=dict)  # 타깃 → 입력 피처/계열 (없으면 전부)
+    separate_jump_penalty: Dict[str, float] = field(default_factory=dict)  # 타깃 → jump penalty (없으면 jump_penalty)
 
     # 롤링 재추정
     train_window: int = 3000
@@ -203,10 +204,19 @@ class PipelineConfig:
             empty = [t for t, names in self.separate_features.items() if not names]
             if empty:
                 raise ValueError(f"--separate-features 에서 타깃 {empty} 의 피처가 비어 있습니다")
+            bad = [t for t in self.separate_jump_penalty if t not in self.mamba_targets]
+            if bad:
+                raise ValueError(f"--separate-jump-penalty 의 타깃 {bad} 이 --mamba-targets {list(self.mamba_targets)} "
+                                 "에 없습니다")
+            bad = {t: v for t, v in self.separate_jump_penalty.items() if not (math.isfinite(v) and v >= 0)}
+            if bad:
+                raise ValueError(f"--separate-jump-penalty 는 0 이상이어야 합니다 (got {bad})")
         elif self.separate_weights:
             raise ValueError("--separate-weights 는 --separate 에서만 쓸 수 있습니다")
         elif self.separate_features:
             raise ValueError("--separate-features 는 --separate 에서만 쓸 수 있습니다")
+        elif self.separate_jump_penalty:
+            raise ValueError("--separate-jump-penalty 는 --separate 에서만 쓸 수 있습니다")
         if self.n_seeds < 1:
             raise ValueError("--n-seeds 는 1 이상이어야 합니다")
         if len(set(self.seed_list)) != len(self.seed_list):
