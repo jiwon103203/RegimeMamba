@@ -495,6 +495,38 @@ def test_separate_jump_penalty_config():
         PipelineConfig(input="d.csv", encoder="mamba", separate_jump_penalty={"return": 1.0}).validate()
 
 
+def test_separate_loss_weights_config():
+    args = run_pipeline.build_parser().parse_args(["d.csv", "--encoder", "mamba", "--mamba-targets", "return,vol,mdd",
+                                                   "--mamba-horizons", "1,5,20", "--mamba-loss-weights", "1,1,2",
+                                                   "--separate", "--separate-loss-weights", "MDD=3, 1,0",
+                                                   "return:0.5,0.25,0.25"])
+    cfg = run_pipeline.config_from_args(args).validate()
+    assert cfg.separate_loss_weights == {"mdd": (3.0, 1.0, 0.0), "return": (0.5, 0.25, 0.25)}
+    tcs = [run_pipeline._target_cfg(cfg, i, "x") for i in range(3)]
+    assert [t.mamba_loss_weights for t in tcs] == [(0.5, 0.25, 0.25), (1, 1, 2), (3, 1, 0)]  # vol 은 --mamba-loss-weights
+    assert all(t.separate_loss_weights == {} for t in tcs)
+    np.testing.assert_allclose(mamba_encoder.loss_weights(tcs[2].validate()), [0.75, 0.25, 0.0])
+    # 타깃 × horizon 수의 --mamba-loss-weights 와 섞어도 안 준 타깃은 자기 몫
+    full = dataclasses.replace(cfg, mamba_loss_weights=tuple(range(1, 10)), separate_loss_weights={"mdd": (1, 1, 1)})
+    assert [run_pipeline._target_cfg(full, i, "x").mamba_loss_weights for i in range(3)] == [(1, 2, 3), (4, 5, 6),
+                                                                                             (1, 1, 1)]
+    plain = dataclasses.replace(cfg, mamba_loss_weights=(), separate_loss_weights={"vol": (1, 2, 1)})
+    assert [run_pipeline._target_cfg(plain, i, "x").mamba_loss_weights for i in range(3)] == [(), (1, 2, 1), ()]
+    for bad in (["mdd"], ["mdd=x"], ["mdd="], ["=1,2"]):
+        with pytest.raises(SystemExit):
+            run_pipeline.build_parser().parse_args(["d.csv", "--separate-loss-weights", *bad])
+    dup = run_pipeline.build_parser().parse_args(["d.csv", "--separate-loss-weights", "mdd=1", "mdd=2"])
+    with pytest.raises(ValueError, match="두 번"):
+        run_pipeline.config_from_args(dup)
+    for bad, match in [({"sharpe": (1, 1, 1)}, "타깃"), ({"mdd": (1, 1)}, "horizon 수"),
+                       ({"mdd": (1, -1, 1)}, "0 이상"), ({"mdd": (0, 0, 0)}, "0 이상"),
+                       ({"mdd": (1, float("nan"), 1)}, "0 이상")]:
+        with pytest.raises(ValueError, match=match):
+            dataclasses.replace(cfg, separate_loss_weights=bad).validate()
+    with pytest.raises(ValueError, match="--separate 에서만"):
+        PipelineConfig(input="d.csv", encoder="mamba", separate_loss_weights={"return": (1.0,)}).validate()
+
+
 def test_build_features_keep():
     ret = simulate()
     extra = pd.DataFrame({"late": np.where(np.arange(len(ret)) < 400, np.nan, 1.0)}, index=ret.index)

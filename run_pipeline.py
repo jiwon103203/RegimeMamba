@@ -30,6 +30,8 @@
         --separate-features mdd=DD-log,sortino_20 return=ret,sortino
     python run_pipeline.py data.csv --encoder mamba --mamba-targets return,mdd --separate \
         --separate-jump-penalty return=80 mdd=30
+    python run_pipeline.py data.csv --encoder mamba --mamba-targets return,mdd --mamba-horizons 1,5,20 --separate \
+        --separate-loss-weights return=0.5,0.25,0.25 mdd=1,1,2
 """
 
 from __future__ import annotations
@@ -630,19 +632,22 @@ def run_multi_seed(cfg: PipelineConfig) -> Dict[str, Any]:
 
 def _target_cfg(cfg: PipelineConfig, index: int, out_dir: str) -> PipelineConfig:
     """--separate 에서 index 번째 타깃 하나만 예측하도록 학습하는 설정 (출력별 손실 가중치는 그 타깃 몫만,
-    입력 피처는 --separate-features 에 준 그 타깃의 피처, 없으면 전부, jump penalty 는 --separate-jump-penalty 에
-    준 그 타깃의 값, 없으면 --jump-penalty)."""
+    --separate-loss-weights 에 준 그 타깃의 horizon 별 가중치가 있으면 그것, 입력 피처는 --separate-features 에 준
+    그 타깃의 피처, 없으면 전부, jump penalty 는 --separate-jump-penalty 에 준 그 타깃의 값, 없으면 --jump-penalty)."""
     n_h = len(cfg.mamba_horizons)
+    target = cfg.mamba_targets[index]
     lw = cfg.mamba_loss_weights
-    if len(lw) != n_h:
+    if target in cfg.separate_loss_weights:
+        lw = cfg.separate_loss_weights[target]
+    elif len(lw) != n_h:
         lw = lw[index * n_h:(index + 1) * n_h]
     vote = cfg.ensemble_bear_vote if len(cfg.seed_list) > 1 and cfg.seed_mode != "individual" else None
-    target = cfg.mamba_targets[index]
     use = tuple(cfg.separate_features.get(target, cfg.use_features))
     jp = float(cfg.separate_jump_penalty.get(target, cfg.jump_penalty))
     return dataclasses.replace(cfg, mamba_targets=(target,), mamba_loss_weights=tuple(lw), use_features=use,
                                jump_penalty=jp, separate=False, separate_weights=(), separate_features={},
-                               separate_jump_penalty={}, ensemble_bear_vote=vote, out_dir=out_dir)
+                               separate_jump_penalty={}, separate_loss_weights={}, ensemble_bear_vote=vote,
+                               out_dir=out_dir)
 
 
 def blend_name(targets: Sequence[str], weights: Sequence[float]) -> str:
@@ -659,7 +664,8 @@ def run_separate(cfg: PipelineConfig) -> Dict[str, Any]:
     타깃마다 그 타깃 하나만 예측하도록 학습한 Mamba → Jump Model 을 target_<타깃>/ 에 따로 돌린다
     (시드가 여러 개면 run_multi_seed 그대로). --separate-features 를 주면 타깃마다 그 피처만 입력으로 쓴다
     (타깃마다 남는 날짜가 다르면 섞을 때는 공통 날짜만), --separate-jump-penalty 를 주면 타깃마다 그 jump penalty
-    로 Jump Model 을 학습한다. 상태 순서는 모두 같은 규칙(0 = bull, 마지막 = bear)이라
+    로 Jump Model 을, --separate-loss-weights 를 주면 타깃마다 그 horizon 별 손실 가중치로 Mamba 를 학습한다.
+    상태 순서는 모두 같은 규칙(0 = bull, 마지막 = bear)이라
     날짜마다 Σ 타깃 비중 × (그 타깃의 시드 평균 상태 확률) 로 섞고 argmax 를 국면으로 삼는다
     (--ensemble-bear-vote 면 비중으로 가중한 bear 표 비율). separate_blends 의 비중마다 blend_<이름>/ 에 저장하고,
     타깃 단독(비중 1)과 함께 separate_performance.csv · separate_current_state.csv 로 한 번에 비교한다.
@@ -686,7 +692,8 @@ def run_separate(cfg: PipelineConfig) -> Dict[str, Any]:
     owner: Dict[str, int] = {}             # 모델 → 타깃 번호
     for i, t in enumerate(targets):
         tcfg = _target_cfg(cfg, i, os.path.join(out, f"target_{t}"))
-        logger.info("target %s (%d/%d), jump penalty %g, features: %s", t, i + 1, len(targets), tcfg.jump_penalty,
+        logger.info("target %s (%d/%d), jump penalty %g, loss weights: %s, features: %s", t, i + 1, len(targets),
+                    tcfg.jump_penalty, ",".join(f"{v:g}" for v in tcfg.mamba_loss_weights) or "mean",
                     ",".join(tcfg.use_features) or "all")
         res = run_pipeline(tcfg)
         target_results[t] = res
@@ -809,6 +816,21 @@ def _target_value(text: str) -> tuple:
         raise argparse.ArgumentTypeError(f"타깃=값 형식이어야 합니다 (예: mdd=30), got {text!r}") from None
 
 
+def _target_floats(text: str) -> tuple:
+    """``타깃=값,값`` (또는 ``타깃:값,..``) → (타깃, (값, ..))."""
+    text = str(text).strip()
+    cut = min((i for i in (text.find("="), text.find(":")) if i > 0), default=-1)
+    try:
+        if cut < 0:
+            raise ValueError
+        values = tuple(_float_list(text[cut + 1:]))
+        if not values:
+            raise ValueError
+        return text[:cut].strip().lower(), values
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"타깃=값,값 형식이어야 합니다 (예: mdd=0.5,0.25,0.25), got {text!r}") from None
+
+
 def build_parser() -> argparse.ArgumentParser:
     d = PipelineConfig()
     p = argparse.ArgumentParser(description="Jump Model 국면 파이프라인",
@@ -910,6 +932,10 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--separate-jump-penalty", type=_target_value, nargs="+", action="extend", default=[],
                    metavar="TARGET=JP",
                    help="(--separate) 타깃별 Jump Model jump penalty. 예: return=80 mdd=30. 안 준 타깃은 --jump-penalty")
+    g.add_argument("--separate-loss-weights", type=_target_floats, nargs="+", action="extend", default=[],
+                   metavar="TARGET=W",
+                   help="(--separate) 타깃별 horizon 별 MSE 가중치 (콤마, horizon 수만큼, 합으로 정규화). "
+                        "예: return=0.5,0.25,0.25 mdd=1,1,2. 안 준 타깃은 --mamba-loss-weights")
 
     g = p.add_argument_group("롤링 재추정")
     g.add_argument("--train-window", type=int, default=d.train_window, help="최대 학습창 (거래일)")
@@ -971,6 +997,12 @@ def config_from_args(args: argparse.Namespace) -> PipelineConfig:
             raise ValueError(f"--separate-jump-penalty 에 타깃 '{target}' 이 두 번 있습니다")
         separate_jp[target] = value
     values["separate_jump_penalty"] = separate_jp
+    separate_lw: Dict[str, tuple] = {}
+    for target, weights in values["separate_loss_weights"]:
+        if target in separate_lw:
+            raise ValueError(f"--separate-loss-weights 에 타깃 '{target}' 이 두 번 있습니다")
+        separate_lw[target] = weights
+    values["separate_loss_weights"] = separate_lw
     for key in ("verbose", "quiet", "summary_file"):
         values.pop(key)
     return PipelineConfig(input=input_path or "", **values)

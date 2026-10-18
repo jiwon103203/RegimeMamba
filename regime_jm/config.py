@@ -77,6 +77,7 @@ class PipelineConfig:
     separate_weights: Tuple[Tuple[float, ...], ...] = ()  # 섞을 타깃별 비중 목록 (여러 개면 비중마다 결과). 기본: 균등
     separate_features: Dict[str, Tuple[str, ...]] = field(default_factory=dict)  # 타깃 → 입력 피처/계열 (없으면 전부)
     separate_jump_penalty: Dict[str, float] = field(default_factory=dict)  # 타깃 → jump penalty (없으면 jump_penalty)
+    separate_loss_weights: Dict[str, Tuple[float, ...]] = field(default_factory=dict)  # 타깃 → horizon 별 손실 가중치
 
     # 롤링 재추정
     train_window: int = 3000
@@ -211,12 +212,26 @@ class PipelineConfig:
             bad = {t: v for t, v in self.separate_jump_penalty.items() if not (math.isfinite(v) and v >= 0)}
             if bad:
                 raise ValueError(f"--separate-jump-penalty 는 0 이상이어야 합니다 (got {bad})")
+            bad = [t for t in self.separate_loss_weights if t not in self.mamba_targets]
+            if bad:
+                raise ValueError(f"--separate-loss-weights 의 타깃 {bad} 이 --mamba-targets {list(self.mamba_targets)} "
+                                 "에 없습니다")
+            n_h = len(self.mamba_horizons)
+            for t, w in self.separate_loss_weights.items():
+                if len(w) != n_h:
+                    raise ValueError(f"--separate-loss-weights 는 타깃마다 horizon 수({n_h})만큼 줘야 합니다 "
+                                     f"(got {t}={','.join(f'{v:g}' for v in w)})")
+                if not all(math.isfinite(v) and v >= 0 for v in w) or sum(w) <= 0:
+                    raise ValueError(f"--separate-loss-weights 는 0 이상이고 합이 0 보다 커야 합니다 "
+                                     f"(got {t}={','.join(f'{v:g}' for v in w)})")
         elif self.separate_weights:
             raise ValueError("--separate-weights 는 --separate 에서만 쓸 수 있습니다")
         elif self.separate_features:
             raise ValueError("--separate-features 는 --separate 에서만 쓸 수 있습니다")
         elif self.separate_jump_penalty:
             raise ValueError("--separate-jump-penalty 는 --separate 에서만 쓸 수 있습니다")
+        elif self.separate_loss_weights:
+            raise ValueError("--separate-loss-weights 는 --separate 에서만 쓸 수 있습니다")
         if self.n_seeds < 1:
             raise ValueError("--n-seeds 는 1 이상이어야 합니다")
         if len(set(self.seed_list)) != len(self.seed_list):
